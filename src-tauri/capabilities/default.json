@@ -1,0 +1,204 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Permissions for Slate Viewer document windows",
+  "windows": [
+    "doc-*"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-set-title",
+    "core:window:allow-destroy",
+    "core:window:allow-close",
+    "core:window:allow-set-theme",
+    "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-internal-toggle-maximize",
+    "core:webview:allow-set-webview-zoom",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "dialog:allow-message",
+    "opener:allow-open-url",
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [
+        {
+          "path": "**/*.png"
+        },
+        {
+          "path": "**/*.PNG"
+        },
+        {
+          "path": "**/*.jpg"
+        },
+        {
+          "path": "**/*.JPG"
+        },
+        {
+          "path": "**/*.jpeg"
+        },
+        {
+          "path": "**/*.JPEG"
+        },
+        {
+          "path": "**/*.gif"
+        },
+        {
+          "path": "**/*.GIF"
+        },
+        {
+          "path": "**/*.webp"
+        },
+        {
+          "path": "**/*.WEBP"
+        },
+        {
+          "path": "**/*.svg"
+        },
+        {
+          "path": "**/*.SVG"
+        },
+        {
+          "path": "**/*.bmp"
+        },
+        {
+          "path": "**/*.BMP"
+        },
+        {
+          "path": "**/*.pdf"
+        },
+        {
+          "path": "**/*.PDF"
+        },
+        {
+          "path": "**/*.txt"
+        },
+        {
+          "path": "**/*.TXT"
+        },
+        {
+          "path": "**/*.csv"
+        },
+        {
+          "path": "**/*.CSV"
+        },
+        {
+          "path": "**/*.log"
+        },
+        {
+          "path": "**/*.LOG"
+        },
+        {
+          "path": "**/*.json"
+        },
+        {
+          "path": "**/*.JSON"
+        },
+        {
+          "path": "**/*.xml"
+        },
+        {
+          "path": "**/*.XML"
+        },
+        {
+          "path": "**/*.html"
+        },
+        {
+          "path": "**/*.HTML"
+        },
+        {
+          "path": "**/*.htm"
+        },
+        {
+          "path": "**/*.HTM"
+        },
+        {
+          "path": "**/*.docx"
+        },
+        {
+          "path": "**/*.DOCX"
+        },
+        {
+          "path": "**/*.xlsx"
+        },
+        {
+          "path": "**/*.XLSX"
+        },
+        {
+          "path": "**/*.pptx"
+        },
+        {
+          "path": "**/*.PPTX"
+        },
+        {
+          "path": "**/*.doc"
+        },
+        {
+          "path": "**/*.DOC"
+        },
+        {
+          "path": "**/*.xls"
+        },
+        {
+          "path": "**/*.XLS"
+        },
+        {
+          "path": "**/*.ppt"
+        },
+        {
+          "path": "**/*.PPT"
+        },
+        {
+          "path": "**/*.odt"
+        },
+        {
+          "path": "**/*.ODT"
+        },
+        {
+          "path": "**/*.ods"
+        },
+        {
+          "path": "**/*.ODS"
+        },
+        {
+          "path": "**/*.mp4"
+        },
+        {
+          "path": "**/*.MP4"
+        },
+        {
+          "path": "**/*.webm"
+        },
+        {
+          "path": "**/*.WEBM"
+        },
+        {
+          "path": "**/*.mov"
+        },
+        {
+          "path": "**/*.MOV"
+        },
+        {
+          "path": "**/*.mp3"
+        },
+        {
+          "path": "**/*.MP3"
+        },
+        {
+          "path": "**/*.wav"
+        },
+        {
+          "path": "**/*.WAV"
+        },
+        {
+          "path": "**/*.zip"
+        },
+        {
+          "path": "**/*.ZIP"
+        }
+      ]
+    },
+    "opener:allow-reveal-item-in-dir"
+  ]
+}

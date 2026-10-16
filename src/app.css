@@ -1,0 +1,39 @@
+:root {
+  color-scheme: light; --app-bg: #f8f9fb;
+  --side-bg: #f6f7f9; --side-bar: #eceaf1; --side-fg: #2e2935; --side-muted: #756d7e; --side-border: #ded9e7;
+  --side-hover: #eeebf4; --side-accent: #5f3b9d; --side-accent-soft: #eee7fa; --side-input: #ffffff; --side-mark: #f6e3a1;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark; --app-bg: #17181c;
+  --side-bg: #1d1a22; --side-bar: #16141a; --side-fg: #e9e4ef; --side-muted: #aaa1b3; --side-border: #38323f;
+  --side-hover: #2c2833; --side-accent: #c2a3ed; --side-accent-soft: #332744; --side-input: #211e26; --side-mark: #5c4a1c;
+}
+/* Find in document (src/lib/find.ts). */
+::highlight(find-match) { background-color: #f6e3a1; color: inherit; }
+::highlight(find-current) { background-color: #f2a93b; color: #1d1a22; }
+:root[data-theme="dark"] ::highlight(find-match) { background-color: #5c4a1c; }
+:root[data-theme="dark"] ::highlight(find-current) { background-color: #d08a1e; color: #17181c; }
+
+html, body, #app { height: 100%; margin: 0; }
+body {
+  background: var(--app-bg);
+  font: 13px/1.4 "Segoe UI", system-ui, sans-serif;
+  overflow: hidden;
+}
+
+/* Print the rendered document only, at full length. */
+@media print {
+  html, body, #app { height: auto; overflow: visible; background: #fff; }
+  .slate-editor-host .format-toolbar,
+  .slate-editor-host .workspace-gutter,
+  .slate-editor-host .document-outline,
+  .slate-editor-host .editor-pane,
+  .slate-editor-host .drop-overlay,
+  .slate-editor-host .toast-region,
+  .slate-editor-host .statusbar,
+  .titlebar, .find, .activity, .side, .resizer { display: none !important; }
+  .slate-editor-host,
+  .slate-editor-host * { height: auto !important; max-height: none !important; overflow: visible !important; }
+  .slate-editor-host .workspace-body,
+  .slate-editor-host .editor-grid { display: block !important; }
+}
