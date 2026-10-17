@@ -35,15 +35,39 @@ npm run release            # installer in src-tauri\target\release\bundle\nsis\
 
 ## Making a release
 
-1. Bump `version` in `package.json` (the app and installer read it from there).
-2. Run `npm run release`.
-3. Share `src-tauri\target\release\bundle\nsis\Slate Viewer_<version>_x64-setup.exe`.
+GitHub Actions builds and publishes the installers (`.github/workflows/release.yml`):
+
+1. Bump `version` in `package.json` (the app and installers read it from there) and commit.
+2. Tag and push: `git tag v0.2.0` then `git push origin v0.2.0`. The tag must match the version.
+3. The workflow runs the checks, builds on Windows, macOS and Linux, and publishes a GitHub Release
+   with the files below and `SHA256SUMS`. Its notes list the commits since the last release.
+
+| Computer | File |
+| --- | --- |
+| Windows 10/11 | `SlateViewer-windows-x64-setup.exe` (also runs on Windows on Arm) |
+| Mac (Apple silicon and Intel) | `SlateViewer-macos-universal.dmg` |
+| Linux, any distribution | `SlateViewer-linux-x86_64.AppImage` |
+| Debian, Ubuntu, Mint | `SlateViewer-linux-amd64.deb` |
+| Fedora, openSUSE | `SlateViewer-linux-x86_64.rpm` |
+
+The names stay the same, so `https://github.com/davezap/slate.viewer/releases/latest/download/<file>`
+always fetches the newest. CI (`.github/workflows/ci.yml`) runs `svelte-check`, the front-end build and
+`cargo test` on every push.
+
+To build on your own machine instead: `npm run release` makes the Windows installer in
+`src-tauri\target\release\bundle\nsis\`.
 
 Installing a newer version over an older one upgrades it in place; settings and recent files are kept.
+Nothing is code-signed yet, so each system warns the first time, as below.
 
 ## Installing (for colleagues)
 
-1. Run `Slate Viewer_<version>_x64-setup.exe`. It installs for your Windows account only, so no admin
+Slate Viewer works on its own as a Markdown editor. To open Metatrash spaces it also needs mtsync: see
+"Install mtsync" in the Metatrash README (a setup on Windows, one Terminal line on macOS and Linux).
+
+### Windows
+
+1. Run `SlateViewer-windows-x64-setup.exe`. It installs for your Windows account only, so no admin
    rights are needed (to `%LOCALAPPDATA%\Programs\Slate Viewer`), and adds a Start menu shortcut.
 2. The installer isn't code-signed yet, so Windows may show **"Windows protected your PC"**.
    Click **More info**, then **Run anyway**. Some company setups (Smart App Control, AppLocker)
@@ -52,12 +76,31 @@ Installing a newer version over an older one upgrades it in place; settings and 
    Default for .md Files** (it opens Settings at Slate Viewer's Default apps page; set `.md` and
    `.markdown` there), or right-click any `.md` file, choose **Open with > Choose another app**,
    pick **Slate Viewer** and tick **Always**. Windows only lets you, not an installer, pick the default.
-
 4. Right-click a folder (or the empty space inside one) or a `.md` file in Explorer and choose
    **Open in Slate Viewer**. On Windows 11 it is under **Show more options** (Shift+F10).
 
 Uninstall from **Settings > Apps > Installed apps**. The app needs Microsoft Edge WebView2, which
 Windows 10 and 11 already have; if it's missing, the installer downloads it.
+
+### macOS
+
+1. Open `SlateViewer-macos-universal.dmg` and drag **Slate Viewer** to **Applications**.
+2. The app isn't notarized by Apple yet, so the first open is refused ("Apple could not verify…").
+   Click **Done**, then open **System Settings > Privacy & Security**, scroll down and click
+   **Open Anyway** next to Slate Viewer. After that it opens normally.
+3. To open `.md` files with it: select one in Finder, **File > Get Info**, choose Slate Viewer under
+   **Open with**, then **Change All…**.
+
+Uninstall by moving Slate Viewer from Applications to the Bin.
+
+### Linux
+
+- **AppImage** (any distribution): `chmod +x SlateViewer-linux-x86_64.AppImage`, then run it.
+- **Debian/Ubuntu**: `sudo apt install ./SlateViewer-linux-amd64.deb`
+- **Fedora/openSUSE**: `sudo dnf install ./SlateViewer-linux-x86_64.rpm`
+
+The `.deb` and `.rpm` add Slate Viewer to the applications menu and to **Open with** for `.md` files,
+and the package manager updates and removes it.
 
 ## What works
 
@@ -111,7 +154,8 @@ a folder with a single note opens that note. None of this changes the saved layo
 ### Metatrash spaces
 
 Slate Viewer edits a space's local copy and leaves the syncing to **mtsync** (Metatrash Sync), which has to
-be installed already (`%LOCALAPPDATA%\Programs\mtsync\mtsync.exe` or anywhere on PATH, version 0.37.2 or later).
+be installed already (`%LOCALAPPDATA%\Programs\mtsync\mtsync.exe` on Windows, `~/.local/bin/mtsync` on macOS
+and Linux, or anywhere on PATH; version 0.37.2 or later). The mtsync installers put it there.
 The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in or `.mtsync` folder.
 
 - **File > Open Metatrash Space** (Ctrl+Alt+M), or **Open Space** in the empty Files section. Paste a space's

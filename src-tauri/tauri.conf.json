@@ -62,6 +62,17 @@
         ],
         "installerHooks": "windows/installer-hooks.nsh"
       }
+    },
+    "macOS": {
+      "signingIdentity": "-"
+    },
+    "linux": {
+      "deb": {
+        "desktopTemplate": "linux/slate-viewer.desktop"
+      },
+      "rpm": {
+        "desktopTemplate": "linux/slate-viewer.desktop"
+      }
     }
   }
 }

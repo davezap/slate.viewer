@@ -124,6 +124,8 @@ pub fn run() {
             mtsync::mtsync_add,
             mtsync::mtsync_start,
             mtsync::mtsync_log,
+            mtsync::mtsync_history,
+            mtsync::mtsync_show,
             mtsync::mtsync_login,
             mtsync::mtsync_cancel_login,
         ])

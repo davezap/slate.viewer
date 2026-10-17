@@ -1,0 +1,120 @@
+# Push a tag vX.Y.Z (matching "version" in package.json) to check, build and
+# publish a GitHub Release with Slate Viewer for Windows (setup.exe), macOS
+# (universal .dmg) and Linux (.AppImage, .deb, .rpm), plus SHA256SUMS.
+# The files have the same names in every release, so
+# https://github.com/OWNER/REPO/releases/latest/download/FILE always works.
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: version
+        run: |
+          version=$(jq -r .version package.json)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match version $version in package.json"; exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  test:
+    needs: check
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    name: Build (${{ matrix.name }})
+    needs: [check, test]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            args: --bundles nsis
+          - name: macOS
+            os: macos-latest
+            rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
+            args: --bundles dmg --target universal-apple-darwin
+          - name: Linux
+            os: ubuntu-22.04  # older glibc, so the AppImage and .deb run on more distributions
+            args: --bundles appimage,deb,rpm
+    runs-on: ${{ matrix.os }}
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+
+      - name: Tauri's Linux libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf rpm
+
+      - run: npm ci
+      - name: Build
+        run: npx tauri build ${{ matrix.args }}
+
+      # Tauri names files "Slate Viewer_0.2.0_x64-setup.exe" and so on; give
+      # them names that stay the same from release to release.
+      - name: Collect
+        shell: bash
+        run: |
+          mkdir out
+          b=src-tauri/target/release/bundle
+          case "$RUNNER_OS" in
+            Windows) cp "$b"/nsis/*-setup.exe out/SlateViewer-windows-x64-setup.exe ;;
+            macOS)   cp src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg out/SlateViewer-macos-universal.dmg ;;
+            Linux)   cp "$b"/appimage/*.AppImage out/SlateViewer-linux-x86_64.AppImage
+                     cp "$b"/deb/*.deb out/SlateViewer-linux-amd64.deb
+                     cp "$b"/rpm/*.rpm out/SlateViewer-linux-x86_64.rpm ;;
+          esac
+          ls -l out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundle-${{ matrix.name }}
+          path: out/*
+          if-no-files-found: error
+
+  release:
+    name: Publish
+    needs: [check, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum * > SHA256SUMS && cat SHA256SUMS
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=""
+          case "$VERSION" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag $prerelease \
+            --title "Slate Viewer $VERSION" --generate-notes

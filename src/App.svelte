@@ -31,6 +31,8 @@
     mtsync, sameFolder, describeState, lastSyncTime, spacePathProblem, spaceSafeName, conflictOriginal, isSignedOut, SPACE_FILE_LIMIT,
     DEFAULT_SERVER, type SpaceRef, type FolderDescription } from './lib/space';
   import QuickOpen from './lib/QuickOpen.svelte';
+  import HistoryPanel from './lib/HistoryPanel.svelte';
+  import { revisionText, versionLabel, type HistoryEntry } from './lib/history';
 
   interface LoadedDocument { path: string; text: string; hasBom: boolean }
   interface FolderListing { files: string[]; truncated: boolean }
@@ -203,6 +205,7 @@
     baseline = markdown;
     dirty = false;
     missingOnDisk = false;
+    historyStamp += 1;
     recentFileList.remember(target);
     recent = recentFileList.list();
     return true;
@@ -615,8 +618,44 @@
     }
   }
 
+  // ---- Version history (a space file's earlier versions, through mtsync) -----------
+
+  let historyOpen = $state(false);
+  /** Bumped when the open file is saved or reloaded, so the history list refreshes. */
+  let historyStamp = $state(0);
+  /** The revision Slate is comparing with, while it is. */
+  let historyRevision = $state<string | null>(null);
+  const historyFile = $derived(path && openedSpace && spaceRelative(path) !== null ? path : null);
+
+  async function compareWithRevision(entry: HistoryEntry) {
+    if (!editor || !path) return;
+    if (readOnly) {
+      await message(lockReason
+        ? `${lockReason} Earlier versions can only be compared with a document you can edit.`
+        : 'Turn off Read Only (Ctrl+Shift+R) to compare with an earlier version.', { title: 'Slate Viewer', kind: 'info' });
+      return;
+    }
+    const file = path;
+    let text: string;
+    try {
+      text = await revisionText(entry, file);
+    } catch (error) {
+      await showError(error);
+      return;
+    }
+    if (path !== file) return;
+    resolving = null;
+    try {
+      await editor.compare(text, { label: versionLabel(entry.timestamp) });
+      historyRevision = entry.revision;
+    } catch (error) {
+      await showError(error);
+    }
+  }
+
   async function onCompareEnd(detail: SlateCompareEndDetail) {
     if (!editor) return;
+    historyRevision = null;
     // Merged back to exactly what is on disk: nothing left to save.
     if (diskText !== null && toFileText(editor.getMarkdown(), format) === diskText) baseline = editor.getMarkdown();
     dirty = missingOnDisk || editor.getMarkdown() !== baseline;
@@ -654,6 +693,7 @@
     await editor.setMarkdown(doc.text);
     baseline = editor.getMarkdown();
     dirty = false;
+    historyStamp += 1;
     if (scroller) scroller.scrollTop = scrollTop;
   }
 
@@ -824,7 +864,10 @@
     if (openedSpace !== space) return;
     const state = registration?.state ?? 'service not running';
     openedSpace = { ...space, state };
-    if (syncPendingSince !== null && !syncStillPending(state, syncPendingSince)) syncPendingSince = null;
+    if (syncPendingSince !== null && !syncStillPending(state, syncPendingSince)) {
+      syncPendingSince = null;
+      historyStamp += 1; // the save has reached the space, so it is in the history now
+    }
   }
 
   /**
@@ -972,6 +1015,8 @@
             ],
           },
           { text: 'Close Fol&der', enabled: root !== null, action: closeFolder },
+          separator,
+          { text: 'Version &History', keys: 'Ctrl+Shift+H', checked: historyOpen, action: () => { historyOpen = !historyOpen; } },
           separator,
           { text: '&Save', keys: 'Ctrl+S', action: () => void once('save', save) },
           { text: 'Save &As…', keys: 'Ctrl+Shift+S', action: () => void once('save', saveAs) },
@@ -1170,6 +1215,7 @@
     // Our own find bar searches the document only (the webview's built-in one searches the whole window).
     if (key === 'f' && !shift) { handle(() => findBar?.open()); return; }
     if (key === 'e' && shift) { handle(() => toggleSection('files')); return; }
+    if (key === 'h' && shift) { handle(() => { historyOpen = !historyOpen; }); return; }
     // Inside the editor Slate handles Ctrl+Shift+O itself and tells us with slate:outline-toggle.
     if (key === 'o' && shift && !event.defaultPrevented) { handle(toggleOutline); return; }
 
@@ -1324,6 +1370,15 @@
     <div class="host" bind:this={host}></div>
     <FindBar bind:this={findBar} getHost={() => host} getEditor={() => editor} inEditor={() => editor?.getWorkspaceMode() !== 'preview'} />
   </div>
+  {#if historyOpen}
+    <HistoryPanel
+      file={historyFile}
+      stamp={historyStamp}
+      comparing={historyRevision}
+      onCompare={entry => void compareWithRevision(entry)}
+      onClose={() => { historyOpen = false; editor?.focus(); }}
+    />
+  {/if}
 </div>
 </div>
 

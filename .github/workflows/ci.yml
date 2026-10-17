@@ -1,0 +1,41 @@
+# Checks every push and pull request; release.yml runs it again before a release.
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Tauri's Linux libraries
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - run: npm ci
+      - name: svelte-check
+        run: npm run check
+      # Also makes dist/, which the Rust build embeds.
+      - name: Build the front end
+        run: npm run build
+      - name: cargo test
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked

@@ -260,6 +260,42 @@ pub async fn mtsync_log(lines: u32) -> Result<String, String> {
     Ok(format!("{}{}", out.stdout, out.stderr))
 }
 
+/// A file's changes, newest first: `mtsync history -json` as mtsync prints it (mtsync 0.41.0).
+#[tauri::command]
+pub async fn mtsync_history(file: String, limit: u32, offset: u32) -> Result<String, String> {
+    let mut args = vec!["-limit".to_string(), limit.clamp(1, 100).to_string()];
+    // -offset needs metatrash 0.41.0 on the server, so the first page leaves it out.
+    if offset > 0 {
+        args.extend(["-offset".to_string(), offset.to_string()]);
+    }
+    args.extend(["-json".to_string(), "history".to_string(), file]);
+    let out = run(None, args).await?;
+    if !out.ok {
+        return Err(history_error(&out));
+    }
+    Ok(out.stdout)
+}
+
+/// The file's text at a revision from `mtsync_history`, exactly as stored in the space.
+#[tauri::command]
+pub async fn mtsync_show(file: String, revision: String) -> Result<String, String> {
+    let out = run(None, vec!["show".into(), file, revision]).await?;
+    if !out.ok {
+        return Err(history_error(&out));
+    }
+    Ok(out.stdout)
+}
+
+/// mtsync before 0.41.0 has no history or show; say so rather than echo its usage text.
+fn history_error(out: &Output) -> String {
+    let all = format!("{}{}", out.stderr, out.stdout);
+    if all.contains("flag provided but not defined") || all.contains("unknown command") {
+        "Version history needs mtsync 0.41.0 or later. Update mtsync and try again.".into()
+    } else {
+        out.message()
+    }
+}
+
 /// Runs `mtsync login` (a browser sign-in) until it finishes or is cancelled. The sign-in
 /// URL it prints is sent to the window as `mtsync-login-url`, as a fallback link.
 #[tauri::command]
