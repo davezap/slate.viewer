@@ -3,6 +3,8 @@
   import { basename } from './paths';
   import { conflictOriginal, type FolderDescription } from './space';
   import Section from './Section.svelte';
+  import KindIcon from './KindIcon.svelte';
+  import type { RecentEntry } from './recent';
   import { displayName, isNewWindowClick, type OpenOptions } from './types';
 
   interface Props {
@@ -11,7 +13,9 @@
     truncated: boolean;
     /** The open document, relative to root, or null when it is outside the folder. */
     current: string | null;
-    recentFolders: string[];
+    recentFolders: RecentEntry[];
+    /** Whether the open folder is a plain folder or a Metatrash space. */
+    rootKind?: 'folder' | 'space';
     onOpen: (relative: string, options: OpenOptions) => void;
     onCreate: (name: string) => Promise<boolean>;
     onCloseFolder: () => void;
@@ -25,7 +29,7 @@
   }
 
   let {
-    root, files, truncated, current, recentFolders, onOpen, onCreate, onCloseFolder, onChooseFolder, onOpenFolder,
+    root, files, truncated, current, recentFolders, rootKind = 'folder', onOpen, onCreate, onCloseFolder, onChooseFolder, onOpenFolder,
     descriptions = [], reveal = null, onOpenSpace,
   }: Props = $props();
 
@@ -141,6 +145,9 @@
 </script>
 
 <Section title="Files" detail={root ? basename(root) || root : undefined} tooltip={root ? (rootPurpose ? `${root}\n${rootPurpose}` : root) : undefined}>
+  {#snippet detailIcon()}
+    {#if root}<KindIcon kind={rootKind} />{/if}
+  {/snippet}
   {#snippet actions()}
     {#if root}
       <button title="New note" aria-label="New note" onclick={startCreate}>+</button>
@@ -155,9 +162,10 @@
       {#if onOpenSpace}<button class="open-folder secondary" onclick={onOpenSpace}>Open Space…</button>{/if}
       {#if recentFolders.length}
         <p class="recent-title">Recent</p>
-        {#each recentFolders as dir (dir)}
-          <button class="row" title={dir} onclick={() => onOpenFolder(dir)}>
-            {basename(dir) || dir}<span class="where">{dir}</span>
+        {#each recentFolders as entry (entry.path)}
+          <button class="row recent" title="{entry.path}\n{entry.kind === 'space' ? 'Metatrash space' : 'Local folder'}" onclick={() => onOpenFolder(entry.path)}>
+            <KindIcon kind={entry.kind} />
+            <span class="what">{basename(entry.path) || entry.path}<span class="where">{entry.path}</span></span>
           </button>
         {/each}
       {/if}
@@ -250,5 +258,8 @@
   .open-folder:hover { filter: brightness(1.08); }
   .recent-title { margin: 10px 14px 2px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--side-muted); }
   .row .where { display: block; font-size: 11px; color: var(--side-muted); overflow: hidden; text-overflow: ellipsis; }
-  .row:has(.where) { padding-left: 14px; }
+  .row.recent { display: flex; align-items: flex-start; gap: 8px; padding-left: 14px; }
+  .row.recent :global(.kind) { margin-top: 2px; color: var(--side-muted); }
+  .row.recent :global(.kind.space) { color: var(--side-accent); }
+  .what { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 </style>

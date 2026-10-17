@@ -1,15 +1,18 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import { clearPaint, findOffsets, findRanges, paint } from './find';
+  import type { SlateEditorApi } from '../../public/slate/slate-editor';
 
   interface Props {
     /** The Slate host element. */
     getHost: () => HTMLElement | undefined;
-    /** True while Slate shows the raw Markdown textarea. */
-    isSource: () => boolean;
+    /** The mounted Slate editor. */
+    getEditor: () => SlateEditorApi | null;
+    /** True while Slate shows its CodeMirror editor (Edit or Source) rather than Preview. */
+    inEditor: () => boolean;
   }
 
-  let { getHost, isSource }: Props = $props();
+  let { getHost, getEditor, inEditor }: Props = $props();
 
   let visible = $state(false);
   let query = $state('');
@@ -17,12 +20,13 @@
   let index = $state(-1);
   let input = $state<HTMLInputElement>();
 
-  // Matches from the last search: DOM ranges in Edit/Preview, text offsets in Source.
+  // Matches from the last search: DOM ranges in Preview, text offsets in Edit and Source.
   let ranges: Range[] = [];
   let offsets: [number, number][] = [];
 
   const pane = () => getHost()?.querySelector<HTMLElement>('#previewPane') ?? null;
-  const textarea = () => getHost()?.querySelector<HTMLTextAreaElement>('#markdownEditor') ?? null;
+  // Edit and Source offsets are into getMarkdown(), which is the editor's text.
+  const sourceText = () => getEditor()?.getMarkdown() ?? '';
 
   export function isOpen() {
     return visible;
@@ -49,15 +53,15 @@
     if (!visible) return;
     visible = false;
     clearPaint();
+    getEditor()?.setSourceHighlights([]);
     // Leave the caret on the match that was showing, so the reader carries on from there.
     const current = ranges[index];
-    if (!isSource() && current) {
+    if (!inEditor() && current) {
       const selection = window.getSelection();
       selection?.removeAllRanges();
       selection?.addRange(current);
-    } else if (isSource() && offsets[index]) {
-      textarea()?.focus();
-      textarea()?.setSelectionRange(...offsets[index]);
+    } else if (inEditor() && offsets[index]) {
+      getEditor()?.selectSourceRange(...offsets[index]);
     }
     ranges = [];
     offsets = [];
@@ -70,17 +74,19 @@
 
   function search({ line, scroll = false, keep = false }: { line?: number; scroll?: boolean; keep?: boolean } = {}) {
     const previous = index;
-    if (isSource()) {
+    if (inEditor()) {
       ranges = [];
-      offsets = findOffsets(textarea()?.value ?? '', query);
+      clearPaint();
+      offsets = findOffsets(sourceText(), query);
       count = offsets.length;
     } else {
       offsets = [];
+      getEditor()?.setSourceHighlights([]);
       const root = pane();
       ranges = root ? findRanges(root, query) : [];
       count = ranges.length;
     }
-    if (!count) { index = -1; clearPaint(); return; }
+    if (!count) { index = -1; clearPaint(); getEditor()?.setSourceHighlights([]); return; }
     if (keep) index = Math.min(Math.max(previous, 0), count - 1);
     else if (line !== undefined) index = firstFromLine(line);
     else index = firstInView();
@@ -88,8 +94,8 @@
   }
 
   function firstFromLine(line: number): number {
-    if (isSource()) {
-      const lines = (textarea()?.value ?? '').split('\n');
+    if (inEditor()) {
+      const lines = sourceText().split('\n');
       const start = lines.slice(0, line).reduce((sum, l) => sum + l.length + 1, 0);
       const i = offsets.findIndex(([from]) => from >= start);
       return i < 0 ? 0 : i;
@@ -108,6 +114,7 @@
   }
 
   function firstInView(): number {
+    if (inEditor()) return firstFromLine(getEditor()?.getTopLine() ?? 0);
     const root = pane();
     if (!root) return 0;
     const top = root.getBoundingClientRect().top;
@@ -116,7 +123,9 @@
   }
 
   function show(scroll: boolean) {
-    if (isSource()) {
+    if (inEditor()) {
+      // Every match is highlighted in the editor, the current one more strongly.
+      getEditor()?.setSourceHighlights(offsets, index);
       if (scroll) scrollSource();
       return;
     }
@@ -132,14 +141,10 @@
   }
 
   function scrollSource() {
-    const editor = textarea();
     const match = offsets[index];
-    if (!editor || !match) return;
-    // A textarea only shows its selection while focused, so select now and scroll by line.
-    editor.setSelectionRange(match[0], match[1]);
-    const before = editor.value.slice(0, match[0]).split('\n').length - 1;
-    const lineHeight = parseFloat(getComputedStyle(editor).lineHeight) || 20;
-    editor.scrollTop = Math.max(0, before * lineHeight - editor.clientHeight / 3);
+    if (!match) return;
+    // Select it and bring it into view, leaving the keyboard in the find box.
+    getEditor()?.selectSourceRange(match[0], match[1], { focus: false });
   }
 
   function step(delta: number) {

@@ -149,12 +149,25 @@ export function findRegistration(list: Registration[], space: string, server: st
 }
 
 /** A short status for the title bar, from `mtsync list`'s state text. */
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** When mtsync last finished a pass ("in sync, checked Jan 2 15:04:05", local time), or null. */
+export function lastSyncTime(state: string, now = new Date()): number | null {
+  const m = /^in sync, checked (\w{3}) (\d{1,2}) (\d{1,2}):(\d{2}):(\d{2})/.exec(state);
+  const month = m ? MONTHS.indexOf(m[1]) : -1;
+  if (!m || month < 0) return null;
+  const at = new Date(now.getFullYear(), month, +m[2], +m[3], +m[4], +m[5]);
+  // No year in the state: a date ahead of now was last year (checked Dec 31, read Jan 1).
+  if (at.getTime() > now.getTime() + 86_400_000) at.setFullYear(at.getFullYear() - 1);
+  return at.getTime();
+}
+
 export function describeState(state: string): { label: string; tone: 'ok' | 'busy' | 'warn' | 'error' } {
   const checked = /^in sync, checked .*?(\d{1,2}:\d{2})(?::\d{2})?\s*$/.exec(state);
   if (checked) return { label: `Synced · ${checked[1]}`, tone: 'ok' };
   if (state.startsWith('in sync')) return { label: 'Synced', tone: 'ok' };
   if (state.startsWith('starting')) return { label: 'Syncing…', tone: 'busy' };
-  if (state.startsWith('service not running')) return { label: 'Sync not running', tone: 'warn' };
+  if (state.startsWith('service not running')) return { label: 'Sync not running', tone: 'error' };
   if (state.startsWith('error')) return { label: isSignedOut(state) ? 'Signed out' : 'Sync error', tone: 'error' };
   return { label: state || 'Unknown', tone: 'warn' };
 }

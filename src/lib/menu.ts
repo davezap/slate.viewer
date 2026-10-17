@@ -1,5 +1,6 @@
-import { Menu, type MenuOptions } from '@tauri-apps/api/menu';
+import { Menu, NativeIcon, type MenuOptions } from '@tauri-apps/api/menu';
 import type { Window } from '@tauri-apps/api/window';
+import type { RecentKind } from './recent';
 
 /** One menu, as drawn by the title bar's own menu bar (or the native menu on macOS). */
 export interface MenuItem {
@@ -9,6 +10,8 @@ export interface MenuItem {
   keys?: string;
   enabled?: boolean;
   checked?: boolean;
+  /** Drawn where the check mark goes: what a recent entry opens. */
+  icon?: RecentKind;
   action?: () => void;
   items?: MenuEntry[];
 }
@@ -31,6 +34,9 @@ function toNative(entries: MenuEntry[]): MenuOptions['items'] {
     if (isSeparator(entry)) return { item: 'Separator' as const };
     const text = entry.keys ? `${entry.text}\t${entry.keys}` : entry.text;
     if (entry.items) return { text, enabled: entry.enabled, items: toNative(entry.items) };
+    // macOS has no file or cloud icon for menus; Folder and Network are the nearest.
+    const icon = entry.icon === 'folder' ? NativeIcon.Folder : entry.icon === 'space' ? NativeIcon.Network : undefined;
+    if (icon) return { text, enabled: entry.enabled, icon, action: entry.action };
     return { text, enabled: entry.enabled, checked: entry.checked, action: entry.action };
   }) as MenuOptions['items'];
 }

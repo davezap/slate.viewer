@@ -2,6 +2,21 @@
 
 Slate Viewer is a Rust+Svelte+Tauri desktop app that integrates the Slate module to read and edit .md files.
 
+## How Metatrash, Slate and Slate Viewer fit together
+
+These three projects are parts of one whole, kept in sibling folders:
+
+- **Metatrash** (`metatrash.com - 2026`) is the service: shared spaces of text files backed by Git,
+  reached over MCP and REST, plus `mtsync`, which syncs a space with a local folder.
+- **Slate** (`Slate`) is the Markdown editor component. Slate Viewer and other hosts embed its
+  built `slate.js` and `slate.css`; fix editor bugs here, not in a host's copy.
+- **Slate Viewer** (`Slate_Viewer`) is the desktop app. It vendors Slate in `public/slate/`. For now it
+  is a handy Markdown editor that can also open Metatrash spaces (through `mtsync`). Over time it
+  becomes the desktop companion for managing Metatrash spaces, and those features come later.
+
+Metatrash's website still bundles an older Slate (0.9.2) for read-only viewing. It isn't
+upgraded yet.
+
 ## Requirements (Windows)
 
 - [Rust](https://rustup.rs) (stable, MSVC toolchain) and the Visual Studio C++ Build Tools
@@ -38,6 +53,9 @@ Installing a newer version over an older one upgrades it in place; settings and 
    `.markdown` there), or right-click any `.md` file, choose **Open with > Choose another app**,
    pick **Slate Viewer** and tick **Always**. Windows only lets you, not an installer, pick the default.
 
+4. Right-click a folder (or the empty space inside one) or a `.md` file in Explorer and choose
+   **Open in Slate Viewer**. On Windows 11 it is under **Show more options** (Shift+F10).
+
 Uninstall from **Settings > Apps > Installed apps**. The app needs Microsoft Edge WebView2, which
 Windows 10 and 11 already have; if it's missing, the installer downloads it.
 
@@ -52,7 +70,7 @@ Windows 10 and 11 already have; if it's missing, the installer downloads it.
   macOS keeps its native menu and title bar.
 - **Find in Document** (Ctrl+F) searches only the open document: every match is highlighted,
   Enter / Shift+Enter (or F3 / Shift+F3) move between them, Escape closes it and leaves the cursor on the match.
-  In Source mode the matches are counted and selected one at a time instead of all highlighted.
+  In Edit and Source every match is highlighted too, and the current one is selected.
 
 ### Sidebar
 
@@ -63,6 +81,14 @@ Windows 10 and 11 already have; if it's missing, the installer downloads it.
 - Document Nav lists the headings with checklist progress, follows along as you scroll and jumps
   to a heading when clicked.
 - Which sections are on, their sizes and the labels setting are remembered.
+
+### Opening from Explorer
+
+A file or folder opened from Explorer (double-click, **Open in Slate Viewer**, or a path on the command line)
+opens for reading: Read Only checklist mode, every sidebar section closed and the icon bar without labels.
+A folder with several notes shows Files and Document Nav (and opens its `README.md` if there is one);
+a folder with a single note opens that note. None of this changes the saved layout, and View > Read Only
+(Ctrl+Shift+R) switches to editing. Windows opened from inside the app (New Window, Open) start as before.
 
 ### Folder mode
 
@@ -78,7 +104,9 @@ Windows 10 and 11 already have; if it's missing, the installer downloads it.
   Without a folder open, they resolve next to the current document.
 - In folder mode, opening another note while this one has unsaved changes asks to save first.
   Ctrl/Shift/middle-click opens a note in a new window with the same folder.
-- File > Open Recent and the Files section (when no folder is open) list recent folders.
+- File > Open Recent lists recent files and folders together, newest first, and the Files section (when no
+  folder is open) lists recent folders. An icon marks each one as a file, a local folder or a Metatrash space
+  (a cloud); the Files title shows the same icon for the open folder.
 
 ### Metatrash spaces
 
@@ -94,15 +122,19 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
   OneDrive or Dropbox folders), registers the whole space with `mtsync add` and starts the service if needed.
   A space this computer already syncs opens from its existing folder. Then the note or folder in the address opens.
 - Opening a folder that mtsync already syncs (Open Folder, Recent) is recognised as that space too.
-- The **status chip** in the title bar shows the sync state (and conflicts, and size when near the limit).
+- The **status chip** in the title bar shows the sync state (and conflicts, and size when near the limit):
+  green when synced, orange while a save is on its way to Metatrash (until mtsync finishes a pass after it),
+  yellow when it needs a look (conflicts, a note near the size limit), red when sync isn't running or failed.
   Click it to start the service when it isn't running, sign in again when signed out, or see the recent sync log.
 - Space rules are checked when saving: names with letters, digits, `.`, `-`, `_` only (a fixed name is offered),
   at most 8 folder levels, 64 KB per file, UTF-8 without BOM. New notes get a space-safe name (`My Idea` → `my-idea.md`)
   and `[[My Idea]]` finds `my-idea.md`. Read-only spaces and the space's root `README.md` open locked.
 - Saving checks whether the file changed on disk since it was opened (for example synced in from
-  another computer) and asks whether to keep yours or use theirs.
+  another computer) and offers **Compare** or **Keep Mine**.
 - Conflict copies that mtsync keeps (`plan.conflict-20261016-140211.md`) show with a ⚠ in Files.
-  Compare them with the original and delete them yourself when done; a side-by-side compare is coming next.
+  Opening the copy or its original offers to compare them: the original opens with your copy shown
+  inline (Slate's Compare), you take or keep each difference, and **Done** asks to save the original
+  and delete the copy (it is never deleted without asking).
 - `.metatrash.json` descriptions show as tooltips on folders and files; folders that mirror GitHub show a badge.
 
 ### Documents
@@ -114,7 +146,9 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
 - **Go menu:** Back / Forward (Alt+Left / Alt+Right), Find in Document (Ctrl+F).
 - A `•` in the title while there are unsaved changes; closing a changed window asks to save.
 - Changes made by other programs: the document reloads automatically if you have no unsaved
-  changes, otherwise you are asked whether to reload or keep yours. A deleted file is marked in the title.
+  changes, otherwise you choose **Compare**, **Use Theirs** or **Keep Mine**. Compare shows the other
+  version inline in Source: red is only in theirs, green only in yours, and each difference has
+  **Keep this** / **Use …** buttons, with **Use all of …** and **Done** above. A deleted file is marked in the title.
 - Files keep their line endings (CRLF or LF), UTF-8 BOM and missing final newline when saved.
 - Relative images (`![](img/a.png)`) load from the document's folder.
 - Links: web links open in your browser; links to other `.md` files open in this window
@@ -129,11 +163,12 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
 ## Layout
 
 ```
-public/slate/        Slate 0.9.4, vendored unchanged (slate.js, slate.css, themes, .d.ts)
+public/slate/        Slate 0.11.0, vendored unchanged (slate.js, slate.css, themes, .d.ts)
 src/App.svelte       menu, file handling, link handling, Slate mount
 src/lib/             icon bar and sidebar sections, Go to File, wiki-link resolving, paths, line endings, recent lists, preferences
 src-tauri/src/       Rust: windows, single instance, file read/write, attachments, file and folder
                      watching, folder listing and search, mtsync commands (mtsync.rs)
 ```
 
-To update Slate, copy a new release's `slate.js`, `slate.css`, `slate-editor.d.ts` and `themes/` into `public/slate/`.
+To update Slate, run `npm run build` in the Slate repository, then copy its `slate.js`, `slate.css`, `slate-editor.d.ts`,
+`CHANGELOG.md` and `themes/` into `public/slate/`.

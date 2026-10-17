@@ -1,5 +1,6 @@
 <script lang="ts">
   import { accessKey, isSeparator, menuText, type MenuEntry, type MenuItem } from './menu';
+  import KindIcon from './KindIcon.svelte';
 
   interface Props {
     menus: MenuItem[];
@@ -119,7 +120,7 @@
           onpointerenter={() => onHover(i)}
           onclick={() => run(entry)}
         >
-          <span class="check">{entry.checked ? '✓' : ''}</span>
+          <span class="check">{#if entry.icon}<KindIcon kind={entry.icon} />{:else}{entry.checked ? '✓' : ''}{/if}</span>
           <span class="text">{menuText(entry.text)}</span>
           <span class="keys">{entry.keys ?? ''}</span>
           <span class="arrow">{entry.items ? '›' : ''}</span>
@@ -172,7 +173,8 @@
   .item.active:not(:disabled) { background: var(--side-accent-soft); }
   .item:disabled { opacity: .45; }
   .text { overflow: hidden; text-overflow: ellipsis; }
-  .check { color: var(--side-accent); text-align: center; }
+  .check { display: flex; justify-content: center; color: var(--side-accent); }
+  .item:not(.active) .check :global(.kind:not(.space)) { color: var(--side-muted); }
   .keys { color: var(--side-muted); font-size: 12px; padding-left: 24px; }
   .arrow { color: var(--side-muted); }
   .separator { height: 1px; margin: 4px 6px; background: var(--side-border); }

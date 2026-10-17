@@ -16,15 +16,18 @@ fn to_json(path: Option<PathBuf>) -> String {
 }
 
 /// Opens a new editor window, optionally loading `path` into it and showing `folder` in the sidebar.
-pub(crate) fn open_document_window(app: &AppHandle, path: Option<PathBuf>, folder: Option<PathBuf>) -> tauri::Result<()> {
+/// `launched` is true when the path came from a command line (Explorer's Open / Open in Slate Viewer),
+/// which opens it for reading: read only, with the sidebar sections closed.
+pub(crate) fn open_document_window(app: &AppHandle, path: Option<PathBuf>, folder: Option<PathBuf>, launched: bool) -> tauri::Result<()> {
     if let Some(path) = &path {
         documents::allow_document_folder(app, path);
     }
     let label = format!("doc-{}", WINDOW_COUNTER.fetch_add(1, Ordering::SeqCst));
     let init = format!(
-        "window.__SLATE_VIEWER_INITIAL_FILE__ = {}; window.__SLATE_VIEWER_INITIAL_FOLDER__ = {};",
+        "window.__SLATE_VIEWER_INITIAL_FILE__ = {}; window.__SLATE_VIEWER_INITIAL_FOLDER__ = {}; window.__SLATE_VIEWER_LAUNCHED__ = {};",
         to_json(path),
-        to_json(folder)
+        to_json(folder),
+        launched
     );
     WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
         .title("Slate Viewer")
@@ -44,7 +47,11 @@ fn paths_from_args(args: &[String], cwd: &Path) -> Vec<PathBuf> {
     args.iter()
         .skip(1)
         .filter(|arg| !arg.starts_with('-'))
+        // Explorer passes a drive root as "C:\" and Windows' quoting turns that into C:" .
+        .map(|arg| arg.trim_end_matches('"'))
+        .filter(|arg| !arg.is_empty())
         .map(|arg| {
+            let arg = if arg.len() == 2 && arg.ends_with(':') { format!("{arg}\\") } else { arg.to_string() };
             let path = PathBuf::from(arg);
             if path.is_absolute() { path } else { cwd.join(path) }
         })
@@ -54,15 +61,15 @@ fn paths_from_args(args: &[String], cwd: &Path) -> Vec<PathBuf> {
 /// A folder argument opens folder mode; a file argument opens that file.
 fn open_from_arg(app: &AppHandle, path: PathBuf) -> tauri::Result<()> {
     if path.is_dir() {
-        open_document_window(app, None, Some(path))
+        open_document_window(app, None, Some(path), true)
     } else {
-        open_document_window(app, Some(path), None)
+        open_document_window(app, Some(path), None, true)
     }
 }
 
 #[tauri::command]
 fn open_window(app: AppHandle, path: Option<String>, folder: Option<String>) -> Result<(), String> {
-    open_document_window(&app, path.map(PathBuf::from), folder.map(PathBuf::from)).map_err(|e| e.to_string())
+    open_document_window(&app, path.map(PathBuf::from), folder.map(PathBuf::from), false).map_err(|e| e.to_string())
 }
 
 /// Opens Windows Settings at Slate Viewer's Default Apps page (the installer registers it there).
@@ -104,6 +111,7 @@ pub fn run() {
             documents::read_document,
             documents::write_document,
             documents::save_attachment,
+            documents::delete_conflict_copy,
             watcher::watch_document,
             watcher::watch_folder,
             workspace::list_folder,
@@ -131,7 +139,7 @@ pub fn run() {
             let args: Vec<String> = std::env::args().collect();
             let paths = paths_from_args(&args, &cwd);
             if paths.is_empty() {
-                open_document_window(app.handle(), None, None)?;
+                open_document_window(app.handle(), None, None, false)?;
             }
             for path in paths {
                 open_from_arg(app.handle(), path)?;

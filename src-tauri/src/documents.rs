@@ -53,6 +53,34 @@ pub fn write_document(app: AppHandle, path: String, text: String, has_bom: bool)
     Ok(())
 }
 
+/// Deletes a sync conflict copy (`name.conflict-YYYYMMDD-HHMMSS.ext`) once the user has merged it.
+/// Refuses any other file, so this can't be used to delete documents.
+#[tauri::command]
+pub fn delete_conflict_copy(path: String) -> Result<(), String> {
+    let path = PathBuf::from(path);
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+    if !is_conflict_copy(name) {
+        return Err(format!("{} is not a sync conflict copy.", path.display()));
+    }
+    fs::remove_file(&path).map_err(|e| format!("Could not delete {}: {e}", path.display()))
+}
+
+/// `stem.conflict-YYYYMMDD-HHMMSS` with an optional extension, as mtsync names conflict copies.
+fn is_conflict_copy(name: &str) -> bool {
+    let Some(at) = name.rfind(".conflict-") else { return false };
+    if at == 0 {
+        return false;
+    }
+    let rest = &name[at + ".conflict-".len()..];
+    let (stamp, ext) = rest.split_at(rest.find('.').unwrap_or(rest.len()));
+    let b = stamp.as_bytes();
+    let stamp_ok = b.len() == 15
+        && b[8] == b'-'
+        && b.iter().enumerate().all(|(i, c)| i == 8 || c.is_ascii_digit());
+    let ext_ok = ext.is_empty() || (ext.len() > 1 && !ext[1..].contains(['.', '/', '\\']));
+    stamp_ok && ext_ok
+}
+
 /// Copies a pasted or dropped file into `<document folder>/<folder>/` and returns
 /// the Markdown-relative path it was saved under (forward slashes).
 #[tauri::command]
@@ -117,6 +145,17 @@ mod tests {
     fn sanitises_windows_reserved_characters() {
         assert_eq!(sanitise_file_name("a:b?c.png"), "a_b_c.png");
         assert_eq!(sanitise_file_name("  ..  "), "attachment");
+    }
+
+    #[test]
+    fn recognises_conflict_copies() {
+        assert!(is_conflict_copy("plan.conflict-20261016-140211.md"));
+        assert!(is_conflict_copy("notes.v2.conflict-20261016-140211.md"));
+        assert!(is_conflict_copy("README.conflict-20261016-140211"));
+        assert!(!is_conflict_copy("plan.md"));
+        assert!(!is_conflict_copy("plan.conflict-2026101-140211.md"));
+        assert!(!is_conflict_copy("plan.conflict-20261016-140211.md.bak"));
+        assert!(!is_conflict_copy(".conflict-20261016-140211.md"));
     }
 
     #[test]

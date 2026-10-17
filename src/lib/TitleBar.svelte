@@ -122,9 +122,10 @@
     display: flex; gap: 7px; width: auto; height: 28px; padding: 0 10px; margin-right: 4px;
     font: inherit; font-size: 12px; white-space: nowrap; border: 1px solid var(--side-border); border-radius: 14px;
   }
+  /* Green when synced, orange (pulsing) while syncing, yellow when it needs a look, red on errors. */
   .dot { width: 8px; height: 8px; border-radius: 50%; background: #2e9d5b; }
-  .sync.busy .dot { background: var(--side-accent); animation: pulse 1.2s ease-in-out infinite; }
-  .sync.warn .dot { background: #d68a00; }
+  .sync.busy .dot { background: #f08a24; animation: pulse 1.2s ease-in-out infinite; }
+  .sync.warn .dot { background: #d9b100; }
   .sync.error .dot { background: #c0392b; }
   @keyframes pulse { 50% { opacity: .3; } }
   .controls { display: flex; align-self: stretch; }

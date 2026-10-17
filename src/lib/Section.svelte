@@ -6,16 +6,19 @@
     /** Shown after the title, in muted text (a folder name, a heading count). */
     detail?: string;
     tooltip?: string;
+    /** Drawn just before the detail (the open folder's kind). */
+    detailIcon?: Snippet;
     actions?: Snippet;
     children: Snippet;
   }
 
-  let { title, detail, tooltip, actions, children }: Props = $props();
+  let { title, detail, tooltip, detailIcon, actions, children }: Props = $props();
 </script>
 
 <section class="section">
   <header title={tooltip}>
     <h2>{title}</h2>
+    {#if detailIcon && detail}<span class="detail-icon">{@render detailIcon()}</span>{/if}
     {#if detail}<span class="detail">{detail}</span>{/if}
     {#if actions}<div class="actions">{@render actions()}</div>{/if}
   </header>
@@ -33,6 +36,7 @@
     color: var(--side-fg);
   }
   .detail { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--side-muted); font-size: 12px; }
+  .detail-icon { display: flex; color: var(--side-muted); }
   .actions { display: flex; gap: 1px; margin-left: auto; }
   .actions :global(button) {
     width: 24px; height: 24px; padding: 0; border: 0; border-radius: 4px; cursor: pointer;

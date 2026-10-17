@@ -7,10 +7,10 @@
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
   import { open as openDialog, save as saveDialog, message } from '@tauri-apps/plugin-dialog';
   import { openUrl, openPath, revealItemInDir } from '@tauri-apps/plugin-opener';
-  import type { SlateEditorApi, SlateOutline, SlateOutlineHeading, SlateUploadedAttachment, SlateWorkspaceMode } from '../public/slate/slate-editor';
+  import type { SlateCompareEndDetail, SlateEditorApi, SlateOutline, SlateOutlineHeading, SlateUploadedAttachment, SlateWorkspaceMode } from '../public/slate/slate-editor';
   import { basename, dirname, extname, joinPath, toLocalPath } from './lib/paths';
   import { detectFormat, toFileText, NEW_FILE_FORMAT, type FileFormat } from './lib/document';
-  import { recentFileList, recentFolderList } from './lib/recent';
+  import { recentFileList, recentFolderList, byDate, type RecentEntry } from './lib/recent';
   import {
     themePref, setThemePref, zoomPref, setZoomPref, ZOOM_MIN, ZOOM_MAX, sidebarWidthPref, setSidebarWidthPref,
     sectionsPref, setSectionsPref, sectionWeightsPref, setSectionWeightsPref, activityLabelsPref, setActivityLabelsPref,
@@ -28,7 +28,7 @@
   import FindBar from './lib/FindBar.svelte';
   import OpenSpace from './lib/OpenSpace.svelte';
   import {
-    mtsync, sameFolder, describeState, spacePathProblem, spaceSafeName, conflictOriginal, isSignedOut, SPACE_FILE_LIMIT,
+    mtsync, sameFolder, describeState, lastSyncTime, spacePathProblem, spaceSafeName, conflictOriginal, isSignedOut, SPACE_FILE_LIMIT,
     DEFAULT_SERVER, type SpaceRef, type FolderDescription } from './lib/space';
   import QuickOpen from './lib/QuickOpen.svelte';
 
@@ -55,8 +55,8 @@
   let forward = $state<string[]>([]);
   let findBar = $state<ReturnType<typeof FindBar>>();
   let titleBar = $state<ReturnType<typeof TitleBar>>();
-  let recent = $state<string[]>(recentFileList.list());
-  let recentFolders = $state<string[]>(recentFolderList.list());
+  let recent = $state<RecentEntry[]>(recentFileList.list());
+  let recentFolders = $state<RecentEntry[]>(recentFolderList.list());
 
   // Folder mode
   let root = $state<string | null>(null);
@@ -66,6 +66,8 @@
 
   // Metatrash spaces (through mtsync)
   let openedSpace = $state<OpenedSpace | null>(null);
+  /** When this window last saved into the space: the status shows Syncing… until mtsync finishes a pass after it. */
+  let syncPendingSince = $state<number | null>(null);
   let spaceDialog = $state(false);
   let descriptions = $state<FolderDescription[]>([]);
   let revealFolder = $state<string | null>(null);
@@ -74,10 +76,14 @@
   let diskText: string | null = null;
   let quickOpen = $state(false);
 
+  // Opened from Explorer (a file or folder on the command line): start read only, with the
+  // sections closed and the icon bar without labels. Nothing of this is saved as a preference.
+  const launched = window.__SLATE_VIEWER_LAUNCHED__ === true;
+
   // Sidebar: an icon bar whose buttons switch sections on and off; the ones on stack in the panel.
-  let sections = $state(sectionsPref());
+  let sections = $state(launched ? { files: false, search: false, outline: false } : sectionsPref());
   let sectionWeights = $state(sectionWeightsPref());
-  let activityLabels = $state(activityLabelsPref());
+  let activityLabels = $state(launched ? false : activityLabelsPref());
   let sidebarWidth = $state(sidebarWidthPref());
   let searchSection = $state<ReturnType<typeof SearchSection>>();
   let outline = $state<SlateOutline | null>(null);
@@ -145,6 +151,7 @@
       dirty = false;
       recentFileList.remember(doc.path);
       recent = recentFileList.list();
+      void offerConflictResolve();
     } catch (error) {
       recentFileList.forget(target);
       recent = recentFileList.list();
@@ -180,12 +187,15 @@
     // Spaces store UTF-8 without a byte order mark.
     const hasBom = inSpace !== null ? false : format.hasBom;
     if (target === path && !(await diskUnchangedOrConfirmed())) return false;
+    // Saving the same text gives mtsync nothing to upload, so there's no pass to wait for.
+    const sameAsDisk = target === path && diskText === text;
     try {
       await invoke('write_document', { path: target, text, hasBom });
     } catch (error) {
       await showError(error);
       return false;
     }
+    if (inSpace !== null && !sameAsDisk) syncPendingSince = Date.now();
     if (target !== path) watch(target);
     path = target;
     format = { ...format, hasBom };
@@ -212,13 +222,13 @@
     }
     if (current.text === diskText) return true;
     const where = openedSpace && spaceRelative(path) !== null ? 'in Metatrash' : 'on disk';
-    const choice = await message(`${name} changed ${where} while you were editing.\n\nKeep your version (the other one stays in the space's history), or use theirs and lose your changes?`, {
+    const choice = await message(`${name} changed ${where} while you were editing.\n\nCompare the two versions, or keep yours and replace theirs?`, {
       title: 'Slate Viewer',
       kind: 'warning',
-      buttons: { yes: 'Keep Mine', no: 'Use Theirs', cancel: 'Cancel' },
+      buttons: { yes: 'Compare', no: 'Keep Mine', cancel: 'Cancel' },
     });
     if (choice === 'Keep Mine') return true;
-    if (choice === 'Use Theirs') await reloadFrom(current);
+    if (choice === 'Compare') await compareWithDisk(current);
     return false;
   }
 
@@ -242,13 +252,13 @@
 
   // ---- Folder mode ------------------------------------------------------------
 
-  async function openFolder(dir: string) {
+  async function openFolder(dir: string, { showFiles = true } = {}) {
     try {
       const listing = await invoke<FolderListing>('list_folder', { root: dir });
       root = dir;
       folderFiles = listing.files;
       folderTruncated = listing.truncated;
-      setSection('files', true);
+      if (showFiles) setSection('files', true);
       recentFolderList.remember(dir);
       recentFolders = recentFolderList.list();
       invoke('watch_folder', { root: dir }).catch(console.error);
@@ -288,6 +298,7 @@
       if (listed !== root) return;
       folderFiles = listing.files;
       folderTruncated = listing.truncated;
+      void offerConflictResolve();
     } catch {
       // The folder itself went away.
       closeFolder();
@@ -340,10 +351,12 @@
 
   // ---- Sidebar sections --------------------------------------------------------
 
-  function setSection(id: SectionId, on: boolean) {
+  function setSection(id: SectionId, on: boolean, { remember = true } = {}) {
     if (sections[id] === on) return;
     sections = { ...sections, [id]: on };
-    setSectionsPref(sections);
+    // Only this section's change is saved, so a window opened from Explorer (sections closed)
+    // doesn't overwrite the others' saved state.
+    if (remember) setSectionsPref({ ...sectionsPref(), [id]: on });
     // Slate keeps its own idea of whether the outline is showing (Ctrl+Shift+O inside the editor).
     if (id === 'outline' && editor && editor.isOutlineOpen() !== on) editor.setOutlineOpen(on);
   }
@@ -371,21 +384,24 @@
     headingPinned = false;
   }
 
-  /** Highlights the heading at the top of the view as the document scrolls. */
+  /** Highlights the heading at the top of the view as the document scrolls (in any mode). */
   let headingFrame = 0;
   function trackActiveHeading() {
     cancelAnimationFrame(headingFrame);
     headingFrame = requestAnimationFrame(() => {
-      if (headingPinned) return;
-      const pane = host.querySelector<HTMLElement>('#previewPane');
-      if (!pane || !sections.outline) return;
-      const top = pane.getBoundingClientRect().top + 24;
+      if (headingPinned || !editor || !outline || !sections.outline) return;
+      const top = editor.getTopLine();
+      let first: string | null = null;
       let found: string | null = null;
-      for (const heading of pane.querySelectorAll<HTMLElement>('[id^="slate-heading-"]')) {
-        if (heading.getBoundingClientRect().top > top) break;
-        found = heading.id;
-      }
-      activeHeading = found ?? pane.querySelector('[id^="slate-heading-"]')?.id ?? null;
+      const visit = (headings: SlateOutlineHeading[]) => {
+        for (const heading of headings) {
+          first ??= heading.id;
+          if (heading.line <= top) found = heading.id;
+          visit(heading.children);
+        }
+      };
+      visit(outline.headings);
+      activeHeading = found ?? first;
     });
   }
 
@@ -497,14 +513,137 @@
 
     if (dirty) {
       diskPromptOpen = true;
-      const choice = await message(`${name} has been changed by another program.\n\nReload it and lose your changes here?`, {
+      const where = openedSpace && spaceRelative(watched) !== null ? 'in Metatrash' : 'by another program';
+      const choice = await message(`${name} changed ${where} while you were editing.\n\nCompare the two versions, use theirs and lose your changes here, or keep yours (saving replaces theirs)?`, {
         title: 'Slate Viewer',
         kind: 'warning',
-        buttons: { ok: 'Reload', cancel: 'Keep Mine' },
+        buttons: { yes: 'Compare', no: 'Use Theirs', cancel: 'Keep Mine' },
       }).finally(() => { diskPromptOpen = false; });
-      if (choice !== 'Reload') return;
+      if (watched !== path) return;
+      if (choice === 'Compare') { await compareWithDisk(doc); return; }
+      if (choice !== 'Use Theirs') {
+        // Keep Mine: the user has seen theirs, so the next save replaces it without asking again.
+        diskText = doc.text;
+        return;
+      }
     }
     await reloadFrom(doc);
+    void offerConflictResolve();
+  }
+
+  // ---- Comparing versions (Slate's Compare) ----------------------------------------
+
+  /** While merging a sync conflict copy into its original: both full paths. */
+  let resolving: { copy: string; original: string } | null = null;
+  /** Conflict copies this window has already offered to resolve, so it asks once each. */
+  const offeredConflicts = new Set<string>();
+
+  /** Shows the file's current text beside the user's unsaved edits, to merge in place. */
+  async function compareWithDisk(doc: LoadedDocument) {
+    if (!editor || !path) return;
+    // The user is looking at this version now, so saving the merge mustn't warn about it again.
+    diskText = doc.text;
+    const label = openedSpace && spaceRelative(path) !== null ? 'Metatrash version' : 'Disk version';
+    try {
+      await editor.compare(doc.text, { label });
+    } catch (error) {
+      await showError(error);
+    }
+  }
+
+  function folderOf(relative: string) {
+    return relative.slice(0, relative.lastIndexOf('/') + 1);
+  }
+
+  /** The open document's conflict pair in the folder (relative paths), newest copy first. */
+  function conflictPair(): { copy: string; original: string } | null {
+    const rel = currentRelative;
+    if (!rel) return null;
+    const dir = folderOf(rel).toLowerCase();
+    const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+    const originalName = conflictOriginal(basename(rel));
+    if (originalName) {
+      const original = folderFiles.find(f => same(f, folderOf(rel) + originalName));
+      return original ? { copy: rel, original } : null;
+    }
+    const copies = folderFiles
+      .filter(f => same(folderOf(f), dir) && same(conflictOriginal(basename(f)) ?? '', basename(rel)))
+      .sort()
+      .reverse();
+    return copies.length ? { copy: copies[0], original: rel } : null;
+  }
+
+  /**
+   * When the open file is a sync conflict copy, or has one (mtsync keeps the user's version as
+   * `name.conflict-….md` when the file changed on both sides), offers to merge them once.
+   */
+  async function offerConflictResolve() {
+    if (!editor || !root || readOnly || resolving || diskPromptOpen || editor.isComparing()) return;
+    const pair = conflictPair();
+    if (!pair || offeredConflicts.has(pair.copy)) return;
+    offeredConflicts.add(pair.copy);
+    const original = basename(pair.original);
+    const choice = await message(`${basename(pair.copy)} holds your version of ${original}: sync kept it because ${original} also changed in the space.\n\nCompare the two and merge them into ${original}?`, {
+      title: 'Slate Viewer',
+      kind: 'warning',
+      buttons: { ok: 'Compare', cancel: 'Not Now' },
+    });
+    if (choice === 'Compare' && root) await resolveConflict(joinPath(root, pair.copy), joinPath(root, pair.original));
+  }
+
+  /** Opens the original and compares it with the conflict copy; the user merges into the original. */
+  async function resolveConflict(copyPath: string, originalPath: string) {
+    if (!editor) return;
+    let copy: LoadedDocument;
+    try {
+      copy = await invoke<LoadedDocument>('read_document', { path: copyPath });
+    } catch (error) {
+      await showError(error);
+      return;
+    }
+    if (path !== originalPath) {
+      if (!(await confirmDiscard())) return;
+      await loadHere(originalPath);
+      if (path !== originalPath) return;
+    }
+    resolving = { copy: copyPath, original: originalPath };
+    try {
+      await editor.compare(copy.text, { label: 'Your copy' });
+    } catch (error) {
+      resolving = null;
+      await showError(error);
+    }
+  }
+
+  async function onCompareEnd(detail: SlateCompareEndDetail) {
+    if (!editor) return;
+    // Merged back to exactly what is on disk: nothing left to save.
+    if (diskText !== null && toFileText(editor.getMarkdown(), format) === diskText) baseline = editor.getMarkdown();
+    dirty = missingOnDisk || editor.getMarkdown() !== baseline;
+    const job = resolving;
+    resolving = null;
+    if (!job || detail.reason !== 'done' || path !== job.original) return;
+
+    // Done merging a conflict: save the original, then (only if the user says so) delete the copy.
+    const copyName = basename(job.copy);
+    const choice = await message(dirty
+      ? `Save ${name} and delete the conflict copy ${copyName}?\n\nDeleting the copy removes it from the space too.`
+      : `Delete the conflict copy ${copyName}?\n\nIt is removed from the space too.`, {
+      title: 'Slate Viewer',
+      kind: 'info',
+      buttons: dirty
+        ? { yes: 'Save and Delete Copy', no: 'Save Only', cancel: 'Cancel' }
+        : { ok: 'Delete Copy', cancel: 'Keep Copy' },
+    });
+    if (choice !== 'Save and Delete Copy' && choice !== 'Save Only' && choice !== 'Delete Copy') return;
+    if (dirty && !(await save())) return;
+    if (choice === 'Save Only') return;
+    try {
+      await invoke('delete_conflict_copy', { path: job.copy });
+    } catch (error) {
+      await showError(error);
+    }
+    await refreshFolder();
   }
 
   async function reloadFrom(doc: LoadedDocument) {
@@ -537,6 +676,31 @@
     if (!editor || (readOnly && mode !== 'preview')) return;
     await editor.setWorkspaceMode(mode);
     findBar?.refresh();
+  }
+
+  /**
+   * Opened from Explorer: read only, sections closed. A folder with several notes shows Files and
+   * Document Nav (and its README.md, if it has one); a folder with a single note opens that note.
+   */
+  async function applyLaunchLayout(launchFolder: string | null | undefined) {
+    if (!editor) return;
+    if (launchFolder && root) {
+      if (folderFiles.length === 1) {
+        await openFromFolder(folderFiles[0]);
+      } else {
+        setSection('files', true, { remember: false });
+        if (folderFiles.length > 1) {
+          setSection('outline', true, { remember: false });
+          const readme = folderFiles.find(file => file.toLowerCase() === 'readme.md');
+          if (readme && !path) await openFromFolder(readme);
+        }
+      }
+    }
+    if (!readOnly) {
+      readOnly = true;
+      editor.setInteractiveTasks(true);
+      await editor.setReadOnly(true);
+    }
   }
 
   async function toggleReadOnly() {
@@ -614,11 +778,15 @@
   /** If `dir` is a folder mtsync syncs, remembers which space it is and starts showing its status. */
   async function detectSpace(dir: string) {
     openedSpace = null;
+    syncPendingSince = null;
     descriptions = [];
     try {
       const info = await mtsync.info();
       if (!info.path) return;
       const registration = (await mtsync.list()).find(r => sameFolder(r.folder, dir));
+      // Remember which kind it is, for the icons in the recent lists.
+      recentFolderList.setKind(dir, registration ? 'space' : 'folder');
+      recentFolders = recentFolderList.list();
       if (!registration || dir !== root) return;
       const server = registration.server ?? DEFAULT_SERVER;
       const access = await mtsync.spaces(server).then(rows => rows.find(r => r.space === registration.space)?.access ?? 'read and write', () => 'read and write');
@@ -627,6 +795,20 @@
       void loadDescriptions();
     } catch {
       // mtsync missing or failing: an ordinary folder.
+    }
+  }
+
+  /** Marks the recent folders mtsync syncs as spaces (and the rest as folders), for their icons. */
+  async function markRecentSpaces() {
+    try {
+      if (!recentFolders.length || !(await mtsync.info()).path) return;
+      const registrations = await mtsync.list();
+      for (const entry of recentFolderList.list()) {
+        recentFolderList.setKind(entry.path, registrations.some(r => sameFolder(r.folder, entry.path)) ? 'space' : 'folder');
+      }
+      recentFolders = recentFolderList.list();
+    } catch {
+      // mtsync missing or failing: keep what was remembered.
     }
   }
 
@@ -639,20 +821,43 @@
     if (!openedSpace) return;
     const space = openedSpace;
     const registration = await mtsync.list().then(list => list.find(r => sameFolder(r.folder, space.folder)), () => undefined);
-    if (openedSpace === space) openedSpace = { ...space, state: registration?.state ?? 'service not running' };
+    if (openedSpace !== space) return;
+    const state = registration?.state ?? 'service not running';
+    openedSpace = { ...space, state };
+    if (syncPendingSince !== null && !syncStillPending(state, syncPendingSince)) syncPendingSince = null;
   }
 
+  /**
+   * True until mtsync reports a pass that ended after `since` (in a later second, as the state has
+   * no milliseconds). mtsync checks the folder every 5 s and waits for a file to settle, so a pass
+   * normally lands within about 15 s; it gives up after 30 s, so a save mtsync skips can't leave it stuck.
+   */
+  function syncStillPending(state: string, since: number): boolean {
+    if (!state.startsWith('in sync') || Date.now() - since > 30_000) return false;
+    const last = lastSyncTime(state);
+    return last === null || last < Math.floor(since / 1000) * 1000 + 1000;
+  }
+
+  // Check often while a save is on its way up, otherwise every few seconds.
   $effect(() => {
     if (!openedSpace?.folder) return;
-    const timer = setInterval(() => void refreshSpaceState(), 7000);
+    const timer = setInterval(() => void refreshSpaceState(), syncPendingSince !== null ? 1500 : 7000);
     return () => clearInterval(timer);
+  });
+
+  /** What the open folder is, for the icon by its name: known once mtsync answers, remembered from last time until then. */
+  const rootKind = $derived.by(() => {
+    if (openedSpace) return 'space' as const;
+    const known = root ? recentFolders.find(e => sameFolder(e.path, root!))?.kind : undefined;
+    return known === 'space' ? 'space' as const : 'folder' as const;
   });
 
   const conflictCount = $derived(openedSpace ? folderFiles.filter(f => conflictOriginal(basename(f)) !== null).length : 0);
 
   const syncStatus = $derived.by(() => {
     if (!openedSpace) return null;
-    const { label, tone } = describeState(openedSpace.state);
+    const syncing = syncPendingSince !== null && syncStillPending(openedSpace.state, syncPendingSince);
+    const { label, tone } = syncing ? { label: 'Syncing…', tone: 'busy' as const } : describeState(openedSpace.state);
     const parts = [label];
     if (conflictCount) parts.push(`${conflictCount} conflict${conflictCount === 1 ? '' : 's'}`);
     if (currentRelative !== null && docBytes > SPACE_FILE_LIMIT * 0.85) parts.push(`${Math.ceil(docBytes / 1024)} of 64 KB`);
@@ -754,9 +959,11 @@
             text: 'Open &Recent',
             enabled: recent.length + recentFolders.length > 0,
             items: [
-              ...recent.map(file => ({ text: file.replace(/&/g, '&&'), action: () => void openDocument(file) })),
-              ...(recent.length && recentFolders.length ? [separator] : []),
-              ...recentFolders.map(dir => ({ text: `${dir.replace(/&/g, '&&')}  (folder)`, action: () => void openFolder(dir) })),
+              ...byDate(recent, recentFolders).map(entry => ({
+                text: entry.path.replace(/&/g, '&&'),
+                icon: entry.kind,
+                action: () => void (entry.kind === 'file' ? openDocument(entry.path) : openFolder(entry.path)),
+              })),
               separator,
               {
                 text: '&Clear Recent',
@@ -986,6 +1193,7 @@
     let disposed = false;
 
     host.addEventListener('click', onHostClick, true);
+    void markRecentSpaces();
     host.addEventListener('auxclick', onHostAuxClick, true);
     host.addEventListener('slate:change', () => {
       if (editor) dirty = missingOnDisk || editor.getMarkdown() !== baseline;
@@ -996,6 +1204,9 @@
       outline = (event as CustomEvent<SlateOutline>).detail;
       trackActiveHeading();
       scheduleFindRefresh(); // sent after every render, so the document's text nodes are new
+    });
+    host.addEventListener('slate:compare-end', event => {
+      void onCompareEnd((event as CustomEvent<SlateCompareEndDetail>).detail);
     });
     host.addEventListener('slate:outline-toggle', event => {
       setSection('outline', (event as CustomEvent<{ open: boolean }>).detail.open);
@@ -1026,9 +1237,10 @@
       if (zoom !== 1) void getCurrentWebview().setZoom(zoom);
       baseline = editor.getMarkdown();
       const initialFolder = window.__SLATE_VIEWER_INITIAL_FOLDER__;
-      if (initialFolder) await openFolder(initialFolder);
+      if (initialFolder) await openFolder(initialFolder, { showFiles: !launched });
       const initial = window.__SLATE_VIEWER_INITIAL_FILE__;
       if (initial) await loadHere(initial);
+      if (launched && (initial || initialFolder)) await applyLaunchLayout(initialFolder);
 
       cleanups.push(await getCurrentWebviewWindow().listen('document-changed', onDiskChange));
       cleanups.push(await getCurrentWebviewWindow().listen('folder-changed', onFolderChange));
@@ -1081,6 +1293,7 @@
               truncated={folderTruncated}
               current={currentRelative}
               {recentFolders}
+              {rootKind}
               onOpen={(relative, options) => void openFromFolder(relative, options)}
               onCreate={createNoteFromSidebar}
               onCloseFolder={closeFolder}
@@ -1109,7 +1322,7 @@
   {/if}
   <div class="editor">
     <div class="host" bind:this={host}></div>
-    <FindBar bind:this={findBar} getHost={() => host} isSource={() => editor?.getWorkspaceMode() === 'source'} />
+    <FindBar bind:this={findBar} getHost={() => host} getEditor={() => editor} inEditor={() => editor?.getWorkspaceMode() !== 'preview'} />
   </div>
 </div>
 </div>
