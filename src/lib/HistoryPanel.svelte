@@ -1,5 +1,6 @@
 <script lang="ts">
   import { basename } from './paths';
+  import Section from './Section.svelte';
   import { fileHistory, formatWhen, relativeWhen, describeOperation, type HistoryEntry } from './history';
 
   interface Props {
@@ -10,10 +11,9 @@
     /** The revision being compared, to mark it. */
     comparing: string | null;
     onCompare: (entry: HistoryEntry) => void;
-    onClose: () => void;
   }
 
-  let { file, stamp, comparing, onCompare, onClose }: Props = $props();
+  let { file, stamp, comparing, onCompare }: Props = $props();
 
   let entries = $state<HistoryEntry[]>([]);
   let nextOffset = $state<number | null>(null);
@@ -40,21 +40,13 @@
   }
 
   $effect(() => { void stamp; void load(file); });
-
-  function onKeydown(event: KeyboardEvent) {
-    if (event.key === 'Escape') { event.preventDefault(); onClose(); }
-  }
 </script>
 
-<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<aside class="history" aria-label="Version history" onkeydown={onKeydown}>
-  <header>
-    <div>
-      <strong>Version History</strong>
-      {#if file}<span title={file}>{basename(file)}</span>{/if}
-    </div>
-    <button class="close" type="button" title="Close (Esc)" aria-label="Close version history" onclick={onClose}>×</button>
-  </header>
+<Section title="History" detail={file ? basename(file) : undefined} tooltip={file ?? undefined}>
+  {#snippet actions()}
+    {#if file}<button type="button" title="Refresh" aria-label="Refresh history" onclick={() => void load(file)}>↻</button>{/if}
+  {/snippet}
+  <div class="history">
 
   {#if !file}
     <p class="note">Version history is kept for files in a Metatrash space. Open a space file to see its versions.</p>
@@ -94,25 +86,14 @@
       <button class="more" type="button" onclick={() => void load(file, true)}>Show Older Versions</button>
     {/if}
   {/if}
-</aside>
+  </div>
+</Section>
 
 <style>
   .history {
-    flex: none; width: 280px; height: 100%; display: flex; flex-direction: column; overflow: hidden;
-    background: var(--side-bg); color: var(--side-fg); border-left: 1px solid var(--side-border);
+    flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
     font: 13px/1.35 Inter, "Segoe UI", system-ui, sans-serif;
   }
-  header {
-    display: flex; align-items: flex-start; justify-content: space-between; gap: 8px;
-    padding: 10px 10px 8px 12px; border-bottom: 1px solid var(--side-border);
-  }
-  header div { display: flex; flex-direction: column; min-width: 0; }
-  header span { color: var(--side-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .close {
-    flex: none; width: 24px; height: 24px; padding: 0; font-size: 18px; line-height: 1;
-    color: var(--side-muted); background: none; border: 0; border-radius: 4px; cursor: pointer;
-  }
-  .close:hover { background: var(--side-hover); color: var(--side-fg); }
   .hint { margin: 8px 12px 4px; color: var(--side-muted); font-size: 12px; }
   ul { list-style: none; margin: 0; padding: 4px; overflow: auto; flex: 1 1 auto; min-height: 0; }
   li button {

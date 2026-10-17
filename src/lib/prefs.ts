@@ -47,9 +47,9 @@ export function setSidebarWidthPref(width: number): void {
 
 // ---- Sidebar sections --------------------------------------------------------
 
-export type SectionId = 'files' | 'search' | 'outline';
+export type SectionId = 'files' | 'search' | 'outline' | 'history';
 export type SectionState = Record<SectionId, boolean>;
-export const SECTION_IDS: SectionId[] = ['files', 'search', 'outline'];
+export const SECTION_IDS: SectionId[] = ['files', 'search', 'outline', 'history'];
 
 const SECTIONS_KEY = 'slate-viewer.sections';
 const WEIGHTS_KEY = 'slate-viewer.section-weights';
@@ -64,11 +64,11 @@ function readJson(key: string): Record<string, unknown> {
   }
 }
 
-/** Which sections are switched on. Files and Document Nav start on, Search off. */
+/** Which sections are switched on. Files and Document Nav start on, Search and History off. */
 export function sectionsPref(): SectionState {
   const stored = readJson(SECTIONS_KEY);
   const pick = (id: SectionId, fallback: boolean) => (typeof stored[id] === 'boolean' ? (stored[id] as boolean) : fallback);
-  return { files: pick('files', true), search: pick('search', false), outline: pick('outline', true) };
+  return { files: pick('files', true), search: pick('search', false), outline: pick('outline', true), history: pick('history', false) };
 }
 
 export function setSectionsPref(sections: SectionState): void {
@@ -82,7 +82,7 @@ export function sectionWeightsPref(): Record<SectionId, number> {
     const value = Number(stored[id]);
     return value > 0.05 && value < 20 ? value : 1;
   };
-  return { files: pick('files'), search: pick('search'), outline: pick('outline') };
+  return { files: pick('files'), search: pick('search'), outline: pick('outline'), history: pick('history') };
 }
 
 export function setSectionWeightsPref(weights: Record<SectionId, number>): void {

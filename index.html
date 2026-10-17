@@ -4,6 +4,15 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Slate Viewer</title>
+    <style>html { background: #f8f9fb; } html[data-theme="dark"] { background: #17181c; }</style>
+    <script>
+      // Apply the saved theme before anything paints (App.svelte keeps it up to date after).
+      try {
+        const pref = localStorage.getItem('slate-viewer.theme');
+        const dark = pref === 'dark' || (pref !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+      } catch {}
+    </script>
     <link rel="stylesheet" href="/slate/slate.css" />
     <script src="/slate/slate.js"></script>
   </head>

@@ -83,7 +83,7 @@
   const launched = window.__SLATE_VIEWER_LAUNCHED__ === true;
 
   // Sidebar: an icon bar whose buttons switch sections on and off; the ones on stack in the panel.
-  let sections = $state(launched ? { files: false, search: false, outline: false } : sectionsPref());
+  let sections = $state(launched ? { files: false, search: false, outline: false, history: false } : sectionsPref());
   let sectionWeights = $state(sectionWeightsPref());
   let activityLabels = $state(launched ? false : activityLabelsPref());
   let sidebarWidth = $state(sidebarWidthPref());
@@ -620,7 +620,6 @@
 
   // ---- Version history (a space file's earlier versions, through mtsync) -----------
 
-  let historyOpen = $state(false);
   /** Bumped when the open file is saved or reloaded, so the history list refreshes. */
   let historyStamp = $state(0);
   /** The revision Slate is comparing with, while it is. */
@@ -704,6 +703,14 @@
     host.dataset.theme = resolved;
     document.documentElement.dataset.theme = resolved;
     void appWindow.setTheme(theme === 'system' ? null : theme).catch(() => {});
+  }
+
+  /** Windows start hidden (see open_document_window in lib.rs) until the theme is applied. */
+  let windowShown = false;
+  function showWindow() {
+    if (windowShown) return;
+    windowShown = true;
+    void appWindow.show().catch(() => {});
   }
 
   function chooseTheme(next: ThemePref) {
@@ -1016,8 +1023,6 @@
           },
           { text: 'Close Fol&der', enabled: root !== null, action: closeFolder },
           separator,
-          { text: 'Version &History', keys: 'Ctrl+Shift+H', checked: historyOpen, action: () => { historyOpen = !historyOpen; } },
-          separator,
           { text: '&Save', keys: 'Ctrl+S', action: () => void once('save', save) },
           { text: 'Save &As…', keys: 'Ctrl+Shift+S', action: () => void once('save', saveAs) },
           separator,
@@ -1038,6 +1043,7 @@
           { text: '&Files', keys: 'Ctrl+Shift+E', checked: sections.files, action: () => toggleSection('files') },
           { text: 'Searc&h', checked: sections.search, action: () => toggleSection('search') },
           { text: 'Document &Navigation', keys: 'Ctrl+Shift+O', checked: sections.outline, action: toggleOutline },
+          { text: 'Version Histor&y', keys: 'Ctrl+Shift+H', checked: sections.history, action: () => toggleSection('history') },
           { text: 'Sidebar &Labels', checked: activityLabels, action: toggleActivityLabels },
           separator,
           {
@@ -1067,7 +1073,11 @@
       },
       {
         text: '&Help',
-        items: [{ text: '&About Slate Viewer', action: () => void showAbout() }],
+        items: [
+          { text: 'Check for &Updates…', action: () => void invoke('check_for_updates').catch(console.error) },
+          { separator: true },
+          { text: '&About Slate Viewer', action: () => void showAbout() },
+        ],
       },
   ]);
 
@@ -1215,7 +1225,7 @@
     // Our own find bar searches the document only (the webview's built-in one searches the whole window).
     if (key === 'f' && !shift) { handle(() => findBar?.open()); return; }
     if (key === 'e' && shift) { handle(() => toggleSection('files')); return; }
-    if (key === 'h' && shift) { handle(() => { historyOpen = !historyOpen; }); return; }
+    if (key === 'h' && shift) { handle(() => toggleSection('history')); return; }
     // Inside the editor Slate handles Ctrl+Shift+O itself and tells us with slate:outline-toggle.
     if (key === 'o' && shift && !event.defaultPrevented) { handle(toggleOutline); return; }
 
@@ -1280,6 +1290,7 @@
       });
       outline = editor.getOutline();
       applyTheme();
+      showWindow();
       if (zoom !== 1) void getCurrentWebview().setZoom(zoom);
       baseline = editor.getMarkdown();
       const initialFolder = window.__SLATE_VIEWER_INITIAL_FOLDER__;
@@ -1296,7 +1307,13 @@
         if (await confirmDiscard()) await appWindow.destroy();
       }));
       if (disposed) cleanups.forEach(fn => fn());
-    })().catch(showError);
+    })().catch(error => {
+      showWindow();
+      showError(error);
+    });
+    // In case Slate never finishes mounting, don't leave an invisible window behind.
+    const showTimer = setTimeout(showWindow, 3000);
+    cleanups.push(() => clearTimeout(showTimer));
 
     return () => {
       disposed = true;
@@ -1357,6 +1374,13 @@
               onOpen={(relative, options) => void openFromFolder(relative, options)}
               onSearch={searchFolder}
             />
+          {:else if id === 'history'}
+            <HistoryPanel
+              file={historyFile}
+              stamp={historyStamp}
+              comparing={historyRevision}
+              onCompare={entry => void compareWithRevision(entry)}
+            />
           {:else}
             <OutlineSection {outline} active={activeHeading} onReveal={revealHeading} />
           {/if}
@@ -1370,15 +1394,6 @@
     <div class="host" bind:this={host}></div>
     <FindBar bind:this={findBar} getHost={() => host} getEditor={() => editor} inEditor={() => editor?.getWorkspaceMode() !== 'preview'} />
   </div>
-  {#if historyOpen}
-    <HistoryPanel
-      file={historyFile}
-      stamp={historyStamp}
-      comparing={historyRevision}
-      onCompare={entry => void compareWithRevision(entry)}
-      onClose={() => { historyOpen = false; editor?.focus(); }}
-    />
-  {/if}
 </div>
 </div>
 

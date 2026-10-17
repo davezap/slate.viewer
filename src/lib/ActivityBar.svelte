@@ -30,6 +30,12 @@
       keys: 'Ctrl+Shift+O',
       icon: 'M4 6h2M9 6h11M6.5 12h2M11.5 12h8.5M6.5 18h2M11.5 18h8.5',
     },
+    {
+      id: 'history',
+      label: 'History',
+      keys: 'Ctrl+Shift+H',
+      icon: 'M4.5 12a7.5 7.5 0 1 0 2.2-5.3M4.5 4.5v3h3M12 8v4.2l2.8 1.8',
+    },
   ];
 </script>
 

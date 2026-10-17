@@ -125,6 +125,8 @@ const serverArg = (server: string) => (server === DEFAULT_SERVER ? null : server
 
 export const mtsync = {
   info: () => invoke<MtsyncInfo>('mtsync_info'),
+  /** Downloads mtsync from the latest Metatrash release (checksum checked), installs it and starts its service. */
+  setup: () => invoke<string>('mtsync_setup'),
   spaces: (server = DEFAULT_SERVER) => invoke<SpaceRow[]>('mtsync_spaces', { server: serverArg(server) }),
   list: () => invoke<Registration[]>('mtsync_list'),
   add: (space: string, folder: string, server = DEFAULT_SERVER) =>

@@ -1,11 +1,13 @@
 mod documents;
 mod mtsync;
+mod updates;
 mod watcher;
 mod workspace;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use tauri::window::Color;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_window_state::StateFlags;
 
@@ -37,6 +39,10 @@ pub(crate) fn open_document_window(app: &AppHandle, path: Option<PathBuf>, folde
         .decorations(cfg!(target_os = "macos"))
         // Let Slate receive HTML5 file drops (paste/drop attachments).
         .disable_drag_drop_handler()
+        // Start hidden on a dark background; App.svelte shows the window once the saved theme
+        // is applied, so it never flashes white on a dark desktop.
+        .visible(false)
+        .background_color(Color(0x17, 0x18, 0x1c, 0xff))
         .initialization_script(init)
         .build()?;
     Ok(())
@@ -100,7 +106,8 @@ pub fn run() {
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 // Decorations are decided by the app (see open_document_window), not remembered.
-                .with_state_flags(StateFlags::all() & !StateFlags::DECORATIONS)
+                // Visibility neither: windows start hidden until the theme is applied.
+                .with_state_flags(StateFlags::all() & !StateFlags::DECORATIONS & !StateFlags::VISIBLE)
                 .build(),
         )
         .plugin(tauri_plugin_dialog::init())
@@ -128,15 +135,19 @@ pub fn run() {
             mtsync::mtsync_show,
             mtsync::mtsync_login,
             mtsync::mtsync_cancel_login,
+            updates::mtsync_setup,
+            updates::check_for_updates,
         ])
         .manage(watcher::DocumentWatchers::default())
         .manage(mtsync::Mtsync::default())
+        .manage(updates::Updates::default())
         .on_window_event(|window, event| {
             if let WindowEvent::Destroyed = event {
                 watcher::forget_window(window.app_handle(), window.label());
             }
         })
         .setup(|app| {
+            updates::start(app.handle());
             let cwd = std::env::current_dir().unwrap_or_default();
             let args: Vec<String> = std::env::args().collect();
             let paths = paths_from_args(&args, &cwd);

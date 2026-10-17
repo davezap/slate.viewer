@@ -29,6 +29,7 @@
   let folder = $state('');
   let working = $state('');
   let field = $state<HTMLInputElement>();
+  let settingUp = $state(false);
 
   const missing = $derived(info !== null && (!info.path || !info.supported));
 
@@ -56,6 +57,21 @@
       if (step === 'signing-in') void mtsync.cancelLogin();
     };
   });
+
+  /** Installs or updates mtsync, then carries on as if it had been there all along. */
+  async function setUp() {
+    error = '';
+    settingUp = true;
+    try {
+      await mtsync.setup();
+      info = await mtsync.info();
+      if (!missing) await loadSpaces();
+    } catch (e) {
+      error = String(e);
+    } finally {
+      settingUp = false;
+    }
+  }
 
   async function connect() {
     error = '';
@@ -129,25 +145,37 @@
   }
 
   function onKeydown(event: KeyboardEvent) {
-    if (event.key === 'Escape' && step !== 'signing-in') { event.preventDefault(); onClose(); }
+    if (event.key === 'Escape' && step !== 'signing-in' && !settingUp) { event.preventDefault(); onClose(); }
   }
 </script>
 
 <svelte:window onkeydown={onKeydown} />
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-<div class="backdrop" onclick={() => { if (step !== 'signing-in') onClose(); }}>
+<div class="backdrop" onclick={() => { if (step !== 'signing-in' && !settingUp) onClose(); }}>
   <div class="panel" role="dialog" tabindex="-1" aria-label="Open Space" onclick={event => event.stopPropagation()}>
     <h2>Open Space</h2>
 
-    {#if info && !info.path}
-      <p>Opening a space needs <b>mtsync</b>, the Metatrash Sync program, which isn't on this computer yet.</p>
-      <p class="muted">Put the mtsync program at <code>{info.installHint}</code> (or anywhere on your PATH), run <code>mtsync install</code> once, then try again.</p>
-      <div class="buttons"><button class="primary" onclick={onClose}>OK</button></div>
-    {:else if info && !info.supported}
-      <p>This computer has {info.version ?? 'an old mtsync'}; Slate Viewer needs mtsync {info.minVersion} or later.</p>
-      <p class="muted">Run <code>mtsync stop</code>, replace <code>{info.path}</code> with the new version, then <code>mtsync start</code>.</p>
-      <div class="buttons"><button class="primary" onclick={onClose}>OK</button></div>
+    {#if settingUp}
+      <p>Setting up Metatrash Sync…</p>
+      <p class="muted">Downloading mtsync from the Metatrash release, checking it and starting it.</p>
+    {:else if info && missing}
+      {#if !info.path}
+        <p>Spaces are kept in sync by <b>Metatrash Sync</b> (mtsync), a small helper that isn't on this computer yet.</p>
+        <p class="muted">Set Up downloads it from the Metatrash release, checks it, and starts it at every login. It installs for you only, so no admin rights are needed.</p>
+      {:else}
+        <p>This computer has {info.version ?? 'an old mtsync'}; Slate Viewer needs mtsync {info.minVersion} or later.</p>
+        <p class="muted">Update downloads the latest one and restarts it. Your sign-in and synced folders are kept.</p>
+      {/if}
+      {#if error}
+        <p class="error">{error}</p>
+        <p class="muted">To install it by hand instead, put mtsync at <code>{info.installHint}</code> and run <code>mtsync install</code> once.</p>
+      {/if}
+      <div class="buttons">
+        <span class="grow"></span>
+        <button onclick={onClose}>Cancel</button>
+        <button class="primary" onclick={() => void setUp()}>{info.path ? 'Update' : 'Set Up'}</button>
+      </div>
     {:else if step === 'pick'}
       <p class="muted">Paste a space's address, or type <code>owner/space</code> (add <code>/folder</code> or <code>/note.md</code> to go straight there).</p>
       <input

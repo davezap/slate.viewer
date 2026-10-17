@@ -1,6 +1,8 @@
 # Push a tag vX.Y.Z (matching "version" in package.json) to check, build and
 # publish a GitHub Release with Slate Viewer for Windows (setup.exe), macOS
-# (universal .dmg) and Linux (.AppImage, .deb, .rpm), plus SHA256SUMS.
+# (universal .dmg) and Linux (.AppImage, .deb, .rpm), plus SHA256SUMS and
+# slateviewer.json (version, URL, SHA-256 and size of each, which the app's
+# update check reads).
 # The files have the same names in every release, so
 # https://github.com/OWNER/REPO/releases/latest/download/FILE always works.
 name: Release
@@ -66,7 +68,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf rpm
+          sudo apt-get install -y -q libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev patchelf rpm
 
       - run: npm ci
       - name: Build
@@ -107,9 +109,25 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - name: Checksums
+      - name: Checksums and slateviewer.json
         working-directory: dist
-        run: sha256sum * > SHA256SUMS && cat SHA256SUMS
+        run: |
+          sha256sum * > SHA256SUMS
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME"
+          entry() { # key file
+            jq -n --arg k "$1" --arg name "$2" --arg url "$base/$2" \
+              --arg sha "$(sha256sum "$2" | cut -d' ' -f1)" --argjson size "$(stat -c %s "$2")" \
+              '{($k): {name: $name, url: $url, sha256: $sha, size: $size}}'
+          }
+          {
+            entry windows-x64 SlateViewer-windows-x64-setup.exe
+            entry macos-universal SlateViewer-macos-universal.dmg
+            entry linux-appimage SlateViewer-linux-x86_64.AppImage
+            entry linux-deb SlateViewer-linux-amd64.deb
+            entry linux-rpm SlateViewer-linux-x86_64.rpm
+          } | jq -s --arg v "$VERSION" --arg tag "$GITHUB_REF_NAME" \
+              '{version: $v, tag: $tag, files: add}' > slateviewer.json
+          cat SHA256SUMS slateviewer.json
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}

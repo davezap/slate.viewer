@@ -16,8 +16,8 @@ use serde::Serialize;
 use tauri::{Emitter, EventTarget, State, WebviewWindow};
 
 /// The oldest mtsync with everything the app relies on (windowless `mtsync start`).
-const MIN_VERSION: (u32, u32, u32) = (0, 37, 2);
-const DEFAULT_SERVER: &str = "https://metatrash.com";
+pub(crate) const MIN_VERSION: (u32, u32, u32) = (0, 37, 2);
+pub(crate) const DEFAULT_SERVER: &str = "https://metatrash.com";
 
 #[derive(Default)]
 pub struct Mtsync {
@@ -57,14 +57,14 @@ pub struct Registration {
 
 #[derive(Serialize)]
 pub struct Output {
-    ok: bool,
-    stdout: String,
+    pub(crate) ok: bool,
+    pub(crate) stdout: String,
     stderr: String,
 }
 
 impl Output {
     /// The last non-empty line of stderr (or stdout), which is where mtsync puts its message.
-    fn message(&self) -> String {
+    pub(crate) fn message(&self) -> String {
         last_line(&self.stderr).or_else(|| last_line(&self.stdout)).unwrap_or_else(|| "mtsync failed.".into())
     }
 }
@@ -73,11 +73,11 @@ fn last_line(text: &str) -> Option<String> {
     text.lines().rev().map(str::trim).find(|l| !l.is_empty()).map(String::from)
 }
 
-fn exe_name() -> &'static str {
+pub(crate) fn exe_name() -> &'static str {
     if cfg!(windows) { "mtsync.exe" } else { "mtsync" }
 }
 
-fn install_folder() -> Option<PathBuf> {
+pub(crate) fn install_folder() -> Option<PathBuf> {
     if cfg!(windows) {
         std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("Programs").join("mtsync"))
     } else {
@@ -86,7 +86,7 @@ fn install_folder() -> Option<PathBuf> {
 }
 
 /// mtsync on PATH, then in the usual per-user install folder.
-fn find_binary() -> Option<PathBuf> {
+pub(crate) fn find_binary() -> Option<PathBuf> {
     let on_path = std::env::var_os("PATH")
         .map(|paths| std::env::split_paths(&paths).map(|dir| dir.join(exe_name())).collect::<Vec<_>>())
         .unwrap_or_default();
@@ -111,7 +111,7 @@ fn command(binary: &Path, server: Option<&str>, args: &[&str]) -> Command {
     cmd
 }
 
-fn run_blocking(server: Option<&str>, args: &[&str]) -> Result<Output, String> {
+pub(crate) fn run_blocking(server: Option<&str>, args: &[&str]) -> Result<Output, String> {
     let binary = find_binary().ok_or("mtsync isn't installed on this computer.")?;
     let out = command(&binary, server, args)
         .output()
@@ -132,7 +132,7 @@ async fn run(server: Option<String>, args: Vec<String>) -> Result<Output, String
     .map_err(|e| e.to_string())?
 }
 
-fn parse_version(text: &str) -> Option<(u32, u32, u32)> {
+pub(crate) fn parse_version(text: &str) -> Option<(u32, u32, u32)> {
     let word = text
         .split_whitespace()
         .map(|w| w.trim_start_matches('v'))

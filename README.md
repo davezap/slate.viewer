@@ -17,6 +17,22 @@ These three projects are parts of one whole, kept in sibling folders:
 Metatrash's website still bundles an older Slate (0.9.2) for read-only viewing. It isn't
 upgraded yet.
 
+## Download
+
+The latest release, for each computer (all [releases](https://github.com/davezap/slate.viewer/releases)):
+
+| Computer | Installer |
+| --- | --- |
+| Windows 10/11 (also Windows on Arm) | [SlateViewer-windows-x64-setup.exe](https://github.com/davezap/slate.viewer/releases/latest/download/SlateViewer-windows-x64-setup.exe) |
+| Mac (Apple silicon and Intel) | [SlateViewer-macos-universal.dmg](https://github.com/davezap/slate.viewer/releases/latest/download/SlateViewer-macos-universal.dmg) |
+| Linux, any distribution | [SlateViewer-linux-x86_64.AppImage](https://github.com/davezap/slate.viewer/releases/latest/download/SlateViewer-linux-x86_64.AppImage) |
+| Debian, Ubuntu, Mint | [SlateViewer-linux-amd64.deb](https://github.com/davezap/slate.viewer/releases/latest/download/SlateViewer-linux-amd64.deb) |
+| Fedora, openSUSE | [SlateViewer-linux-x86_64.rpm](https://github.com/davezap/slate.viewer/releases/latest/download/SlateViewer-linux-x86_64.rpm) |
+
+Checksums: [SHA256SUMS](https://github.com/davezap/slate.viewer/releases/latest/download/SHA256SUMS).
+Nothing else is needed: the first time you open a Metatrash space, Slate Viewer offers to set up
+Metatrash Sync (mtsync) for you. [Installing](#installing-for-colleagues) below covers the first-run warnings.
+
 ## Requirements (Windows)
 
 - [Rust](https://rustup.rs) (stable, MSVC toolchain) and the Visual Studio C++ Build Tools
@@ -42,16 +58,9 @@ GitHub Actions builds and publishes the installers (`.github/workflows/release.y
 3. The workflow runs the checks, builds on Windows, macOS and Linux, and publishes a GitHub Release
    with the files below and `SHA256SUMS`. Its notes list the commits since the last release.
 
-| Computer | File |
-| --- | --- |
-| Windows 10/11 | `SlateViewer-windows-x64-setup.exe` (also runs on Windows on Arm) |
-| Mac (Apple silicon and Intel) | `SlateViewer-macos-universal.dmg` |
-| Linux, any distribution | `SlateViewer-linux-x86_64.AppImage` |
-| Debian, Ubuntu, Mint | `SlateViewer-linux-amd64.deb` |
-| Fedora, openSUSE | `SlateViewer-linux-x86_64.rpm` |
-
-The names stay the same, so `https://github.com/davezap/slate.viewer/releases/latest/download/<file>`
-always fetches the newest. CI (`.github/workflows/ci.yml`) runs `svelte-check`, the front-end build and
+They are the files listed under [Download](#download). The names stay the same, so
+`https://github.com/davezap/slate.viewer/releases/latest/download/<file>` always fetches the newest.
+CI (`.github/workflows/ci.yml`) runs `svelte-check`, the front-end build and
 `cargo test` on every push.
 
 To build on your own machine instead: `npm run release` makes the Windows installer in
@@ -62,8 +71,8 @@ Nothing is code-signed yet, so each system warns the first time, as below.
 
 ## Installing (for colleagues)
 
-Slate Viewer works on its own as a Markdown editor. To open Metatrash spaces it also needs mtsync: see
-"Install mtsync" in the Metatrash README (a setup on Windows, one Terminal line on macOS and Linux).
+Slate Viewer works on its own as a Markdown editor. Opening a Metatrash space the first time offers
+**Set Up**, which installs Metatrash Sync (mtsync) for you; see [Updates and mtsync](#updates-and-mtsync).
 
 ### Windows
 
@@ -102,6 +111,25 @@ Uninstall by moving Slate Viewer from Applications to the Bin.
 The `.deb` and `.rpm` add Slate Viewer to the applications menu and to **Open with** for `.md` files,
 and the package manager updates and removes it.
 
+## Updates and mtsync
+
+- **mtsync is set up on demand.** Open Space on a computer without mtsync (or with one older than
+  Slate Viewer needs) shows **Set Up** (or **Update**). It downloads the build for this computer named in
+  the latest Metatrash release's `mtsync.json`, checks its SHA-256 and size, puts it in
+  `%LOCALAPPDATA%\Programs\mtsync` (Windows) or `~/.local/bin` (macOS, Linux), and runs `mtsync install`
+  so the sync service starts at every login. No terminal and no admin rights. People who never open a
+  space never get the service.
+- **Update checks** run 15 seconds after launch and then every 12 hours, and from **Help > Check for Updates**:
+  - mtsync, when installed, is updated quietly when the release has a newer one (stop, replace, start;
+    sign-in and folders are kept).
+  - Slate Viewer asks when its release (`slateviewer.json`) has a newer version. On Windows **Update**
+    downloads the setup, checks it and runs it; on macOS and Linux it opens the download. **Later**
+    skips that version until the next one.
+- **Server changes.** The check also reads `https://metatrash.com/api/v1/tool-schema.json`. Its `clients`
+  block names the oldest mtsync and Slate Viewer the server works with: a too-old mtsync is updated at
+  once, and a too-old Slate Viewer asks to update even if that version was skipped.
+- The code is `src-tauri/src/updates.rs`. Everything downloaded is checked against its SHA-256 first.
+
 ## What works
 
 ### Title bar and find
@@ -117,12 +145,15 @@ and the package manager updates and removes it.
 
 ### Sidebar
 
-- A slim bar of icons on the left switches three sections on and off: **Files** (Ctrl+Shift+E),
-  **Search** (Ctrl+Shift+F) and **Document Nav** (Ctrl+Shift+O). Any that are on stack in the panel
+- A slim bar of icons on the left switches four sections on and off: **Files** (Ctrl+Shift+E),
+  **Search** (Ctrl+Shift+F), **Document Nav** (Ctrl+Shift+O) and **History** (Ctrl+Shift+H). Any that are on stack in the panel
   next to it; drag the lines between them to share out the height, and the panel's edge to resize it.
 - The **»** button at the bottom shows the section names next to the icons (View > Sidebar Labels).
 - Document Nav lists the headings with checklist progress, follows along as you scroll and jumps
   to a heading when clicked.
+- History lists a space file's earlier versions (from `mtsync history`, which needs mtsync 0.41.0).
+  Picking one compares it with the document inline (Slate's Compare): take parts or all of it,
+  press **Done**, then save to restore. Deleted entries have no text to compare.
 - Which sections are on, their sizes and the labels setting are remembered.
 
 ### Opening from Explorer
@@ -186,7 +217,7 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
 - **File menu:** New Window (Ctrl+N), Open (Ctrl+O), Open Recent, Save (Ctrl+S), Save As (Ctrl+Shift+S),
   Print (Ctrl+P, includes Microsoft Print to PDF), Close Window (Ctrl+W).
 - **View menu:** Edit / Preview / Source (Ctrl+1/2/3), Read Only checklist mode (Ctrl+Shift+R:
-  text locked, task boxes still tick), Files / Search / Document Navigation, Theme (system, light, dark), Zoom (Ctrl+= / Ctrl+- / Ctrl+0).
+  text locked, task boxes still tick), Files / Search / Document Navigation / Version History, Theme (system, light, dark), Zoom (Ctrl+= / Ctrl+- / Ctrl+0).
 - **Go menu:** Back / Forward (Alt+Left / Alt+Right), Find in Document (Ctrl+F).
 - A `•` in the title while there are unsaved changes; closing a changed window asks to save.
 - Changes made by other programs: the document reloads automatically if you have no unsaved
@@ -201,7 +232,7 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
   or are shown in Explorer. In Edit mode use Ctrl+click to follow a link.
 - Pasted or dropped files are copied into an `assets` folder next to the document and linked relatively.
   The document has to be saved first.
-- Window size and position, theme, zoom and the last editor mode are remembered.
+- Window size and position, theme, zoom and the last editor mode are remembered. A window stays hidden until its theme is applied, so it doesn't flash white on start.
 - `.md` / `.markdown` file association in the installer; opening a second file reuses the running app.
 
 ## Layout
