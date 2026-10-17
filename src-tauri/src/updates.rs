@@ -13,7 +13,7 @@
 //! Everything downloaded is checked against its SHA-256 before use.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -152,11 +152,6 @@ fn viewer_platform() -> &'static str {
     }
 }
 
-fn run_mtsync(args: &'static [&'static str]) -> Result<(), String> {
-    let out = mtsync::run_blocking(None, args)?;
-    if out.ok { Ok(()) } else { Err(out.message()) }
-}
-
 fn installed_mtsync() -> Option<Version> {
     let out = mtsync::run_blocking(None, &["version"]).ok().filter(|o| o.ok)?;
     version(&out.stdout)
@@ -169,49 +164,130 @@ async fn install_mtsync() -> Result<String, String> {
     let platform = mtsync_platform().ok_or("There's no mtsync build for this computer.")?;
     let asset = manifest.files.get(&platform).ok_or_else(|| format!("The mtsync release has no {platform} build."))?;
     let bytes = download(asset).await?;
-    tauri::async_runtime::spawn_blocking(move || place_mtsync(&bytes))
+    let want = manifest.version.clone();
+    tauri::async_runtime::spawn_blocking(move || place_mtsync(&bytes, &want))
         .await
         .map_err(|e| e.to_string())??;
     Ok(manifest.version)
 }
 
-fn place_mtsync(bytes: &[u8]) -> Result<(), String> {
+/// One install or update at a time (Open Space's Set Up and the update check can meet).
+static PLACING: Mutex<()> = Mutex::new(());
+
+/// Runs a particular mtsync program (not whichever one PATH finds first).
+fn run_at(binary: &Path, args: &[&str]) -> Result<mtsync::Output, String> {
+    let out = mtsync::command(binary, None, args).output().map_err(|e| format!("Could not run {}: {e}", binary.display()))?;
+    Ok(mtsync::Output::from(out))
+}
+
+fn version_of(binary: &Path) -> Option<Version> {
+    run_at(binary, &["version"]).ok().filter(|o| o.ok).and_then(|o| version(&o.stdout))
+}
+
+/// Puts the checked download in place of the mtsync this computer uses, in this order, stopping
+/// at the first problem with the old mtsync left as it was:
+/// 1. Write the new program next to the old one and run `version` on it: it must run here and be
+///    the version the release names.
+/// 2. Stop the old service and take it off the login items (`mtsync uninstall`, which waits for
+///    the service to exit; `mtsync stop` for versions without it).
+/// 3. Keep the old program as a backup and move the new one into its place (same path).
+/// 4. `mtsync install` with the new program: the login item (Run key, systemd unit or
+///    LaunchAgent) is rewritten to this path, so the service can't keep starting another copy,
+///    and it returns once the service runs.
+/// 5. Check the program at that path is the new version, then delete the backup.
+///
+/// If 4 or 5 fails, the backup goes back and its service is started again.
+fn place_mtsync(bytes: &[u8], want: &str) -> Result<(), String> {
+    let _one = PLACING.lock().unwrap_or_else(|e| e.into_inner());
+    let want_version = version(want).ok_or("The release names no version.")?;
     // Replace the copy that runs (it may be on PATH), else use the usual per-user folder.
     let existing = mtsync::find_binary();
     let target = match &existing {
         Some(path) => path.clone(),
         None => mtsync::install_folder().ok_or("No folder to install mtsync in.")?.join(mtsync::exe_name()),
     };
-    let dir = target.parent().ok_or("No folder to install mtsync in.")?;
-    std::fs::create_dir_all(dir).map_err(|e| format!("Could not create {}: {e}", dir.display()))?;
-    let temp = dir.join(format!("{}.download", mtsync::exe_name()));
-    std::fs::write(&temp, bytes).map_err(|e| format!("Could not write {}: {e}", temp.display()))?;
+    let dir = target.parent().ok_or("No folder to install mtsync in.")?.to_path_buf();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Could not create {}: {e}", dir.display()))?;
+    let (new_name, old_name) = if cfg!(windows) { ("mtsync-new.exe", "mtsync-old.exe") } else { ("mtsync.new", "mtsync.old") };
+    let fresh = dir.join(new_name);
+    let backup = dir.join(old_name);
+
+    // 1. The new program runs and is what the release says.
+    std::fs::write(&fresh, bytes).map_err(|e| format!("Could not write {}: {e}", fresh.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o755));
+        let _ = std::fs::set_permissions(&fresh, std::fs::Permissions::from_mode(0o755));
     }
+    if version_of(&fresh) != Some(want_version) {
+        let _ = std::fs::remove_file(&fresh);
+        return Err(format!("The downloaded mtsync doesn't run on this computer as version {want}, so nothing was changed."));
+    }
+
+    // 2. Stop the old service.
+    if let Some(old) = &existing {
+        let stopped = run_at(old, &["uninstall"]).ok().filter(|o| o.ok).is_some()
+            || run_at(old, &["stop"]).map(|o| if o.ok { Ok(()) } else { Err(o.message()) }).and_then(|r| r).is_ok();
+        if !stopped {
+            let _ = std::fs::remove_file(&fresh);
+            let _ = run_at(old, &["install"]);
+            return Err("The running Metatrash Sync didn't stop, so it wasn't updated. Try again in a moment.".into());
+        }
+    }
+
+    // 3. Old program aside, new one in its place. Windows may hold the file for a moment after the
+    // service exits, hence the retries.
+    let retry = |from: &Path, to: &Path| {
+        let mut result = std::fs::rename(from, to);
+        for _ in 0..20 {
+            if result.is_ok() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(250));
+            result = std::fs::rename(from, to);
+        }
+        result
+    };
     if existing.is_some() {
-        // The running service holds the program on Windows; stop it first.
-        let _ = run_mtsync(&["stop"]);
-    }
-    let mut result = Ok(());
-    for _ in 0..20 {
-        result = std::fs::rename(&temp, &target);
-        if result.is_ok() {
-            break;
+        let _ = std::fs::remove_file(&backup);
+        if let Err(e) = retry(&target, &backup) {
+            let _ = std::fs::remove_file(&fresh);
+            let _ = run_at(&target, &["install"]);
+            return Err(format!("Could not move the old mtsync aside ({e}), so it wasn't updated."));
         }
-        std::thread::sleep(Duration::from_millis(250));
     }
-    if let Err(e) = result {
-        let _ = std::fs::remove_file(&temp);
-        if existing.is_some() {
-            let _ = run_mtsync(&["start"]);
+    if let Err(e) = retry(&fresh, &target) {
+        let _ = std::fs::remove_file(&fresh);
+        return Err(restore(&target, &backup, existing.is_some(), format!("Could not put mtsync in {}: {e}", target.display())));
+    }
+
+    // 4. Login item pointing here, service running.
+    let installed = run_at(&target, &["install"]).map(|o| if o.ok { Ok(()) } else { Err(o.message()) }).and_then(|r| r);
+    // 5. The program at that path is the new one.
+    let result = installed.and_then(|()| {
+        if version_of(&target) == Some(want_version) { Ok(()) } else { Err(format!("{} isn't version {want} after the update.", target.display())) }
+    });
+    match result {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&backup);
+            Ok(())
         }
-        return Err(format!("Could not replace {}: {e}", target.display()));
+        Err(e) => Err(restore(&target, &backup, existing.is_some(), format!("The new mtsync didn't start: {e}"))),
     }
-    // install sets up the login service once (and starts it); after that start is enough.
-    if existing.is_some() { run_mtsync(&["start"]) } else { run_mtsync(&["install"]) }
+}
+
+/// Puts the old mtsync back after a failed update and starts its service again.
+fn restore(target: &Path, backup: &Path, had_old: bool, problem: String) -> String {
+    if !had_old {
+        return problem;
+    }
+    let _ = run_at(target, &["uninstall"]);
+    let _ = std::fs::remove_file(target);
+    if std::fs::rename(backup, target).is_err() {
+        return format!("{problem}\nThe old mtsync couldn't be put back; it is at {}.", backup.display());
+    }
+    let _ = run_at(target, &["install"]);
+    format!("{problem}\nThe previous mtsync was put back.")
 }
 
 /// Sets up mtsync (Open Space, when it is missing or too old). Returns the version installed.

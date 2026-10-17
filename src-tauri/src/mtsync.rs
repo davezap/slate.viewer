@@ -62,6 +62,16 @@ pub struct Output {
     stderr: String,
 }
 
+impl From<std::process::Output> for Output {
+    fn from(out: std::process::Output) -> Self {
+        Output {
+            ok: out.status.success(),
+            stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+        }
+    }
+}
+
 impl Output {
     /// The last non-empty line of stderr (or stdout), which is where mtsync puts its message.
     pub(crate) fn message(&self) -> String {
@@ -96,7 +106,7 @@ pub(crate) fn find_binary() -> Option<PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
-fn command(binary: &Path, server: Option<&str>, args: &[&str]) -> Command {
+pub(crate) fn command(binary: &Path, server: Option<&str>, args: &[&str]) -> Command {
     let mut cmd = Command::new(binary);
     if let Some(server) = server.filter(|s| !s.is_empty() && s.trim_end_matches('/') != DEFAULT_SERVER) {
         cmd.args(["-server", server]);
