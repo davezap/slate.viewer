@@ -1,0 +1,217 @@
+# Push a tag vX.Y.Z (matching "version" in package.json) to check, build and
+# publish a GitHub Release with Slate Viewer for Windows (setup.exe), macOS
+# (universal .dmg) and Linux (.AppImage, .deb, .rpm), plus SHA256SUMS and
+# slateviewer.json (version, URL, SHA-256 and size of each, which the app's
+# update check reads).
+# The Windows app, its uninstaller and the setup are signed with Azure Artifact
+# Signing (formerly Trusted Signing); see README.md, Making a release.
+# The files have the same names in every release, so
+# https://github.com/OWNER/REPO/releases/latest/download/FILE always works.
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: version
+        run: |
+          version=$(jq -r .version package.json)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match version $version in package.json"; exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  test:
+    needs: check
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    name: Build (${{ matrix.name }})
+    needs: [check, test]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            args: --bundles nsis
+            sign: true
+          - name: macOS
+            os: macos-latest
+            rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
+            args: --bundles dmg --target universal-apple-darwin
+          - name: Linux
+            os: ubuntu-22.04  # older glibc, so the AppImage and .deb run on more distributions
+            args: --bundles appimage,deb,rpm
+    runs-on: ${{ matrix.os }}
+    # Azure trusts this repository's "release" environment (federated
+    # credential subject repo:OWNER/REPO:environment:release).
+    environment: release
+    permissions:
+      contents: read
+      id-token: write  # sign in to Azure with GitHub's OIDC token, no client secret
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      SIGNING_ENDPOINT: https://eus.codesigning.azure.net/
+      SIGNING_ACCOUNT: zaptronicssigning
+      SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+      JSIGN_VERSION: '7.5'
+      JSIGN_SHA256: 602a51c3545a6dc4fb99bd2ea7152b26d1345916d0c93ddfbd5936cb735af91c
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+
+      - name: Tauri's Linux libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev patchelf rpm
+
+      - run: npm ci
+
+      - name: Check signing settings
+        if: matrix.sign
+        shell: bash
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+        run: |
+          for v in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SIGNING_PROFILE; do
+            if [ -z "${!v}" ]; then
+              echo "::error::Variable $v is not set (Settings > Environments > release)"; exit 1
+            fi
+          done
+      - if: matrix.sign
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true  # the identity only has a role on the signing account
+      # A token now, while the OIDC sign-in is fresh; it lasts an hour or more,
+      # well past the build.
+      - name: Signing token
+        if: matrix.sign
+        shell: bash
+        run: |
+          token=$(az account get-access-token --resource https://codesigning.azure.net --query accessToken -o tsv)
+          echo "::add-mask::$token"
+          echo "SIGNING_TOKEN=$token" >> "$GITHUB_ENV"
+      - if: matrix.sign
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+      # Tauri runs signCommand for the app, the uninstaller and the setup
+      # (%1 is the file). The extra config is merged over tauri.conf.json, so
+      # local builds stay unsigned.
+      - name: Jsign and the signing config
+        if: matrix.sign
+        shell: bash
+        run: |
+          jar="$RUNNER_TEMP/jsign.jar"
+          curl -fsSL -o "$jar" "https://github.com/ebourg/jsign/releases/download/$JSIGN_VERSION/jsign-$JSIGN_VERSION.jar"
+          echo "$JSIGN_SHA256  $jar" | sha256sum -c -
+          config="$RUNNER_TEMP/signing.conf.json"
+          jq -n --arg jar "$jar" --arg ks "$SIGNING_ENDPOINT" --arg alias "$SIGNING_ACCOUNT/$SIGNING_PROFILE" \
+            '{bundle: {windows: {signCommand: {cmd: "java", args: [
+              "-jar", $jar, "--storetype", "TRUSTEDSIGNING", "--keystore", $ks,
+              "--storepass", "env:SIGNING_TOKEN", "--alias", $alias, "--name", "Slate Viewer",
+              "--tsaurl", "http://timestamp.acs.microsoft.com", "--tsmode", "RFC3161", "%1"]}}}}' > "$config"
+          cat "$config"
+          echo "SIGNING_CONFIG=$config" >> "$GITHUB_ENV"
+
+      - name: Build
+        shell: bash
+        run: npx tauri build ${{ matrix.args }} ${SIGNING_CONFIG:+--config "$SIGNING_CONFIG"}
+
+      # Tauri names files "Slate Viewer_0.2.0_x64-setup.exe" and so on; give
+      # them names that stay the same from release to release.
+      - name: Collect
+        shell: bash
+        run: |
+          mkdir out
+          b=src-tauri/target/release/bundle
+          case "$RUNNER_OS" in
+            Windows) cp "$b"/nsis/*-setup.exe out/SlateViewer-windows-x64-setup.exe ;;
+            macOS)   cp src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg out/SlateViewer-macos-universal.dmg ;;
+            Linux)   cp "$b"/appimage/*.AppImage out/SlateViewer-linux-x86_64.AppImage
+                     cp "$b"/deb/*.deb out/SlateViewer-linux-amd64.deb
+                     cp "$b"/rpm/*.rpm out/SlateViewer-linux-x86_64.rpm ;;
+          esac
+          ls -l out
+      - name: Check signatures
+        if: matrix.sign
+        shell: pwsh
+        run: |
+          # The app (in target/release, as packed into the setup) and the setup.
+          $files = @(Get-ChildItem src-tauri/target/release/*.exe) + @(Get-Item out/SlateViewer-windows-x64-setup.exe)
+          foreach ($f in $files) {
+            $s = Get-AuthenticodeSignature $f.FullName
+            "{0}: {1} ({2})" -f $f.Name, $s.Status, $s.SignerCertificate.Subject
+            if ($s.Status -ne 'Valid') { throw "$($f.Name) is not validly signed" }
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundle-${{ matrix.name }}
+          path: out/*
+          if-no-files-found: error
+
+  release:
+    name: Publish
+    needs: [check, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums and slateviewer.json
+        working-directory: dist
+        run: |
+          sha256sum * > SHA256SUMS
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME"
+          entry() { # key file
+            jq -n --arg k "$1" --arg name "$2" --arg url "$base/$2" \
+              --arg sha "$(sha256sum "$2" | cut -d' ' -f1)" --argjson size "$(stat -c %s "$2")" \
+              '{($k): {name: $name, url: $url, sha256: $sha, size: $size}}'
+          }
+          {
+            entry windows-x64 SlateViewer-windows-x64-setup.exe
+            entry macos-universal SlateViewer-macos-universal.dmg
+            entry linux-appimage SlateViewer-linux-x86_64.AppImage
+            entry linux-deb SlateViewer-linux-amd64.deb
+            entry linux-rpm SlateViewer-linux-x86_64.rpm
+          } | jq -s --arg v "$VERSION" --arg tag "$GITHUB_REF_NAME" \
+              '{version: $v, tag: $tag, files: add}' > slateviewer.json
+          cat SHA256SUMS slateviewer.json
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=""
+          case "$VERSION" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag $prerelease \
+            --title "Slate Viewer $VERSION" --generate-notes

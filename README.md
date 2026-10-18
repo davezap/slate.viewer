@@ -58,6 +58,17 @@ GitHub Actions builds and publishes the installers (`.github/workflows/release.y
 3. The workflow runs the checks, builds on Windows, macOS and Linux, and publishes a GitHub Release
    with the files below and `SHA256SUMS`. Its notes list the commits since the last release.
 
+The Windows build signs the app, its uninstaller and the setup with Azure Artifact Signing
+(formerly Trusted Signing; account `zaptronicssigning`, East US) through Tauri's `signCommand`
+and Jsign, and checks the signatures before publishing. The signing config is added only in the
+workflow, so `npm run release` on your machine stays unsigned. The build job runs in the GitHub
+environment `release` and signs in to Azure with GitHub's OIDC token (no Azure secret in GitHub).
+That environment needs the variables `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and
+`AZURE_SIGNING_PROFILE` (the certificate profile's name); without them the release stops before
+publishing. The Azure side (an app registration with a federated credential for
+`repo:davezap/slate.viewer:environment:release`, holding the *Artifact Signing Certificate Profile
+Signer* role) is shared with Metatrash; see Code signing in Metatrash's `docs/deployment.md`.
+
 They are the files listed under [Download](#download). The names stay the same, so
 `https://github.com/davezap/slate.viewer/releases/latest/download/<file>` always fetches the newest.
 CI (`.github/workflows/ci.yml`) runs `svelte-check`, the front-end build and
@@ -67,7 +78,8 @@ To build on your own machine instead: `npm run release` makes the Windows instal
 `src-tauri\target\release\bundle\nsis\`.
 
 Installing a newer version over an older one upgrades it in place; settings and recent files are kept.
-Nothing is code-signed yet, so each system warns the first time, as below.
+The Windows setup is code-signed; the Mac and Linux files are not yet, so those systems warn the
+first time, as below.
 
 ## Installing (for colleagues)
 
@@ -78,9 +90,9 @@ Slate Viewer works on its own as a Markdown editor. Opening a Metatrash space th
 
 1. Run `SlateViewer-windows-x64-setup.exe`. It installs for your Windows account only, so no admin
    rights are needed (to `%LOCALAPPDATA%\Programs\Slate Viewer`), and adds a Start menu shortcut.
-2. The installer isn't code-signed yet, so Windows may show **"Windows protected your PC"**.
-   Click **More info**, then **Run anyway**. Some company setups (Smart App Control, AppLocker)
-   block unsigned apps entirely; IT would need to allow it.
+2. The installer is code-signed (publisher shown in its Properties → Digital Signatures). While
+   the new certificate builds up reputation Windows may still show **"Windows protected your
+   PC"**: click **More info**, then **Run anyway**.
 3. To make Slate Viewer open `.md` files by default, either choose **File > Make Slate Viewer the
    Default for .md Files** (it opens Settings at Slate Viewer's Default apps page; set `.md` and
    `.markdown` there), or right-click any `.md` file, choose **Open with > Choose another app**,
