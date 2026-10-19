@@ -35,6 +35,7 @@
   import QuickOpen from './lib/QuickOpen.svelte';
   import HistoryPanel from './lib/HistoryPanel.svelte';
   import { revisionText, versionLabel, type HistoryEntry } from './lib/history';
+  import { lastSession, saveSession, placeView, savePlaceView, type PlaceView } from './lib/session';
 
   interface LoadedDocument { path: string; text: string; hasBom: boolean }
   interface FolderListing { files: string[]; truncated: boolean }
@@ -80,14 +81,16 @@
   let diskText: string | null = null;
   let quickOpen = $state(false);
 
-  // Opened from Explorer (a file or folder on the command line): start read only, with the
-  // sections closed and the icon bar without labels. Nothing of this is saved as a preference.
+  // Opened from Explorer (a file or folder on the command line). A file opens read only.
   const launched = window.__SLATE_VIEWER_LAUNCHED__ === true;
+  // The first window of a launch with nothing on the command line picks up where the last session left off.
+  const resumeSession = window.__SLATE_VIEWER_RESUME__ === true;
 
   // Sidebar: an icon bar whose buttons switch sections on and off; the ones on stack in the panel.
-  let sections = $state(launched ? { files: false, search: false, outline: false, history: false } : sectionsPref());
+  // Which are on (like the labels and the pinned Document Nav) is one setting for every window.
+  let sections = $state(sectionsPref());
   let sectionWeights = $state(sectionWeightsPref());
-  let activityLabels = $state(launched ? false : activityLabelsPref());
+  let activityLabels = $state(activityLabelsPref());
   let sidebarWidth = $state(sidebarWidthPref());
   let searchSection = $state<ReturnType<typeof SearchSection>>();
   let outline = $state<SlateOutline | null>(null);
@@ -104,13 +107,15 @@
   const name = $derived(path ? basename(path) : 'Untitled');
   const folder = () => (path ? dirname(path) : null);
 
-  /** The open document relative to the folder root, or null when it is outside it. */
-  const currentRelative = $derived.by(() => {
-    if (!root || !path) return null;
-    const base = root.replace(/[\\/]+$/, '').replace(/\\/g, '/').toLowerCase() + '/';
-    const doc = path.replace(/\\/g, '/');
+  /** `file` relative to the folder `dir` (with /), or null when it is outside it. */
+  function relativeIn(dir: string, file: string): string | null {
+    const base = dir.replace(/[\\/]+$/, '').replace(/\\/g, '/').toLowerCase() + '/';
+    const doc = file.replace(/\\/g, '/');
     return doc.toLowerCase().startsWith(base) ? doc.slice(base.length) : null;
-  });
+  }
+
+  /** The open document relative to the folder root, or null when it is outside it. */
+  const currentRelative = $derived(root && path ? relativeIn(root, path) : null);
 
   $effect(() => {
     const flags = `${dirty ? '• ' : ''}${name}${missingOnDisk ? ' (deleted on disk)' : ''}${readOnly ? ' [read only]' : ''}${root ? ` - ${basename(root)}` : ''}`;
@@ -147,11 +152,12 @@
     watch(doc.path);
   }
 
-  /** Loads a file into this window, replacing the current (clean) document. */
-  async function loadHere(target: string, { pushHistory = true } = {}) {
+  /** Loads a file into this window, replacing the current (clean) document. `quiet` skips the error message. */
+  async function loadHere(target: string, { pushHistory = true, quiet = false } = {}) {
     if (!editor) return;
     try {
       const doc = await invoke<LoadedDocument>('read_document', { path: target });
+      rememberPlace();
       if (pushHistory && path) { history = [...history, path]; forward = []; }
       setDocument(doc);
       await editor.setMarkdown(doc.text);
@@ -159,11 +165,12 @@
       dirty = false;
       recentFileList.remember(doc.path);
       recent = recentFileList.list();
+      rememberSession();
       void offerConflictResolve();
     } catch (error) {
       recentFileList.forget(target);
       recent = recentFileList.list();
-      await showError(error);
+      if (!quiet) await showError(error);
     }
   }
 
@@ -214,6 +221,7 @@
     historyStamp += 1;
     recentFileList.remember(target);
     recent = recentFileList.list();
+    rememberSession();
     return true;
   }
 
@@ -259,24 +267,116 @@
     }
   }
 
+  // ---- Where the user left off ----------------------------------------------------
+
+  /** True while a saved place is being put back, so the half-restored state isn't saved over it. */
+  let restoring = false;
+  let placeTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /** Saves how the open folder (or, without one, the open file) is left: its file, mode, scroll and cursor. */
+  function rememberPlace() {
+    clearTimeout(placeTimer);
+    const key = root ?? path;
+    if (!editor || restoring || !key) return;
+    savePlaceView(key, { file: path, mode: editor.getWorkspaceMode(), topLine: editor.getTopLine(), selection: editor.getSourceSelection() });
+  }
+
+  function schedulePlaceSave() {
+    if (restoring) return;
+    clearTimeout(placeTimer);
+    placeTimer = setTimeout(rememberPlace, 500);
+  }
+
+  /** Records this window's folder and file as the session the next plain launch resumes. */
+  function rememberSession() {
+    if (!restoring) saveSession({ folder: root, file: path });
+  }
+
+  /** Runs `action` without saving the place it passes through on the way. */
+  async function whileRestoring(action: () => Promise<unknown>) {
+    restoring = true;
+    try {
+      await action();
+    } finally {
+      restoring = false;
+      clearTimeout(placeTimer);
+    }
+  }
+
+  /** Puts a saved mode, scroll position and cursor back on the open document. */
+  async function restoreView(view: PlaceView) {
+    if (!editor) return;
+    if (view.mode !== editor.getWorkspaceMode()) await setMode(view.mode);
+    await tick();
+    editor.restoreView({ selection: view.selection, topLine: view.topLine, focus: editor.getWorkspaceMode() !== 'preview' });
+  }
+
+  /**
+   * Picks up where the folder was left: its file, mode, scroll and cursor. The first time (or when
+   * that file is gone) it opens the README, or the folder's only note, and shows Preview.
+   */
+  async function enterFolder(dir: string) {
+    if (!editor) return;
+    const saved = placeView(dir);
+    const inFolder = (file: string | null | undefined) => {
+      const rel = file ? relativeIn(dir, file) : null;
+      return rel !== null ? folderFiles.find(f => f.toLowerCase() === rel.toLowerCase()) ?? null : null;
+    };
+    const savedFile = inFolder(saved?.file);
+    const target = savedFile ?? folderFiles.find(f => f.toLowerCase() === 'readme.md') ?? (folderFiles.length === 1 ? folderFiles[0] : null);
+    await whileRestoring(async () => {
+      if (target && !(path && sameFolder(path, joinPath(dir, target)))) {
+        if (!(await confirmDiscard())) return;
+        await loadHere(joinPath(dir, target));
+      }
+      if (saved && savedFile && path && sameFolder(path, joinPath(dir, savedFile))) await restoreView(saved);
+      else await setMode(saved?.mode ?? 'preview');
+    });
+  }
+
+  /** A plain launch: reopens the last session's folder (where it was left) or file. */
+  async function resumeLastSession() {
+    const session = lastSession();
+    if (session?.folder) {
+      await openFolder(session.folder, { showFiles: false, quiet: true });
+    } else if (session?.file) {
+      const file = session.file;
+      await whileRestoring(async () => {
+        await loadHere(file, { pushHistory: false, quiet: true });
+        const view = path ? placeView(path) : null;
+        if (view) await restoreView(view);
+      });
+    }
+  }
+
   // ---- Folder mode ------------------------------------------------------------
 
-  async function openFolder(dir: string, { showFiles = true } = {}) {
+  /**
+   * Shows `dir` in the sidebar. With `restore` it then picks up where the folder was left
+   * (see enterFolder); `quiet` skips the message when it can't be opened.
+   */
+  async function openFolder(dir: string, { showFiles = true, restore = true, quiet = false } = {}) {
+    let listing: FolderListing;
     try {
-      const listing = await invoke<FolderListing>('list_folder', { root: dir });
-      root = dir;
-      folderFiles = listing.files;
-      folderTruncated = listing.truncated;
-      if (showFiles) setSection('files', true);
-      recentFolderList.remember(dir);
-      recentFolders = recentFolderList.list();
-      invoke('watch_folder', { root: dir }).catch(console.error);
-      void detectSpace(dir);
+      listing = await invoke<FolderListing>('list_folder', { root: dir });
     } catch (error) {
       recentFolderList.forget(dir);
       recentFolders = recentFolderList.list();
-      await showError(error);
+      if (!quiet) await showError(error);
+      return;
     }
+    const reopened = root !== null && sameFolder(root, dir);
+    if (!reopened) rememberPlace();
+    root = dir;
+    folderFiles = listing.files;
+    folderTruncated = listing.truncated;
+    if (showFiles) setSection('files', true);
+    recentFolderList.remember(dir);
+    recentFolders = recentFolderList.list();
+    invoke('watch_folder', { root: dir }).catch(console.error);
+    void detectSpace(dir);
+    if (restore && !reopened) await enterFolder(dir);
+    rememberSession();
   }
 
   async function chooseFolder() {
@@ -285,12 +385,14 @@
   }
 
   function closeFolder() {
+    rememberPlace();
     root = null;
     folderFiles = [];
     openedSpace = null;
     descriptions = [];
     quickOpen = false;
     invoke('watch_folder', { root: null }).catch(console.error);
+    rememberSession();
   }
 
   let folderRefreshTimer: ReturnType<typeof setTimeout> | undefined;
@@ -360,12 +462,11 @@
 
   // ---- Sidebar sections --------------------------------------------------------
 
-  function setSection(id: SectionId, on: boolean, { remember = true } = {}) {
+  function setSection(id: SectionId, on: boolean) {
     if (sections[id] === on) return;
     sections = { ...sections, [id]: on };
-    // Only this section's change is saved, so a window opened from Explorer (sections closed)
-    // doesn't overwrite the others' saved state.
-    if (remember) setSectionsPref({ ...sectionsPref(), [id]: on });
+    // Only this section's change is saved, so another window's changes to the others are kept.
+    setSectionsPref({ ...sectionsPref(), [id]: on });
     // Slate keeps its own idea of whether the outline is showing (Ctrl+Shift+O inside the editor).
     if (id === 'outline' && editor && editor.isOutlineOpen() !== on) editor.setOutlineOpen(on);
   }
@@ -777,31 +878,15 @@
     if (!editor || (readOnly && mode !== 'preview')) return;
     await editor.setWorkspaceMode(mode);
     findBar?.refresh();
+    schedulePlaceSave();
   }
 
-  /**
-   * Opened from Explorer: read only, sections closed. A folder with several notes shows Files and
-   * Document Nav (and its README.md, if it has one); a folder with a single note opens that note.
-   */
-  async function applyLaunchLayout(launchFolder: string | null | undefined) {
-    if (!editor) return;
-    if (launchFolder && root) {
-      if (folderFiles.length === 1) {
-        await openFromFolder(folderFiles[0]);
-      } else {
-        setSection('files', true, { remember: false });
-        if (folderFiles.length > 1) {
-          setSection('outline', true, { remember: false });
-          const readme = folderFiles.find(file => file.toLowerCase() === 'readme.md');
-          if (readme && !path) await openFromFolder(readme);
-        }
-      }
-    }
-    if (!readOnly) {
-      readOnly = true;
-      editor.setInteractiveTasks(true);
-      await editor.setReadOnly(true);
-    }
+  /** A file opened from Explorer opens for reading: Read Only checklist mode, in Preview. */
+  async function openForReading() {
+    if (!editor || readOnly) return;
+    readOnly = true;
+    editor.setInteractiveTasks(true);
+    await editor.setReadOnly(true);
   }
 
   async function toggleReadOnly() {
@@ -1245,11 +1330,12 @@
     const link = linkFromEvent(event);
     if (!link || !editor) return;
     const modifier = event.ctrlKey || event.metaKey;
-    // In Edit and Source a plain click places the caret, as in Slate itself; Ctrl+click follows.
-    // The ↗ after a web link opens it with a plain click everywhere.
+    // In Edit and Source a plain click places the caret to edit the link, as in Slate itself;
+    // Ctrl+click follows. The ↗ after a web link opens it with a plain click everywhere.
     if (editor.getWorkspaceMode() !== 'preview' && !modifier && !link.icon) {
-      // A link inside a diagram would otherwise load its target into this window.
-      if ((event.target as Element).closest('svg a')) event.preventDefault();
+      // Never let the webview follow it itself (a diagram's link would load into this window,
+      // a target="_blank" one would open a new window).
+      event.preventDefault();
       return;
     }
     event.preventDefault();
@@ -1432,6 +1518,7 @@
       if (editor) dirty = missingOnDisk || editor.getMarkdown() !== baseline;
       if (editor && openedSpace) docBytes = new TextEncoder().encode(editor.getMarkdown()).length;
       scheduleFindRefresh();
+      schedulePlaceSave();
     });
     host.addEventListener('slate:outline', event => {
       outline = (event as CustomEvent<SlateOutline>).detail;
@@ -1445,6 +1532,9 @@
       setSection('outline', (event as CustomEvent<{ open: boolean }>).detail.open);
     });
     host.addEventListener('scroll', trackActiveHeading, true);
+    // Scrolling, moving the cursor and typing change where the user is in the document.
+    for (const type of ['scroll', 'keyup', 'pointerup']) host.addEventListener(type, schedulePlaceSave, true);
+    window.addEventListener('pagehide', rememberPlace);
     for (const type of ['wheel', 'keydown', 'pointerdown']) host.addEventListener(type, unpinHeading, true);
     host.addEventListener('slate:save-request', event => {
       const wantsSaveAs = (event as CustomEvent<{ saveAs: boolean }>).detail.saveAs;
@@ -1471,14 +1561,27 @@
       if (zoom !== 1) void getCurrentWebview().setZoom(zoom);
       baseline = editor.getMarkdown();
       const initialFolder = window.__SLATE_VIEWER_INITIAL_FOLDER__;
-      if (initialFolder) await openFolder(initialFolder, { showFiles: !launched });
       const initial = window.__SLATE_VIEWER_INITIAL_FILE__;
-      if (initial) await loadHere(initial);
-      if (launched && (initial || initialFolder)) await applyLaunchLayout(initialFolder);
+      // A folder from Explorer picks up where it was left; New Window and Ctrl+click keep this
+      // window's folder without opening anything in it.
+      if (initialFolder) await openFolder(initialFolder, { restore: launched && !initial });
+      if (initial) {
+        // A file from Explorer opens on its own (no folder, whatever the last session had) and
+        // replaces the session, but its scroll position and cursor come back.
+        await loadHere(initial);
+        if (launched && !initialFolder) {
+          await openForReading();
+          const view = path ? placeView(path) : null;
+          if (view) await whileRestoring(() => restoreView(view));
+        }
+      } else if (!initialFolder && resumeSession) {
+        await resumeLastSession();
+      }
 
       cleanups.push(await getCurrentWebviewWindow().listen('document-changed', onDiskChange));
       cleanups.push(await getCurrentWebviewWindow().listen('folder-changed', onFolderChange));
       cleanups.push(await appWindow.onCloseRequested(async event => {
+        rememberPlace();
         if (!dirty) return;
         event.preventDefault();
         if (await confirmDiscard()) await appWindow.destroy();

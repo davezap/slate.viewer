@@ -169,15 +169,24 @@ and the package manager updates and removes it.
 - History lists a space file's earlier versions (from `mtsync history`, which needs mtsync 0.41.0).
   Picking one compares it with the document inline (Slate's Compare): take parts or all of it,
   press **Done**, then save to restore. Deleted entries have no text to compare.
-- Which sections are on, their sizes, the labels setting and the pinned Document Nav are remembered.
+- Which sections are on, their sizes, the labels setting and the pinned Document Nav are one setting for
+  every window, whatever file or folder it shows.
+
+### Picking up where you left off
+
+- Starting Slate Viewer with nothing named (Start menu, taskbar) reopens the last session: its folder,
+  with the file, mode (Edit, Preview or Source), scroll position and cursor it was left with, or the last
+  file on its own if no folder was open.
+- Reopening a folder (Open Folder, Open Recent, Explorer) does the same for that folder. The first time
+  a folder opens, it shows its `README.md` (or its only note) in Preview.
+- Up to 50 folders and files are remembered. New Window starts empty and doesn't change the session.
 
 ### Opening from Explorer
 
 A file or folder opened from Explorer (double-click, **Open in Slate Viewer**, or a path on the command line)
-opens for reading: Read Only checklist mode, every sidebar section closed and the icon bar without labels.
-A folder with several notes shows Files and Document Nav (and opens its `README.md` if there is one);
-a folder with a single note opens that note. None of this changes the saved layout, and View > Read Only
-(Ctrl+Shift+R) switches to editing. Windows opened from inside the app (New Window, Open) start as before.
+takes the place of the last session. A file opens on its own, without any folder the last session had,
+for reading: Read Only checklist mode in Preview (View > Read Only, Ctrl+Shift+R, switches to editing),
+back at the scroll position it was left at. A folder opens where it was left, as above.
 
 ### Folder mode
 
@@ -249,7 +258,8 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
   are links too. Links to other `.md` files open in this window
   (or a new one with Ctrl/Shift/middle-click, or when this one has unsaved changes);
   other local files open in their default app (common document and media types only)
-  or are shown in Explorer. In Edit mode use Ctrl+click to follow a link, or click the ↗ of a web link.
+  or are shown in Explorer. In Edit mode a plain click on a link (in the text or in a table) puts the cursor in it to edit it;
+  use Ctrl+click to follow it, or click the ↗ of a web link.
   A link ending in `#heading` (as Metatrash's website writes them) or `#L12` goes to that heading or line,
   and links in diagrams (Mermaid `click … href`) work the same way.
 - Right-click selected text for Copy (and Cut / Paste in Edit and Source), **Find in Folder** (puts it in Search
@@ -264,7 +274,7 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
 ## Layout
 
 ```
-public/slate/        Slate 0.14.1, vendored unchanged (slate.js, slate.css, mermaid/, themes, .d.ts)
+public/slate/        Slate 0.15.0, vendored unchanged (slate.js, slate.css, mermaid/, themes, .d.ts)
 src/App.svelte       menu, file handling, link handling, Slate mount
 src/lib/             icon bar and sidebar sections, Go to File, wiki-link resolving, paths, line endings, recent lists, preferences
 src-tauri/src/       Rust: windows, single instance, file read/write, attachments, file and folder
