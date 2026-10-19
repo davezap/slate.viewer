@@ -250,6 +250,8 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
   (or a new one with Ctrl/Shift/middle-click, or when this one has unsaved changes);
   other local files open in their default app (common document and media types only)
   or are shown in Explorer. In Edit mode use Ctrl+click to follow a link, or click the ↗ of a web link.
+  A link ending in `#heading` (as Metatrash's website writes them) or `#L12` goes to that heading or line,
+  and links in diagrams (Mermaid `click … href`) work the same way.
 - Right-click selected text for Copy (and Cut / Paste in Edit and Source), **Find in Folder** (puts it in Search
   and opens that section) and **Find in Document**. Right-click a link for Open, Open in New Window,
   Copy Link Address and **Find Other Uses of This Link**, which searches the folder for the link's address

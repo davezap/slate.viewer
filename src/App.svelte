@@ -411,6 +411,32 @@
     headingPinned = true;
   }
 
+  /** GitHub-style heading anchor, as Metatrash's website makes them. */
+  function headingSlug(text: string) {
+    return text.toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, '').trim().replace(/\s/g, '-');
+  }
+
+  /** Goes to a link's #anchor in this document: a heading (`#bug-reported`) or a line (`#L12`). */
+  function revealAnchor(anchor: string) {
+    if (!editor || !anchor) return;
+    const line = /^L(\d+)$/i.exec(anchor);
+    if (line) {
+      editor.revealLine(Math.max(0, Number(line[1]) - 1));
+      return;
+    }
+    const wanted = headingSlug(anchor);
+    const find = (headings: SlateOutlineHeading[]): SlateOutlineHeading | null => {
+      for (const heading of headings) {
+        if (heading.id === anchor || headingSlug(heading.title) === wanted) return heading;
+        const child = find(heading.children);
+        if (child) return child;
+      }
+      return null;
+    };
+    const heading = find(editor.getOutline().headings);
+    if (heading) revealHeading(heading);
+  }
+
   function unpinHeading() {
     headingPinned = false;
   }
@@ -1163,6 +1189,13 @@
 
   /** Links never navigate the webview: web links go to the browser, .md links open here. */
   async function followLink(url: string, newWindow: boolean) {
+    const hash = url.indexOf('#');
+    let anchor = hash < 0 ? '' : url.slice(hash + 1);
+    try { anchor = decodeURIComponent(anchor); } catch { /* keep it as written */ }
+    if (hash === 0) {
+      revealAnchor(anchor);
+      return;
+    }
     if (/^(https?|mailto):/i.test(url)) {
       await openUrl(url).catch(error => showError(`Couldn't open ${url} in the browser.\n\n${error}`));
       return;
@@ -1171,7 +1204,11 @@
     if (!local) return;
     if (MARKDOWN_EXTENSIONS.includes(extname(local))) {
       if (newWindow) await openWindow(local);
-      else await openDocument(local);
+      else {
+        if (local !== path) await openDocument(local);
+        // Only once the linked file is the one showing (opening it can be cancelled).
+        if (local === path) revealAnchor(anchor);
+      }
       return;
     }
     try {
@@ -1187,15 +1224,16 @@
 
   function linkFromEvent(event: MouseEvent): ClickedLink | null {
     const anchor = (event.target as Element | null)?.closest?.('a, .wiki-link, .slate-external-icon');
-    if (!(anchor instanceof HTMLElement) || !host.contains(anchor)) return null;
+    // Links drawn inside a diagram are SVG <a> elements, which may carry xlink:href.
+    if (!(anchor instanceof HTMLElement || anchor instanceof SVGElement) || !host.contains(anchor)) return null;
     const text = anchor.textContent ?? '';
     if (anchor.classList.contains('wiki-link')) {
       const wiki = anchor.dataset.noteName || text;
       return wiki ? { wiki, text, icon: false } : null;
     }
     if (anchor.dataset.attachmentId) return null;
-    const url = anchor.dataset.mdUrl ?? anchor.getAttribute('href') ?? '';
-    if (!url || url.startsWith('#')) return null;
+    const url = anchor.dataset.mdUrl ?? anchor.getAttribute('href') ?? anchor.getAttribute('xlink:href') ?? '';
+    if (!url || url === '#') return null;
     return { url, text, icon: anchor.classList.contains('slate-external-icon') };
   }
 
@@ -1209,7 +1247,11 @@
     const modifier = event.ctrlKey || event.metaKey;
     // In Edit and Source a plain click places the caret, as in Slate itself; Ctrl+click follows.
     // The ↗ after a web link opens it with a plain click everywhere.
-    if (editor.getWorkspaceMode() !== 'preview' && !modifier && !link.icon) return;
+    if (editor.getWorkspaceMode() !== 'preview' && !modifier && !link.icon) {
+      // A link inside a diagram would otherwise load its target into this window.
+      if ((event.target as Element).closest('svg a')) event.preventDefault();
+      return;
+    }
     event.preventDefault();
     event.stopPropagation();
     void follow(link, modifier || event.shiftKey);
@@ -1236,7 +1278,7 @@
     if (link.wiki !== undefined) return `[[${link.wiki}`;
     // A bare www. address is a link to http://www.…, but the notes have it as written.
     if (/^https?:\/\/www\./i.test(link.url) && /^www\./i.test(link.text)) return link.text;
-    if (/^[a-z][a-z0-9+.-]*:/i.test(link.url)) return link.url;
+    if (/^[a-z][a-z0-9+.-]*:/i.test(link.url) || link.url.startsWith('#')) return link.url;
     // A file: other notes reach it by other relative paths, so look for its name.
     const file = link.url.split(/[?#]/)[0];
     try { return basename(decodeURI(file)); } catch { return basename(file); }
