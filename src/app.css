@@ -31,7 +31,7 @@ body {
   .slate-editor-host .drop-overlay,
   .slate-editor-host .toast-region,
   .slate-editor-host .statusbar,
-  .titlebar, .find, .activity, .side, .resizer { display: none !important; }
+  .titlebar, .find, .activity, .side, .resizer, .pinned-nav, .nav-strip { display: none !important; }
   .slate-editor-host,
   .slate-editor-host * { height: auto !important; max-height: none !important; overflow: visible !important; }
   .slate-editor-host .workspace-body,

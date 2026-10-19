@@ -96,3 +96,26 @@ export function activityLabelsPref(): boolean {
 export function setActivityLabelsPref(expanded: boolean): void {
   write(LABELS_KEY, String(expanded));
 }
+
+// ---- Pinned Document Nav --------------------------------------------------------
+
+const OUTLINE_PINNED_KEY = 'slate-viewer.outline-pinned';
+const PINNED_WIDTH_KEY = 'slate-viewer.pinned-outline-width';
+
+/** Document Nav pinned in its own column left of the document, instead of in the sidebar's stack. */
+export function outlinePinnedPref(): boolean {
+  return read(OUTLINE_PINNED_KEY) === 'true';
+}
+
+export function setOutlinePinnedPref(pinned: boolean): void {
+  write(OUTLINE_PINNED_KEY, String(pinned));
+}
+
+export function pinnedOutlineWidthPref(): number {
+  const value = Number(read(PINNED_WIDTH_KEY));
+  return value >= 140 && value <= 500 ? value : 220;
+}
+
+export function setPinnedOutlineWidthPref(width: number): void {
+  write(PINNED_WIDTH_KEY, String(Math.round(width)));
+}

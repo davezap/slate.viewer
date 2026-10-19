@@ -7,9 +7,14 @@
     /** Id of the heading at the top of the view, highlighted in the list. */
     active: string | null;
     onReveal: (heading: SlateOutlineHeading) => void;
+    /** Shown in its own column left of the document rather than in the sidebar's stack. */
+    pinned?: boolean;
+    onTogglePin?: () => void;
+    /** Pinned only: folds the column away to a thin strip. */
+    onCollapse?: () => void;
   }
 
-  let { outline, active, onReveal }: Props = $props();
+  let { outline, active, onReveal, pinned = false, onTogglePin, onCollapse }: Props = $props();
 
   const count = $derived.by(() => {
     let n = 0;
@@ -27,6 +32,24 @@
 </script>
 
 <Section title="Document Nav" {detail}>
+  {#snippet actions()}
+    {#if onTogglePin}
+      <button
+        class:pinned
+        title={pinned ? 'Unpin: back to the sidebar' : 'Pin to the left of the document'}
+        aria-label={pinned ? 'Unpin Document Nav' : 'Pin Document Nav'}
+        aria-pressed={pinned}
+        onclick={onTogglePin}
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4h6M10 4v6l-3 4h10l-3-4V4M12 14v6" /></svg>
+      </button>
+    {/if}
+    {#if pinned && onCollapse}
+      <button title="Collapse (Ctrl+Shift+O)" aria-label="Collapse Document Nav" onclick={onCollapse}>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 7l-5 5 5 5" /></svg>
+      </button>
+    {/if}
+  {/snippet}
   <nav class="scroll" aria-label="Headings">
     {#if !count}
       <p class="empty">Add Markdown headings to navigate this document.</p>
@@ -80,4 +103,9 @@
     box-shadow: inset 0 0 0 1.5px var(--side-bg);
   }
   .empty { margin: 8px 8px; color: var(--side-muted); }
+  svg {
+    width: 16px; height: 16px; vertical-align: middle;
+    fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round;
+  }
+  .pinned { color: var(--side-accent) !important; }
 </style>

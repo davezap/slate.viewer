@@ -163,10 +163,13 @@ and the package manager updates and removes it.
 - The **»** button at the bottom shows the section names next to the icons (View > Sidebar Labels).
 - Document Nav lists the headings with checklist progress, follows along as you scroll and jumps
   to a heading when clicked.
+- The pin in Document Nav's header (or View > Pin Document Navigation) moves it out of the stack to its own
+  column just left of the document, with its own width. There the **‹** button (or the icon bar, or
+  Ctrl+Shift+O) folds it to a thin strip and clicking the strip opens it again. Unpinning puts it back in the stack.
 - History lists a space file's earlier versions (from `mtsync history`, which needs mtsync 0.41.0).
   Picking one compares it with the document inline (Slate's Compare): take parts or all of it,
   press **Done**, then save to restore. Deleted entries have no text to compare.
-- Which sections are on, their sizes and the labels setting are remembered.
+- Which sections are on, their sizes, the labels setting and the pinned Document Nav are remembered.
 
 ### Opening from Explorer
 
@@ -229,7 +232,8 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
 - **File menu:** New Window (Ctrl+N), Open (Ctrl+O), Open Recent, Save (Ctrl+S), Save As (Ctrl+Shift+S),
   Print (Ctrl+P, includes Microsoft Print to PDF), Close Window (Ctrl+W).
 - **View menu:** Edit / Preview / Source (Ctrl+1/2/3), Read Only checklist mode (Ctrl+Shift+R:
-  text locked, task boxes still tick), Files / Search / Document Navigation / Version History, Theme (system, light, dark), Zoom (Ctrl+= / Ctrl+- / Ctrl+0).
+  text locked, task boxes still tick), Files / Search / Document Navigation / Version History, Theme (system, light, dark), Zoom In / Zoom Out / Reset Zoom (Ctrl+= / Ctrl+- / Ctrl+0, or Ctrl+mouse wheel;
+  Reset Zoom shows the current size).
 - **Go menu:** Back / Forward (Alt+Left / Alt+Right), Find in Document (Ctrl+F).
 - A `•` in the title while there are unsaved changes; closing a changed window asks to save.
 - Changes made by other programs: the document reloads automatically if you have no unsaved
@@ -238,10 +242,18 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
   **Keep this** / **Use …** buttons, with **Use all of …** and **Done** above. A deleted file is marked in the title.
 - Files keep their line endings (CRLF or LF), UTF-8 BOM and missing final newline when saved.
 - Relative images (`![](img/a.png)`) load from the document's folder.
-- Links: web links open in your browser; links to other `.md` files open in this window
+- Diagrams: a ` ```mermaid ` code block is drawn as a flowchart, sequence diagram, Gantt chart and so on
+  (Slate's Mermaid support). Mermaid loads only when a document has a diagram. In Edit, click a diagram to
+  change its source and see it redrawn as you type.
+- Links: web links open in your browser and have a ↗ after them; bare addresses (`https://…`, `www.…`)
+  are links too. Links to other `.md` files open in this window
   (or a new one with Ctrl/Shift/middle-click, or when this one has unsaved changes);
   other local files open in their default app (common document and media types only)
-  or are shown in Explorer. In Edit mode use Ctrl+click to follow a link.
+  or are shown in Explorer. In Edit mode use Ctrl+click to follow a link, or click the ↗ of a web link.
+- Right-click selected text for Copy (and Cut / Paste in Edit and Source), **Find in Folder** (puts it in Search
+  and opens that section) and **Find in Document**. Right-click a link for Open, Open in New Window,
+  Copy Link Address and **Find Other Uses of This Link**, which searches the folder for the link's address
+  (for a note, its file name; for a wiki link, `[[Name`). Elsewhere the usual menu shows.
 - Pasted or dropped files are copied into an `assets` folder next to the document and linked relatively.
   The document has to be saved first.
 - Window size and position, theme, zoom and the last editor mode are remembered. A window stays hidden until its theme is applied, so it doesn't flash white on start.
@@ -250,7 +262,7 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
 ## Layout
 
 ```
-public/slate/        Slate 0.11.0, vendored unchanged (slate.js, slate.css, themes, .d.ts)
+public/slate/        Slate 0.14.1, vendored unchanged (slate.js, slate.css, mermaid/, themes, .d.ts)
 src/App.svelte       menu, file handling, link handling, Slate mount
 src/lib/             icon bar and sidebar sections, Go to File, wiki-link resolving, paths, line endings, recent lists, preferences
 src-tauri/src/       Rust: windows, single instance, file read/write, attachments, file and folder
@@ -258,4 +270,4 @@ src-tauri/src/       Rust: windows, single instance, file read/write, attachment
 ```
 
 To update Slate, run `npm run build` in the Slate repository, then copy its `slate.js`, `slate.css`, `slate-editor.d.ts`,
-`CHANGELOG.md` and `themes/` into `public/slate/`.
+`CHANGELOG.md`, `themes/` and `mermaid/` into `public/slate/` (replace `mermaid/` whole: its chunk names change between builds).

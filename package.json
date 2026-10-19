@@ -1,7 +1,7 @@
 {
   "name": "slate-viewer",
   "private": true,
-  "version": "0.3.1",
+  "version": "0.4.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -23,5 +23,8 @@
     "svelte-check": "^4",
     "typescript": "~5.9",
     "vite": "^7"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
   }
 }

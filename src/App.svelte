@@ -14,6 +14,7 @@
   import {
     themePref, setThemePref, zoomPref, setZoomPref, ZOOM_MIN, ZOOM_MAX, sidebarWidthPref, setSidebarWidthPref,
     sectionsPref, setSectionsPref, sectionWeightsPref, setSectionWeightsPref, activityLabelsPref, setActivityLabelsPref,
+    outlinePinnedPref, setOutlinePinnedPref, pinnedOutlineWidthPref, setPinnedOutlineWidthPref,
     SECTION_IDS, type ThemePref, type SectionId,
   } from './lib/prefs';
   import { resolveWikiLink, noteFileName } from './lib/wiki';
@@ -24,7 +25,8 @@
   import SearchSection from './lib/SearchSection.svelte';
   import OutlineSection from './lib/OutlineSection.svelte';
   import TitleBar from './lib/TitleBar.svelte';
-  import { customTitleBar, setNativeMenu, type MenuItem } from './lib/menu';
+  import { customTitleBar, setNativeMenu, type MenuEntry, type MenuItem } from './lib/menu';
+  import ContextMenu from './lib/ContextMenu.svelte';
   import FindBar from './lib/FindBar.svelte';
   import OpenSpace from './lib/OpenSpace.svelte';
   import {
@@ -90,10 +92,14 @@
   let searchSection = $state<ReturnType<typeof SearchSection>>();
   let outline = $state<SlateOutline | null>(null);
   let activeHeading = $state<string | null>(null);
-  const openSections = $derived(SECTION_IDS.filter(id => sections[id]));
+  // Document Nav can be pinned in its own column left of the document; sections.outline then
+  // says whether that column is expanded or folded to a strip.
+  let outlinePinned = $state(outlinePinnedPref());
+  let pinnedOutlineWidth = $state(pinnedOutlineWidthPref());
+  const openSections = $derived(SECTION_IDS.filter(id => sections[id] && !(id === 'outline' && outlinePinned)));
   let theme = $state<ThemePref>(themePref());
   let readOnly = $state(false);
-  let zoom = zoomPref();
+  let zoom = $state(zoomPref());
 
   const name = $derived(path ? basename(path) : 'Untitled');
   const folder = () => (path ? dirname(path) : null);
@@ -371,6 +377,28 @@
   function toggleActivityLabels() {
     activityLabels = !activityLabels;
     setActivityLabelsPref(activityLabels);
+  }
+
+  /** Pinning moves Document Nav out of the sidebar's stack to a column left of the document; unpinning puts it back. */
+  function toggleOutlinePinned() {
+    outlinePinned = !outlinePinned;
+    setOutlinePinnedPref(outlinePinned);
+    setSection('outline', true);
+    trackActiveHeading();
+  }
+
+  function startPinnedResize(event: PointerEvent) {
+    const handle = event.currentTarget as HTMLElement;
+    handle.setPointerCapture(event.pointerId);
+    const startX = event.clientX;
+    const startWidth = pinnedOutlineWidth;
+    const move = (e: PointerEvent) => { pinnedOutlineWidth = Math.min(500, Math.max(140, startWidth + e.clientX - startX)); };
+    const up = () => {
+      handle.removeEventListener('pointermove', move);
+      setPinnedOutlineWidthPref(pinnedOutlineWidth);
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', up, { once: true });
   }
 
   // After a click in Document Nav the clicked heading stays highlighted (even when the document
@@ -968,6 +996,22 @@
     void getCurrentWebview().setZoom(zoom);
   }
 
+  const resetZoomText = $derived(`&Reset Zoom${zoom === 1 ? '' : ` (${Math.round(zoom * 100)}%)`}`);
+
+  /**
+   * Ctrl+mouse wheel zooms, a step per wheel notch. A touchpad sends many small steps
+   * (pinching sends Ctrl+wheel too), so those add up to a notch first.
+   */
+  let wheelSum = 0;
+  function onZoomWheel(event: WheelEvent) {
+    if (!(event.ctrlKey || event.metaKey) || event.deltaY === 0) return;
+    event.preventDefault();
+    wheelSum = Math.abs(event.deltaY) >= 50 ? event.deltaY : wheelSum + event.deltaY;
+    if (Math.abs(wheelSum) < 50) return;
+    setZoom(zoom + (wheelSum < 0 ? 0.1 : -0.1));
+    wheelSum = 0;
+  }
+
   async function print() {
     if (!editor) return;
     const previous = editor.getWorkspaceMode();
@@ -1043,6 +1087,7 @@
           { text: '&Files', keys: 'Ctrl+Shift+E', checked: sections.files, action: () => toggleSection('files') },
           { text: 'Searc&h', checked: sections.search, action: () => toggleSection('search') },
           { text: 'Document &Navigation', keys: 'Ctrl+Shift+O', checked: sections.outline, action: toggleOutline },
+          { text: 'Pin Document Navi&gation', checked: outlinePinned, action: toggleOutlinePinned },
           { text: 'Version Histor&y', keys: 'Ctrl+Shift+H', checked: sections.history, action: () => toggleSection('history') },
           { text: 'Sidebar &Labels', checked: activityLabels, action: toggleActivityLabels },
           separator,
@@ -1057,7 +1102,7 @@
           separator,
           { text: 'Zoom &In', keys: 'Ctrl+=', action: () => setZoom(zoom + 0.1) },
           { text: 'Zoom O&ut', keys: 'Ctrl+-', action: () => setZoom(zoom - 0.1) },
-          { text: '&Actual Size', keys: 'Ctrl+0', action: () => setZoom(1) },
+          { text: resetZoomText, keys: 'Ctrl+0', enabled: zoom !== 1, action: () => setZoom(1) },
         ],
       },
       {
@@ -1119,7 +1164,7 @@
   /** Links never navigate the webview: web links go to the browser, .md links open here. */
   async function followLink(url: string, newWindow: boolean) {
     if (/^(https?|mailto):/i.test(url)) {
-      await openUrl(url);
+      await openUrl(url).catch(error => showError(`Couldn't open ${url} in the browser.\n\n${error}`));
       return;
     }
     const local = toLocalPath(url, folder());
@@ -1137,19 +1182,21 @@
     }
   }
 
-  type ClickedLink = { url: string; wiki?: undefined } | { url?: undefined; wiki: string };
+  /** A link in the document: `text` is what it shows; `icon` when the click was on a web link's ↗. */
+  type ClickedLink = ({ url: string; wiki?: undefined } | { url?: undefined; wiki: string }) & { text: string; icon: boolean };
 
   function linkFromEvent(event: MouseEvent): ClickedLink | null {
-    const anchor = (event.target as Element | null)?.closest?.('a, .wiki-link');
+    const anchor = (event.target as Element | null)?.closest?.('a, .wiki-link, .slate-external-icon');
     if (!(anchor instanceof HTMLElement) || !host.contains(anchor)) return null;
+    const text = anchor.textContent ?? '';
     if (anchor.classList.contains('wiki-link')) {
-      const wiki = anchor.dataset.noteName || anchor.textContent || '';
-      return wiki ? { wiki } : null;
+      const wiki = anchor.dataset.noteName || text;
+      return wiki ? { wiki, text, icon: false } : null;
     }
     if (anchor.dataset.attachmentId) return null;
     const url = anchor.dataset.mdUrl ?? anchor.getAttribute('href') ?? '';
     if (!url || url.startsWith('#')) return null;
-    return { url };
+    return { url, text, icon: anchor.classList.contains('slate-external-icon') };
   }
 
   function follow(link: ClickedLink, newWindow: boolean) {
@@ -1161,7 +1208,8 @@
     if (!link || !editor) return;
     const modifier = event.ctrlKey || event.metaKey;
     // In Edit and Source a plain click places the caret, as in Slate itself; Ctrl+click follows.
-    if (editor.getWorkspaceMode() !== 'preview' && !modifier) return;
+    // The ↗ after a web link opens it with a plain click everywhere.
+    if (editor.getWorkspaceMode() !== 'preview' && !modifier && !link.icon) return;
     event.preventDefault();
     event.stopPropagation();
     void follow(link, modifier || event.shiftKey);
@@ -1172,6 +1220,89 @@
     if (!link || event.button !== 1) return;
     event.preventDefault();
     void follow(link, true);
+  }
+
+  // ---- Right-click menu in the document ----------------------------------------------
+
+  let contextMenu = $state<{ x: number; y: number; items: MenuEntry[] } | null>(null);
+
+  /** Text for a menu item: in quotes, cut short, `&` kept literal. */
+  function quoted(text: string) {
+    return `“${text.length > 32 ? `${text.slice(0, 31)}…` : text}”`.replace(/&/g, '&&');
+  }
+
+  /** What to search for to find the other links to the same place. */
+  function linkSearchText(link: ClickedLink): string {
+    if (link.wiki !== undefined) return `[[${link.wiki}`;
+    // A bare www. address is a link to http://www.…, but the notes have it as written.
+    if (/^https?:\/\/www\./i.test(link.url) && /^www\./i.test(link.text)) return link.text;
+    if (/^[a-z][a-z0-9+.-]*:/i.test(link.url)) return link.url;
+    // A file: other notes reach it by other relative paths, so look for its name.
+    const file = link.url.split(/[?#]/)[0];
+    try { return basename(decodeURI(file)); } catch { return basename(file); }
+  }
+
+  async function findInFolder(text: string) {
+    setSection('search', true);
+    await tick();
+    await searchSection?.searchFor(text);
+  }
+
+  async function pasteText() {
+    editor?.focus();
+    try {
+      document.execCommand('insertText', false, await navigator.clipboard.readText());
+    } catch {
+      await message('Press Ctrl+V to paste here.', { title: 'Slate Viewer', kind: 'info' });
+    }
+  }
+
+  /**
+   * Our own menu when there is selected text or a link under the mouse (Find, link actions);
+   * otherwise the webview's usual one.
+   */
+  function onHostContextMenu(event: MouseEvent) {
+    if (!editor) return;
+    const selection = window.getSelection();
+    const selected = selection && !selection.isCollapsed && host.contains(selection.anchorNode) ? selection.toString() : '';
+    // Search works line by line, so a selection over several lines finds its first line.
+    const find = selected.split(/\r?\n/).map(line => line.trim()).find(Boolean)?.slice(0, 200) ?? '';
+    const link = linkFromEvent(event);
+    if (!find && !link) return;
+    event.preventDefault();
+
+    const editable = !readOnly && editor.getWorkspaceMode() !== 'preview' && !!(event.target as Element).closest?.('.cm-content');
+    const items: MenuEntry[] = [];
+    const separate = () => { if (items.length && !('separator' in items[items.length - 1])) items.push({ separator: true }); };
+    if (find) {
+      if (editable) items.push({ text: 'Cu&t', keys: 'Ctrl+X', action: () => { editor?.focus(); document.execCommand('cut'); } });
+      items.push({ text: '&Copy', keys: 'Ctrl+C', action: () => void navigator.clipboard.writeText(selected).catch(showError) });
+      if (editable) items.push({ text: '&Paste', keys: 'Ctrl+V', action: () => void pasteText() });
+      separate();
+      if (root) items.push({ text: `&Find ${quoted(find)} in Folder`, keys: 'Ctrl+Shift+F', action: () => void findInFolder(find) });
+      items.push({ text: `Find ${quoted(find)} in &Document`, keys: 'Ctrl+F', action: () => void findBar?.open(find) });
+    }
+    if (link) {
+      separate();
+      const web = link.url !== undefined && /^(https?|mailto):/i.test(link.url);
+      const note = link.wiki !== undefined || (link.url !== undefined && MARKDOWN_EXTENSIONS.includes(extname(link.url.split(/[?#]/)[0])));
+      items.push({ text: web ? '&Open Link in Browser' : '&Open Link', action: () => void follow(link, false) });
+      if (note) items.push({ text: 'Open in New &Window', action: () => void follow(link, true) });
+      items.push({
+        text: 'Copy Link &Address',
+        action: () => void navigator.clipboard.writeText(link.wiki !== undefined ? `[[${link.wiki}]]` : link.url).catch(showError),
+      });
+      const others = linkSearchText(link);
+      items.push({
+        text: 'Find Other &Uses of This Link',
+        action: () => void (root ? findInFolder(others) : findBar?.open(others)),
+      });
+    }
+    if (zoom !== 1) {
+      separate();
+      items.push({ text: resetZoomText, keys: 'Ctrl+0', action: () => setZoom(1) });
+    }
+    contextMenu = { x: event.clientX, y: event.clientY, items };
   }
 
   let findRefreshTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1251,6 +1382,10 @@
     host.addEventListener('click', onHostClick, true);
     void markRecentSpaces();
     host.addEventListener('auxclick', onHostAuxClick, true);
+    host.addEventListener('contextmenu', onHostContextMenu);
+    // Not passive, so Ctrl+wheel can zoom the window instead of scrolling.
+    window.addEventListener('wheel', onZoomWheel, { passive: false });
+    cleanups.push(() => window.removeEventListener('wheel', onZoomWheel));
     host.addEventListener('slate:change', () => {
       if (editor) dirty = missingOnDisk || editor.getMarkdown() !== baseline;
       if (editor && openedSpace) docBytes = new TextEncoder().encode(editor.getMarkdown()).length;
@@ -1382,13 +1517,34 @@
               onCompare={entry => void compareWithRevision(entry)}
             />
           {:else}
-            <OutlineSection {outline} active={activeHeading} onReveal={revealHeading} />
+            <OutlineSection {outline} active={activeHeading} onReveal={revealHeading} onTogglePin={toggleOutlinePinned} />
           {/if}
         {/snippet}
       </SidePanel>
     </div>
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="resizer" onpointerdown={startResize}></div>
+  {/if}
+  {#if outlinePinned}
+    {#if sections.outline}
+      <div class="pinned-nav" style:width="{pinnedOutlineWidth}px">
+        <OutlineSection
+          {outline}
+          active={activeHeading}
+          onReveal={revealHeading}
+          pinned
+          onTogglePin={toggleOutlinePinned}
+          onCollapse={() => setSection('outline', false)}
+        />
+      </div>
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="resizer" onpointerdown={startPinnedResize}></div>
+    {:else}
+      <button class="nav-strip" title="Show Document Nav (Ctrl+Shift+O)" aria-label="Show Document Nav" onclick={() => setSection('outline', true)}>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 7l5 5-5 5" /></svg>
+        <span>Document Nav</span>
+      </button>
+    {/if}
   {/if}
   <div class="editor">
     <div class="host" bind:this={host}></div>
@@ -1399,6 +1555,12 @@
 
 {#if spaceDialog}
   <OpenSpace onOpened={(folder, ref) => void onSpaceOpened(folder, ref)} onClose={() => (spaceDialog = false)} />
+{/if}
+
+{#if contextMenu}
+  {#key contextMenu}
+    <ContextMenu x={contextMenu.x} y={contextMenu.y} items={contextMenu.items} onClose={() => (contextMenu = null)} />
+  {/key}
 {/if}
 
 {#if quickOpen && root}
@@ -1416,5 +1578,17 @@
   .resizer { flex: none; width: 5px; margin-left: -3px; cursor: col-resize; z-index: 1; }
   .resizer:hover { background: var(--side-accent-soft); }
   .editor { position: relative; flex: 1; min-width: 0; height: 100%; }
+  .pinned-nav {
+    flex: none; height: 100%; min-width: 0; border-right: 1px solid var(--side-border);
+    background: var(--side-bg); color: var(--side-fg); font: 13px/1.35 Inter, "Segoe UI", system-ui, sans-serif;
+  }
+  .nav-strip {
+    flex: none; display: flex; flex-direction: column; align-items: center; gap: 8px; width: 22px; height: 100%; padding: 8px 0;
+    border: 0; border-right: 1px solid var(--side-border); background: var(--side-bg); color: var(--side-muted);
+    font: 11px/1 Inter, "Segoe UI", system-ui, sans-serif; letter-spacing: .06em; text-transform: uppercase; cursor: pointer;
+  }
+  .nav-strip:hover { color: var(--side-fg); background: var(--side-hover); }
+  .nav-strip span { writing-mode: vertical-rl; }
+  .nav-strip svg { flex: none; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
   .host { height: 100%; }
 </style>

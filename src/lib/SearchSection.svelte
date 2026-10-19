@@ -26,6 +26,14 @@
     searchInput?.select();
   }
 
+  /** Puts `text` in the box and searches for it straight away (Find in Folder from the document). */
+  export async function searchFor(text: string) {
+    query = text;
+    clearTimeout(searchTimer);
+    await tick();
+    await runSearch();
+  }
+
   function scheduleSearch() {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(runSearch, 250);

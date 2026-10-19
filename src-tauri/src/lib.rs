@@ -94,8 +94,17 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             let paths = paths_from_args(&args, Path::new(&cwd));
             if paths.is_empty() {
-                if let Some(window) = app.webview_windows().values().next() {
-                    let _ = window.set_focus();
+                // Show it too: a window whose page never finished loading is still hidden (windows
+                // start hidden until the theme is applied), and otherwise nothing would appear at all.
+                match app.webview_windows().values().next() {
+                    Some(window) => {
+                        let _ = window.show();
+                        let _ = window.unminimize();
+                        let _ = window.set_focus();
+                    }
+                    None => {
+                        let _ = open_document_window(app, None, None, false);
+                    }
                 }
                 return;
             }
