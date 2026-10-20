@@ -39,7 +39,7 @@
   import { lastSession, saveSession, placeView, savePlaceView, type PlaceView } from './lib/session';
 
   interface LoadedDocument { path: string; text: string; hasBom: boolean }
-  interface FolderListing { files: string[]; truncated: boolean }
+  interface FolderListing { files: string[]; emptyFolders: string[]; truncated: boolean }
   /** The open folder is a Metatrash space that mtsync keeps in sync. */
   interface OpenedSpace { space: string; server: string; access: string; folder: string; state: string }
   const MARKDOWN_EXTENSIONS = ['md', 'markdown', 'mdown', 'mkd'];
@@ -67,6 +67,8 @@
   // Folder mode
   let root = $state<string | null>(null);
   let folderFiles = $state<string[]>([]);
+  /** Folders with no files in them yet (relative), so they still show in Files. */
+  let emptyFolders = $state<string[]>([]);
   let folderTruncated = $state(false);
   let searchQuery = $state('');
 
@@ -395,6 +397,7 @@
     if (!reopened) rememberPlace();
     root = dir;
     folderFiles = listing.files;
+    emptyFolders = listing.emptyFolders;
     folderTruncated = listing.truncated;
     if (showFiles) setSection('files', true);
     recentFolderList.remember(dir);
@@ -417,6 +420,7 @@
     rememberPlace();
     root = null;
     folderFiles = [];
+    emptyFolders = [];
     openedSpace = null;
     descriptions = [];
     quickOpen = false;
@@ -456,6 +460,7 @@
       const listing = await invoke<FolderListing>('list_folder', { root: listed });
       if (listed !== root || request !== folderRequest) return;
       folderFiles = listing.files;
+      emptyFolders = listing.emptyFolders;
       folderTruncated = listing.truncated;
       void offerConflictResolve();
     } catch {
@@ -485,6 +490,10 @@
     }
     // In a space, names can't have spaces or capitals beyond ASCII: "My Note" becomes my-note.md.
     const inSpace = spaceRelative(joinPath(inFolder, 'x.md')) !== null;
+    if (inSpace && openedSpace?.access === 'read only') {
+      await message(`${openedSpace.space} is a read-only space, so notes can't be added to it.`, { title: 'Slate Viewer', kind: 'info' });
+      return null;
+    }
     const fileName = inSpace ? spaceSafeName(noteName) : noteName;
     try {
       const created = await invoke<string>('create_note', { folder: inFolder, name: fileName, title: noteName });
@@ -521,10 +530,10 @@
    */
   async function newFile(inRoot = false) {
     if (root) {
+      if (!canManageFiles) { await refuseReadOnly(); return; }
       setSection('files', true);
       await tick();
-      const rel = !inRoot && currentRelative !== null ? currentRelative.slice(0, Math.max(0, currentRelative.lastIndexOf('/'))) : '';
-      await filesSection?.startCreate(rel);
+      await filesSection?.startCreate(inRoot ? '' : currentFolderRelative());
       return;
     }
     const docFolder = folder();
@@ -537,6 +546,228 @@
     const noteName = basename(target).replace(/\.(md|markdown|mdown|mkd)$/i, '');
     const created = await createNote(noteName, dirname(target));
     if (created) await openNewNote(created);
+  }
+
+  /** File > New Folder: asks for a name in the Files section, beside the open note or at the top. */
+  async function newFolder() {
+    if (!root) return;
+    if (!canManageFiles) { await refuseReadOnly(); return; }
+    setSection('files', true);
+    await tick();
+    await filesSection?.startCreate(currentFolderRelative(), 'folder');
+  }
+
+  /** The open document's folder relative to the root, or "" (the root) when it is outside it. */
+  function currentFolderRelative(): string {
+    return currentRelative !== null ? currentRelative.slice(0, Math.max(0, currentRelative.lastIndexOf('/'))) : '';
+  }
+
+  // ---- Managing files (the Files section) ----------------------------------------
+
+  /** Files can be added, renamed, moved and deleted anywhere but in a read-only space. */
+  const canManageFiles = $derived(openedSpace?.access !== 'read only');
+  /** Files that stay where they are: a space's README is managed on metatrash.com. */
+  const lockedFiles = $derived(openedSpace ? ['README.md'] : []);
+  const trashName = /Windows/i.test(navigator.userAgent) ? 'Recycle Bin' : 'Trash';
+
+  async function refuseReadOnly() {
+    await message(`${openedSpace?.space ?? 'This'} is a read-only space, so its files can't be changed here.`, { title: 'Slate Viewer', kind: 'info' });
+  }
+
+  /** The open folder is (inside) a Metatrash space, so names follow the space rules. */
+  const rootInSpace = () => root !== null && spaceRelative(joinPath(root, 'x.md')) !== null;
+
+  /** True when `file` is `target` or inside it (full paths, any slashes, any capitals). */
+  function within(file: string, target: string): boolean {
+    const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+    return norm(file) === norm(target) || norm(file).startsWith(norm(target) + '/');
+  }
+
+  /** Why `relative` (a file, or a folder's files once moved there) can't go in the space, or null. */
+  function spaceProblem(relative: string, isFolder: boolean, from: string | null): string | null {
+    if (!rootInSpace()) return null;
+    const own = spacePathProblem(isFolder ? `${relative}/x.md` : relative);
+    if (own || !isFolder || from === null) return own;
+    const prefix = from.toLowerCase() + '/';
+    for (const file of folderFiles) {
+      if (!file.toLowerCase().startsWith(prefix)) continue;
+      const problem = spacePathProblem(relative + file.slice(from.length));
+      if (problem) return `${file}: ${problem}`;
+    }
+    return null;
+  }
+
+  /** Stops watching the open document while its folder is renamed or deleted (Windows refuses otherwise). */
+  async function releaseDocument(target: string): Promise<boolean> {
+    if (!path || !within(path, target)) return false;
+    await invoke('watch_document', { path: null }).catch(() => {});
+    return true;
+  }
+
+  /** Creates a folder from the Files section's name box; returns it (relative) or null. */
+  async function createFolder(typed: string, relativeFolder: string): Promise<string | null> {
+    if (!root) return null;
+    if (!canManageFiles) { await refuseReadOnly(); return null; }
+    const folderName = rootInSpace() ? spaceSafeName(typed) : typed.trim();
+    const rel = relativeFolder ? `${relativeFolder}/${folderName}` : folderName;
+    const problem = spaceProblem(rel, true, null);
+    if (problem) {
+      await message(`${problem}\n\nMetatrash wouldn't sync notes in it.`, { title: 'Slate Viewer', kind: 'warning' });
+      return null;
+    }
+    try {
+      await invoke<string>('create_folder', { parent: relativeFolder ? joinPath(root, relativeFolder) : root, name: folderName });
+    } catch (error) {
+      await showError(error);
+      return null;
+    }
+    await refreshFolder();
+    return rel;
+  }
+
+  /**
+   * Renames a file or folder in place. A file keeps its extension unless the new name has one;
+   * in a space the name is made space-safe, as for new notes. Returns the new relative path, or null.
+   */
+  async function renameEntry(relative: string, isFolder: boolean, typed: string): Promise<string | null> {
+    let newName = typed.trim();
+    if (!isFolder) {
+      const hasExtension = /\.(md|markdown|mdown|mkd)$/i.test(newName);
+      const stem = hasExtension ? newName.replace(/\.[^.]+$/, '') : newName;
+      const extension = hasExtension ? newName.slice(stem.length) : (/\.[^./]+$/.exec(basename(relative))?.[0] ?? '.md');
+      newName = (rootInSpace() ? spaceSafeName(stem) : stem.trim()) + extension;
+    } else if (rootInSpace()) {
+      newName = spaceSafeName(newName);
+    }
+    if (newName === basename(relative)) return relative;
+    const parent = relative.slice(0, Math.max(0, relative.lastIndexOf('/')));
+    return relocate(relative, isFolder, parent ? `${parent}/${newName}` : newName);
+  }
+
+  /** Drag and drop in Files: moves a file or folder into `toFolder` ("" for the root). */
+  async function moveEntry(relative: string, isFolder: boolean, toFolder: string): Promise<string | null> {
+    const name = basename(relative);
+    return relocate(relative, isFolder, toFolder ? `${toFolder}/${name}` : name);
+  }
+
+  /**
+   * Renames or moves `relative` to `target` (both relative to the root). The open document follows
+   * along, unsaved changes and all; saving afterwards writes to its new place. mtsync sees a file
+   * that moved with the same content as a move, so it keeps its history in the space.
+   */
+  async function relocate(relative: string, isFolder: boolean, target: string): Promise<string | null> {
+    if (!root) return null;
+    if (!canManageFiles) { await refuseReadOnly(); return null; }
+    if (lockedFiles.includes(relative)) {
+      await message(`${relative} can't be renamed or moved: the space's README is managed on metatrash.com.`, { title: 'Slate Viewer', kind: 'info' });
+      return null;
+    }
+    const problem = spaceProblem(target, isFolder, relative);
+    if (problem) {
+      await message(`${problem}\n\nMetatrash wouldn't sync it there.`, { title: 'Slate Viewer', kind: 'warning' });
+      return null;
+    }
+    const from = joinPath(root, relative);
+    const to = joinPath(root, target);
+    const released = await releaseDocument(from);
+    try {
+      await invoke('rename_path', { from, to });
+    } catch (error) {
+      if (released && path) watch(path);
+      await showError(error);
+      return null;
+    }
+    const moved = (file: string) => (within(file, from) ? to + file.slice(from.length) : file);
+    history = history.map(moved);
+    forward = forward.map(moved);
+    for (const entry of recentFileList.list()) {
+      if (within(entry.path, from)) { recentFileList.forget(entry.path); recentFileList.remember(moved(entry.path)); }
+    }
+    recent = recentFileList.list();
+    if (released && path) {
+      path = moved(path);
+      watch(path);
+      recentFileList.remember(path);
+      recent = recentFileList.list();
+      rememberSession();
+      rememberPlace();
+    }
+    await refreshFolder();
+    return target;
+  }
+
+  /** Copies a note beside itself ("plan copy.md", or "plan-copy.md" in a space). */
+  async function duplicateEntry(relative: string) {
+    if (!root) return;
+    if (!canManageFiles) { await refuseReadOnly(); return; }
+    try {
+      await invoke<string>('duplicate_file', { path: joinPath(root, relative), spaceNames: rootInSpace() });
+    } catch (error) {
+      await showError(error);
+      return;
+    }
+    await refreshFolder();
+  }
+
+  /** Deletes a file or folder (and everything in it) to the Recycle Bin, after asking. */
+  async function deleteEntry(relative: string, isFolder: boolean) {
+    if (!root) return;
+    if (!canManageFiles) { await refuseReadOnly(); return; }
+    if (lockedFiles.includes(relative)) {
+      await message(`${relative} can't be deleted: the space's README is managed on metatrash.com.`, { title: 'Slate Viewer', kind: 'info' });
+      return;
+    }
+    const target = joinPath(root, relative);
+    const notes = isFolder ? folderFiles.filter(f => f.toLowerCase().startsWith(relative.toLowerCase() + '/')).length : 0;
+    const openInside = path !== null && within(path, target);
+    const lines = [
+      isFolder
+        ? `Delete the folder ${basename(relative)} and everything in it${notes ? ` (${notes} note${notes === 1 ? '' : 's'})` : ''}?`
+        : `Delete ${basename(relative)}?`,
+      `It goes to the ${trashName}, so you can get it back from there.${rootInSpace() ? ' It is deleted from the space too.' : ''}`,
+    ];
+    if (openInside && dirty) lines.push(`${name} has unsaved changes, which will be lost.`);
+    const choice = await message(lines.join('\n\n'), {
+      title: 'Slate Viewer',
+      kind: 'warning',
+      buttons: { ok: 'Delete', cancel: 'Cancel' },
+    });
+    if (choice !== 'Delete') return;
+    const released = await releaseDocument(target);
+    try {
+      await invoke('trash_path', { path: target });
+    } catch (error) {
+      if (released && path) watch(path);
+      await showError(error);
+      return;
+    }
+    history = history.filter(file => !within(file, target));
+    forward = forward.filter(file => !within(file, target));
+    for (const entry of recentFileList.list()) if (within(entry.path, target)) recentFileList.forget(entry.path);
+    recent = recentFileList.list();
+    if (released) await leaveDeletedDocument();
+    await refreshFolder();
+  }
+
+  /** After the open document was deleted: back to the note before it, or an empty page. */
+  async function leaveDeletedDocument() {
+    if (!editor) return;
+    dirty = false; // the user agreed to lose any changes
+    const previous = history.at(-1);
+    if (previous) {
+      history = history.slice(0, -1);
+      await loadHere(previous, { pushHistory: false, quiet: true });
+      if (path === previous) return;
+    }
+    path = null;
+    format = { ...NEW_FILE_FORMAT };
+    diskText = null;
+    missingOnDisk = false;
+    watch(null);
+    await editor.setMarkdown('');
+    baseline = editor.getMarkdown();
+    dirty = false;
+    rememberSession();
   }
 
   function searchFolder(query: string) {
@@ -1249,7 +1480,8 @@
         items: [
           { text: '&New Window', keys: 'Ctrl+N', action: () => void newWindow() },
           { text: 'New F&ile…', keys: 'Ctrl+Alt+N', action: () => void newFile() },
-          { text: 'New File in Roo&t…', enabled: root !== null, action: () => void newFile(true) },
+          { text: 'New File in Roo&t…', enabled: root !== null && canManageFiles, action: () => void newFile(true) },
+          { text: 'New Fo&lder…', enabled: root !== null && canManageFiles, action: () => void newFolder() },
           { text: '&Open…', keys: 'Ctrl+O', action: () => void chooseAndOpen() },
           { text: 'Open &Folder…', keys: 'Ctrl+Alt+O', action: () => void chooseFolder() },
           { text: 'Open Metatrash S&pace…', keys: 'Ctrl+Alt+M', action: () => { spaceDialog = true; } },
@@ -1738,12 +1970,20 @@
               bind:this={filesSection}
               {root}
               files={folderFiles}
+              {emptyFolders}
               truncated={folderTruncated}
               current={currentRelative}
               {recentFolders}
               {rootKind}
               onOpen={(relative, options) => void openFromFolder(relative, options)}
               onCreate={createNoteFromSidebar}
+              editable={canManageFiles}
+              locked={lockedFiles}
+              onCreateFolder={createFolder}
+              onRename={renameEntry}
+              onMove={moveEntry}
+              onDuplicate={relative => void duplicateEntry(relative)}
+              onDelete={(relative, isFolder) => void deleteEntry(relative, isFolder)}
               onCloseFolder={closeFolder}
               onChooseFolder={() => void chooseFolder()}
               onOpenFolder={dir => void openFolder(dir)}

@@ -212,6 +212,13 @@ back at the scroll position it was left at. A folder opens where it was left, as
   (File menu, or the second button) always creates it at the top of the folder. Right-click a folder in Files for
   **New File in** that folder, or a note for **New File in Root**, Open in New Window, Show in Explorer and Copy Path.
   The new note opens in Edit with the cursor under its heading. With no folder open, New File asks where to save it.
+- **Managing files.** Right-click a note or folder in Files for **Rename** (F2), **Duplicate** (notes:
+  `plan copy.md`, or `plan-copy.md` in a space), **Delete** (Del; asks first, then moves it to the Recycle Bin, or the
+  Trash on macOS and Linux) and **New Folder** (also File > New Folder and the third Files button). Drag a note or
+  folder onto a folder to move it, or onto empty space below the tree to move it to the top; resting on a closed folder
+  opens it. Renaming keeps a note's extension unless you type one. The open note follows a rename or move, unsaved
+  changes and all; deleting it shows the note before it. Empty folders show in the tree so they can be filled.
+  None of this is offered in a read-only space, and a space's root `README.md` can't be renamed, moved or deleted.
 - **Search** (Ctrl+Shift+F) searches every note; clicking a hit opens the note with Find showing,
   every match highlighted and the clicked line scrolled into view.
 - **Go > Go to File** (Ctrl+T) jumps to a note by typing part of its name.
@@ -246,6 +253,9 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
 - Space rules are checked when saving: names with letters, digits, `.`, `-`, `_` only (a fixed name is offered),
   at most 8 folder levels, 64 KB per file, UTF-8 without BOM. New notes get a space-safe name (`My Idea` → `my-idea.md`)
   and `[[My Idea]]` finds `my-idea.md`. Read-only spaces and the space's root `README.md` open locked.
+- Renames, moves and new folders in a space get space-safe names too, and are refused when a note would break the
+  rules. mtsync sends a rename or move as a move, so the note keeps its history; a deleted note is deleted in the
+  space. An empty folder stays on this computer until a note is put in it.
 - Saving checks whether the file changed on disk since it was opened (for example synced in from
   another computer) and offers **Compare** or **Keep Mine**.
 - Conflict copies that mtsync keeps (`plan.conflict-20261016-140211.md`) show with a ⚠ in Files.
@@ -256,7 +266,7 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
 
 ### Documents
 
-- **File menu:** New Window (Ctrl+N), New File (Ctrl+Alt+N), New File in Root, Open (Ctrl+O), Open Recent, Save (Ctrl+S), Save As (Ctrl+Shift+S),
+- **File menu:** New Window (Ctrl+N), New File (Ctrl+Alt+N), New File in Root, New Folder, Open (Ctrl+O), Open Recent, Save (Ctrl+S), Save As (Ctrl+Shift+S),
   Print (Ctrl+P, includes Microsoft Print to PDF), Close Window (Ctrl+W).
 - **View menu:** Edit / Preview / Source (Ctrl+1/2/3), Read Only checklist mode (Ctrl+Shift+R:
   text locked, task boxes still tick), Files / Search / Document Navigation / Version History, Theme (system, light, dark, paper), Zoom In / Zoom Out / Reset Zoom (Ctrl+= / Ctrl+- / Ctrl+0, or Ctrl+mouse wheel;
@@ -309,7 +319,8 @@ public/slate/        Slate 0.16.0, vendored unchanged (slate.js, slate.css, merm
 src/App.svelte       menu, file handling, link handling, Slate mount
 src/lib/             icon bar and sidebar sections, Go to File, wiki-link resolving, paths, line endings, recent lists, preferences
 src-tauri/src/       Rust: windows, single instance, file read/write, attachments, file and folder
-                     watching, folder listing and search, mtsync commands (mtsync.rs), fault log (applog.rs)
+                     watching, folder listing and search, rename/move/delete/new folder (files.rs),
+                     mtsync commands (mtsync.rs), fault log (applog.rs)
 ```
 
 To update Slate, run `npm run build` in the Slate repository, then copy its `slate.js`, `slate.css`, `slate-editor.d.ts`,

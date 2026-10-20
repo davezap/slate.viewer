@@ -13,6 +13,8 @@
   interface Props {
     root: string | null;
     files: string[];
+    /** Folders with nothing in them yet (relative), shown so a new folder can be filled. */
+    emptyFolders?: string[];
     truncated: boolean;
     /** The open document, relative to root, or null when it is outside the folder. */
     current: string | null;
@@ -30,11 +32,24 @@
     /** A folder (relative, no trailing slash) to expand and scroll to. */
     reveal?: string | null;
     onOpenSpace?: () => void;
+    /** False in a read-only space: no new, rename, move, duplicate or delete. */
+    editable?: boolean;
+    /** Files (relative) that can't be renamed, moved or deleted, such as a space's README. */
+    locked?: string[];
+    /** Creates a folder called `name` in `folder`; resolves to its relative path, or null. */
+    onCreateFolder?: (name: string, folder: string) => Promise<string | null>;
+    /** Renames a file or folder; resolves to its new relative path, or null when it didn't. */
+    onRename?: (path: string, folder: boolean, name: string) => Promise<string | null>;
+    /** Moves a file or folder into `toFolder` ("" for the root); resolves like onRename. */
+    onMove?: (path: string, folder: boolean, toFolder: string) => Promise<string | null>;
+    onDuplicate?: (path: string) => void;
+    onDelete?: (path: string, folder: boolean) => void;
   }
 
   let {
     root, files, truncated, current, recentFolders, rootKind = 'folder', onOpen, onCreate, onCloseFolder, onChooseFolder, onOpenFolder,
-    descriptions = [], reveal = null, onOpenSpace,
+    descriptions = [], reveal = null, onOpenSpace, emptyFolders = [], editable = true, locked = [],
+    onCreateFolder, onRename, onMove, onDuplicate, onDelete,
   }: Props = $props();
 
   // ---- Space descriptions ------------------------------------------------------
@@ -57,14 +72,14 @@
 
   interface Node { name: string; path: string; folder: boolean; children: Node[] }
 
-  function buildTree(list: string[]): Node[] {
+  function buildTree(list: string[], folders: string[]): Node[] {
     const top: Node = { name: '', path: '', folder: true, children: [] };
-    for (const file of list) {
-      const parts = file.split('/');
+    const add = (entry: string, lastIsFolder: boolean) => {
+      const parts = entry.split('/');
       let node = top;
       parts.forEach((part, i) => {
         const path = parts.slice(0, i + 1).join('/');
-        const isFolder = i < parts.length - 1;
+        const isFolder = lastIsFolder || i < parts.length - 1;
         let child = node.children.find(c => c.name === part && c.folder === isFolder);
         if (!child) {
           child = { name: part, path, folder: isFolder, children: [] };
@@ -72,7 +87,9 @@
         }
         node = child;
       });
-    }
+    };
+    for (const file of list) add(file, false);
+    for (const folder of folders) add(folder, true);
     const sort = (nodes: Node[]) => {
       nodes.sort((a, b) => Number(b.folder) - Number(a.folder) || a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }));
       nodes.forEach(n => sort(n.children));
@@ -81,7 +98,7 @@
     return top.children;
   }
 
-  const tree = $derived(buildTree(files));
+  const tree = $derived(buildTree(files, emptyFolders));
   let expanded = $state(new Set<string>());
 
   // Reveal the open document by expanding its folders.
@@ -131,6 +148,8 @@
   // ---- New file ------------------------------------------------------------------
 
   let creating = $state(false);
+  /** What the name box makes: a note or a folder. */
+  let createKind = $state<'file' | 'folder'>('file');
   /** Where the new file goes: a folder relative to root, "" for the root. */
   let createIn = $state('');
   let newName = $state('');
@@ -142,15 +161,22 @@
   const rootName = $derived(root ? basename(root) || root : '');
   const folderLabel = (folder: string) => (folder ? `${folder}/` : `${rootName} (top)`);
 
-  /** Shows the name box for a new file in `folder` (relative, "" for the root), opening the folder in the tree. */
-  export async function startCreate(folder: string = currentFolder) {
+  /** Expands `folder` (relative) and the folders above it. */
+  function expandTo(folder: string) {
+    if (!folder) return;
+    const parts = folder.split('/');
+    const next = new Set(expanded);
+    for (let i = 1; i <= parts.length; i++) next.add(parts.slice(0, i).join('/'));
+    expanded = next;
+  }
+
+  /** Shows the name box for a new file (or folder) in `folder` (relative, "" for the root), opening the folder in the tree. */
+  export async function startCreate(folder: string = currentFolder, kind: 'file' | 'folder' = 'file') {
+    if (!editable) return;
+    renaming = null;
     createIn = folder;
-    if (folder) {
-      const parts = folder.split('/');
-      const next = new Set(expanded);
-      for (let i = 1; i <= parts.length; i++) next.add(parts.slice(0, i).join('/'));
-      expanded = next;
-    }
+    createKind = kind;
+    expandTo(folder);
     creating = true;
     newName = '';
     await tick();
@@ -160,7 +186,126 @@
   async function finishCreate(event: KeyboardEvent) {
     if (event.key === 'Escape') { creating = false; return; }
     if (event.key !== 'Enter' || !newName.trim()) return;
-    if (await onCreate(newName.trim(), createIn)) creating = false;
+    if (createKind === 'file') {
+      if (await onCreate(newName.trim(), createIn)) creating = false;
+      return;
+    }
+    const made = await onCreateFolder?.(newName.trim(), createIn);
+    if (made) {
+      creating = false;
+      expandTo(made);
+    }
+  }
+
+  // ---- Rename, delete, duplicate ------------------------------------------------
+
+  const keyOf = (node: Node) => node.path + (node.folder ? '/' : '');
+  const isLocked = (node: Node) => !node.folder && locked.includes(node.path);
+  const canChange = (node: Node) => editable && !isLocked(node);
+
+  /** The node being renamed (by keyOf), and the name typed so far. */
+  let renaming = $state<string | null>(null);
+  let renameValue = $state('');
+
+  async function startRename(node: Node) {
+    if (!canChange(node) || !onRename) return;
+    creating = false;
+    renaming = keyOf(node);
+    renameValue = node.folder ? node.name : displayName(node.name);
+    await tick();
+    const input = document.querySelector<HTMLInputElement>('.files-rename');
+    input?.focus();
+    input?.select();
+  }
+
+  /** After a folder moved: keeps it (and the folders in it) open at the new place. */
+  function followFolder(from: string, to: string) {
+    const next = new Set<string>();
+    for (const folder of expanded) next.add(folder === from || folder.startsWith(from + '/') ? to + folder.slice(from.length) : folder);
+    expanded = next;
+    expandTo(parentOf(to));
+  }
+
+  async function finishRename(event: KeyboardEvent, node: Node) {
+    event.stopPropagation();
+    if (event.key === 'Escape') { renaming = null; return; }
+    if (event.key !== 'Enter' || !renameValue.trim()) return;
+    const renamed = await onRename?.(node.path, node.folder, renameValue.trim());
+    if (renamed == null) return;
+    renaming = null;
+    if (node.folder) followFolder(node.path, renamed);
+  }
+
+  /** F2 renames and Delete deletes the file or folder with the keyboard focus. */
+  function onRowKeydown(event: KeyboardEvent, node: Node) {
+    if (!canChange(node)) return;
+    if (event.key === 'F2') {
+      event.preventDefault();
+      void startRename(node);
+    } else if (event.key === 'Delete' && !event.ctrlKey && !event.altKey && !event.metaKey) {
+      event.preventDefault();
+      onDelete?.(node.path, node.folder);
+    }
+  }
+
+  // ---- Drag and drop to move -------------------------------------------------------
+
+  /** What is being dragged, and the folder ("" = root) it would land in. */
+  let dragging = $state<{ path: string; folder: boolean } | null>(null);
+  let dropTarget = $state<string | null>(null);
+  let expandTimer: ReturnType<typeof setTimeout> | undefined;
+  const DRAG_TYPE = 'application/x-slate-viewer-path';
+
+  function onDragStart(event: DragEvent, node: Node) {
+    if (!canChange(node) || !onMove || !event.dataTransfer) { event.preventDefault(); return; }
+    dragging = { path: node.path, folder: node.folder };
+    // Only our own type, so dropping on the document doesn't paste the path into it.
+    event.dataTransfer.setData(DRAG_TYPE, node.path);
+    event.dataTransfer.effectAllowed = 'move';
+  }
+
+  function onDragEnd() {
+    dragging = null;
+    dropTarget = null;
+    clearTimeout(expandTimer);
+  }
+
+  /** Whether the dragged item can move into `folder`: not where it already is, nor into itself. */
+  function canDropInto(folder: string): boolean {
+    if (!dragging) return false;
+    if (parentOf(dragging.path) === folder) return false;
+    return !(dragging.folder && (folder === dragging.path || folder.startsWith(dragging.path + '/')));
+  }
+
+  /** Over a folder row the target is that folder; over a file, the file's folder; elsewhere, the root. */
+  function onDragOver(event: DragEvent, folder: string, hovered: Node | null = null) {
+    if (!dragging) return;
+    event.stopPropagation();
+    if (!canDropInto(folder)) {
+      if (dropTarget !== null) dropTarget = null;
+      return;
+    }
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    if (dropTarget !== folder) {
+      dropTarget = folder;
+      clearTimeout(expandTimer);
+      // Resting on a closed folder opens it, to drop deeper.
+      if (hovered?.folder && !expanded.has(hovered.path)) expandTimer = setTimeout(() => expandTo(hovered.path), 700);
+    }
+  }
+
+  async function onDrop(event: DragEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    const moving = dragging;
+    const folder = dropTarget;
+    onDragEnd();
+    if (!moving || folder === null) return;
+    const moved = await onMove?.(moving.path, moving.folder, folder);
+    if (moved == null) return;
+    expandTo(folder);
+    if (moving.folder) followFolder(moving.path, moved);
   }
 
   // ---- Right-click menu ------------------------------------------------------------
@@ -168,26 +313,41 @@
   let menu = $state<{ x: number; y: number; items: MenuEntry[] } | null>(null);
   const revealLabel = /Mac/i.test(navigator.userAgent) ? 'Reveal in &Finder' : /Windows/i.test(navigator.userAgent) ? 'Show in &Explorer' : 'Show in File &Manager';
 
-  /** New File here (in a folder, or beside a file), New File in Root, and the usual extras. */
+  /** New File/Folder here (in a folder, or beside a file) and in the root, rename, delete and the usual extras. */
   function showMenu(event: MouseEvent, node: Node | null) {
     if (!root) return;
     event.preventDefault();
     event.stopPropagation();
     const items: MenuEntry[] = [];
+    const separate = () => { if (items.length && !('separator' in items[items.length - 1])) items.push({ separator: true }); };
     const folder = node ? (node.folder ? node.path : parentOf(node.path)) : '';
-    if (folder) items.push({ text: `&New File in ${folder.split('/').pop()!.replace(/&/g, '&&')}…`, action: () => void startCreate(folder) });
-    items.push({ text: 'New File in &Root…', action: () => void startCreate('') });
+    if (editable) {
+      const here = folder.split('/').pop()!.replace(/&/g, '&&');
+      if (folder) {
+        items.push({ text: `&New File in ${here}…`, action: () => void startCreate(folder) });
+        if (onCreateFolder) items.push({ text: `New &Folder in ${here}…`, action: () => void startCreate(folder, 'folder') });
+      }
+      items.push({ text: 'New File in &Root…', action: () => void startCreate('') });
+      if (onCreateFolder) items.push({ text: 'New Folder in Roo&t…', action: () => void startCreate('', 'folder') });
+    }
     if (node && !node.folder) {
-      items.push({ separator: true });
+      separate();
       items.push({ text: '&Open', action: () => onOpen(node.path, { newWindow: false }) });
       items.push({ text: 'Open in New &Window', action: () => onOpen(node.path, { newWindow: true }) });
     }
+    if (node && canChange(node)) {
+      separate();
+      if (onRename) items.push({ text: 'Ren&ame…', keys: 'F2', action: () => void startRename(node) });
+      if (!node.folder && onDuplicate) items.push({ text: 'D&uplicate', action: () => onDuplicate(node.path) });
+      if (onDelete) items.push({ text: '&Delete', keys: 'Del', action: () => onDelete(node.path, node.folder) });
+    }
     if (node) {
       const target = joinPath(root, node.path);
-      items.push({ separator: true });
+      separate();
       items.push({ text: revealLabel, action: () => void revealItemInDir(target).catch(console.error) });
       items.push({ text: 'Copy &Path', action: () => void navigator.clipboard.writeText(target).catch(console.error) });
     }
+    if (!items.length) return;
     menu = { x: event.clientX, y: event.clientY, items };
   }
 </script>
@@ -198,18 +358,31 @@
   {/snippet}
   {#snippet actions()}
     {#if root}
-      <button title="New file in {folderLabel(currentFolder)} (Ctrl+Alt+N)" aria-label="New file" onclick={() => void startCreate()}>
-        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8.5 1.5h-4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h4M8.5 1.5l4 4V8M8.5 1.5v4h4M12 10v5M9.5 12.5h5" /></svg>
-      </button>
-      <button title="New file in {folderLabel('')}" aria-label="New file in root" onclick={() => void startCreate('')}>
-        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 1.5h11M8.5 4h-4a1 1 0 0 0-1 1v8.5a1 1 0 0 0 1 1h4M8.5 4l3 3v1M12 10v5M9.5 12.5h5" /></svg>
-      </button>
+      {#if editable}
+        <button title="New file in {folderLabel(currentFolder)} (Ctrl+Alt+N)" aria-label="New file" onclick={() => void startCreate()}>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8.5 1.5h-4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h4M8.5 1.5l4 4V8M8.5 1.5v4h4M12 10v5M9.5 12.5h5" /></svg>
+        </button>
+        <button title="New file in {folderLabel('')}" aria-label="New file in root" onclick={() => void startCreate('')}>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 1.5h11M8.5 4h-4a1 1 0 0 0-1 1v8.5a1 1 0 0 0 1 1h4M8.5 4l3 3v1M12 10v5M9.5 12.5h5" /></svg>
+        </button>
+        {#if onCreateFolder}
+          <button title="New folder in {folderLabel(currentFolder)}" aria-label="New folder" onclick={() => void startCreate(currentFolder, 'folder')}>
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13.5H2.5a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1h3.5l1.5 2h6a1 1 0 0 1 1 1V8M12 10v5M9.5 12.5h5" /></svg>
+          </button>
+        {/if}
+      {/if}
       <button title="Close folder" aria-label="Close folder" onclick={onCloseFolder}>×</button>
     {/if}
   {/snippet}
 
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="scroll" oncontextmenu={event => showMenu(event, null)}>
+  <div
+    class="scroll"
+    class:drop-root={dropTarget === ''}
+    oncontextmenu={event => showMenu(event, null)}
+    ondragover={event => onDragOver(event, '')}
+    ondrop={event => void onDrop(event)}
+  >
     {#if !root}
       <p class="empty">No folder is open.</p>
       <button class="open-folder" onclick={onChooseFolder}>Open Folder…</button>
@@ -229,27 +402,50 @@
           class="field"
           bind:this={newInput}
           bind:value={newName}
-          placeholder="New file in {folderLabel(createIn)}: name, Enter"
-          title="A name for the new Markdown file (.md is added). Escape cancels."
+          placeholder="New {createKind === 'folder' ? 'folder' : 'file'} in {folderLabel(createIn)}: name, Enter"
+          title={createKind === 'folder'
+            ? 'A name for the new folder. Escape cancels.'
+            : 'A name for the new Markdown file (.md is added). Escape cancels.'}
           onkeydown={finishCreate}
           onblur={() => (creating = false)}
         />
       {/if}
-      {#if files.length === 0}
+      {#if files.length === 0 && emptyFolders.length === 0}
         <p class="empty">No Markdown files in this folder yet.</p>
       {/if}
       <ul class="tree">
         {#snippet branch(nodes: Node[], depth: number)}
-          {#each nodes as node (node.path + (node.folder ? '/' : ''))}
+          {#each nodes as node (keyOf(node))}
             <li>
-              {#if node.folder}
+              {#if renaming === keyOf(node)}
+                <input
+                  class="field rename files-rename"
+                  style:margin-left="{(node.folder ? 8 : 22) + depth * 14}px"
+                  style:width="calc(100% - {(node.folder ? 18 : 32) + depth * 14}px)"
+                  bind:value={renameValue}
+                  title={node.folder ? 'A new name for the folder. Enter renames, Escape cancels.' : 'A new name for the note (it keeps its extension). Enter renames, Escape cancels.'}
+                  onkeydown={event => void finishRename(event, node)}
+                  onblur={() => (renaming = null)}
+                />
+                {#if node.folder && expanded.has(node.path)}
+                  <ul>{@render branch(node.children, depth + 1)}</ul>
+                {/if}
+              {:else if node.folder}
                 <button
                   class="row"
+                  class:drop={dropTarget === node.path}
+                  class:dragged={dragging?.path === node.path}
                   style:padding-left="{8 + depth * 14}px"
                   data-folder={node.path}
                   title={describe(node.path, true) ?? undefined}
+                  draggable={canChange(node) && !!onMove}
                   onclick={() => toggle(node.path)}
                   oncontextmenu={event => showMenu(event, node)}
+                  onkeydown={event => onRowKeydown(event, node)}
+                  ondragstart={event => onDragStart(event, node)}
+                  ondragend={onDragEnd}
+                  ondragover={event => onDragOver(event, node.path, node)}
+                  ondrop={event => void onDrop(event)}
                 >
                   <span class="twisty" class:open={expanded.has(node.path)}>›</span>{node.name}
                   {#if isGithub(node.path)}<span class="badge" title="Mirrors a GitHub repository">GitHub</span>{/if}
@@ -263,10 +459,17 @@
                   class:current={node.path === current}
                   style:padding-left="{22 + depth * 14}px"
                   class:conflict={conflictOriginal(node.name) !== null}
+                  class:dragged={dragging?.path === node.path}
                   title={fileTitle(node)}
+                  draggable={canChange(node) && !!onMove}
                   onclick={event => onOpen(node.path, { newWindow: isNewWindowClick(event) })}
                   onauxclick={event => { if (event.button === 1) onOpen(node.path, { newWindow: true }); }}
                   oncontextmenu={event => showMenu(event, node)}
+                  onkeydown={event => onRowKeydown(event, node)}
+                  ondragstart={event => onDragStart(event, node)}
+                  ondragend={onDragEnd}
+                  ondragover={event => onDragOver(event, parentOf(node.path))}
+                  ondrop={event => void onDrop(event)}
                 >{#if conflictOriginal(node.name) !== null}<span class="warn">⚠</span>{/if}{displayName(node.name)}</button>
               {/if}
             </li>
@@ -305,6 +508,9 @@
   }
   .row:hover { background: var(--side-hover); }
   .row.current { background: var(--side-accent-soft); color: var(--side-accent); font-weight: 600; }
+  .row.drop, .scroll.drop-root { background: var(--side-accent-soft); box-shadow: inset 0 0 0 1px var(--side-accent); }
+  .row.dragged { opacity: .5; }
+  .field.rename { display: block; margin: 1px 0; padding: 2px 6px; }
   .badge {
     margin-left: 6px; padding: 0 5px; font-size: 10px; border-radius: 3px;
     color: var(--side-muted); border: 1px solid var(--side-border);

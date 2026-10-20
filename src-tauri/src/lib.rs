@@ -1,5 +1,6 @@
 mod applog;
 mod documents;
+mod files;
 mod mtsync;
 mod updates;
 mod watcher;
@@ -170,6 +171,10 @@ pub fn run() {
             workspace::search_folder,
             workspace::create_note,
             workspace::folder_descriptions,
+            files::trash_path,
+            files::rename_path,
+            files::create_folder,
+            files::duplicate_file,
             mtsync::mtsync_info,
             mtsync::mtsync_spaces,
             mtsync::mtsync_list,

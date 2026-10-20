@@ -24,6 +24,8 @@ const MAX_WALK_TIME: Duration = Duration::from_secs(8);
 pub struct FolderListing {
     /// Markdown files, relative to the root, using `/`.
     files: Vec<String>,
+    /// Folders with nothing in them (but hidden files), so a new folder shows before it has notes.
+    empty_folders: Vec<String>,
     /// True when the listing stopped at MAX_FILES.
     truncated: bool,
 }
@@ -65,11 +67,21 @@ fn relative(root: &Path, path: &Path) -> String {
     path.strip_prefix(root).unwrap_or(path).to_string_lossy().replace('\\', "/")
 }
 
+/// What a walk of a folder found.
+struct Walk {
+    /// Markdown files, sorted folder by folder.
+    files: Vec<PathBuf>,
+    /// Folders below the root with nothing in them but hidden files.
+    empty_folders: Vec<PathBuf>,
+    /// The walk stopped early (too many files or folders, or too slow).
+    stopped: bool,
+}
+
 /// Walks `root` for Markdown files, sorted folder by folder, without following links.
-/// The flag is true when the walk stopped early (too many files or folders, or too slow).
-fn markdown_files(root: &Path) -> (Vec<PathBuf>, bool) {
+fn markdown_files(root: &Path) -> Walk {
     let started = Instant::now();
     let mut found = Vec::new();
+    let mut empty_folders = Vec::new();
     let mut folders = 0usize;
     let mut stack = vec![(root.to_path_buf(), 0usize)];
     while let Some((dir, depth)) = stack.pop() {
@@ -79,10 +91,13 @@ fn markdown_files(root: &Path) -> (Vec<PathBuf>, bool) {
                 "slow",
                 &format!("Stopped listing {} after {folders} folders and {:.1} s.", root.display(), started.elapsed().as_secs_f32()),
             );
-            return (found, true);
+            return Walk { files: found, empty_folders, stopped: true };
         }
         let Ok(entries) = fs::read_dir(&dir) else { continue };
         let mut entries: Vec<_> = entries.flatten().collect();
+        if dir != root && entries.iter().all(|e| e.file_name().to_string_lossy().starts_with('.')) {
+            empty_folders.push(dir.clone());
+        }
         entries.sort_by_key(|e| e.file_name().to_string_lossy().to_lowercase());
         let mut subfolders = Vec::new();
         for entry in entries {
@@ -94,7 +109,7 @@ fn markdown_files(root: &Path) -> (Vec<PathBuf>, bool) {
                 }
             } else if kind.is_file() && is_markdown(&path) {
                 if found.len() >= MAX_FILES {
-                    return (found, true);
+                    return Walk { files: found, empty_folders, stopped: true };
                 }
                 found.push(path);
             }
@@ -102,7 +117,7 @@ fn markdown_files(root: &Path) -> (Vec<PathBuf>, bool) {
         // Reverse so the stack pops subfolders in alphabetical order.
         stack.extend(subfolders.into_iter().rev());
     }
-    (found, false)
+    Walk { files: found, empty_folders, stopped: false }
 }
 
 /// Runs on a worker thread: a folder can take a while to list (a big tree, a OneDrive folder
@@ -117,10 +132,11 @@ pub async fn list_folder(app: AppHandle, root: String) -> Result<FolderListing, 
         }
         // Images anywhere in the folder can then be shown.
         let _ = app.asset_protocol_scope().allow_directory(&root, true);
-        let (files, truncated) = markdown_files(&root);
-        let mut files: Vec<String> = files.iter().map(|p| relative(&root, p)).collect();
+        let walk = markdown_files(&root);
+        let mut files: Vec<String> = walk.files.iter().map(|p| relative(&root, p)).collect();
         files.sort_by_key(|f| f.to_lowercase());
-        Ok(FolderListing { files, truncated })
+        let empty_folders = walk.empty_folders.iter().map(|p| relative(&root, p)).collect();
+        Ok(FolderListing { files, empty_folders, truncated: walk.stopped })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -135,7 +151,7 @@ pub async fn search_folder(root: String, query: String) -> Result<SearchResults,
     }
     let root = PathBuf::from(root);
     tauri::async_runtime::spawn_blocking(move || {
-        let (files, _) = markdown_files(&root);
+        let files = markdown_files(&root).files;
         let mut matches = Vec::new();
         for file in files {
             if fs::metadata(&file).map(|m| m.len()).unwrap_or(0) > MAX_SEARCH_FILE_BYTES {
@@ -254,17 +270,21 @@ mod tests {
     fn lists_markdown_and_skips_noise() {
         let root = std::env::temp_dir().join(format!("slate-viewer-ws-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
-        for dir in ["notes/sub", ".git", "node_modules/pkg"] {
+        for dir in ["notes/sub", ".git", "node_modules/pkg", "empty", "hidden-only"] {
             fs::create_dir_all(root.join(dir)).unwrap();
         }
         for file in ["b.md", "a.MD", "notes/c.markdown", "notes/sub/d.md", "notes/x.txt", ".git/e.md", "node_modules/pkg/f.md"] {
             fs::write(root.join(file), "# hello world\n").unwrap();
         }
-        let (files, truncated) = markdown_files(&root);
-        let mut names: Vec<String> = files.iter().map(|p| relative(&root, p)).collect();
+        fs::write(root.join("hidden-only/.metatrash.json"), "{}").unwrap();
+        let walk = markdown_files(&root);
+        let mut names: Vec<String> = walk.files.iter().map(|p| relative(&root, p)).collect();
         names.sort();
         assert_eq!(names, ["a.MD", "b.md", "notes/c.markdown", "notes/sub/d.md"]);
-        assert!(!truncated);
+        let mut empty: Vec<String> = walk.empty_folders.iter().map(|p| relative(&root, p)).collect();
+        empty.sort();
+        assert_eq!(empty, ["empty", "hidden-only"]);
+        assert!(!walk.stopped);
 
         let results = tauri::async_runtime::block_on(search_folder(root.to_string_lossy().into(), "WORLD".into())).unwrap();
         assert_eq!(results.matches.len(), 4);

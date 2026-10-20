@@ -21,6 +21,8 @@ tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 notify = "8"
+# Delete in the Files section moves files to the Recycle Bin / Trash (files.rs).
+trash = "5"
 tauri-plugin-window-state = "2"
 # Update checks and setting up mtsync (updates.rs).
 reqwest = { version = "0.13", default-features = false, features = ["json", "native-tls", "system-proxy"] }
