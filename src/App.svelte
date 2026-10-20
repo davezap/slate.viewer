@@ -29,6 +29,7 @@
   import ContextMenu from './lib/ContextMenu.svelte';
   import FindBar from './lib/FindBar.svelte';
   import OpenSpace from './lib/OpenSpace.svelte';
+  import UpdateDialog, { type UpdateCheck } from './lib/UpdateDialog.svelte';
   import {
     mtsync, sameFolder, describeState, lastSyncTime, spacePathProblem, spaceSafeName, conflictOriginal, isSignedOut, SPACE_FILE_LIMIT,
     DEFAULT_SERVER, type SpaceRef, type FolderDescription } from './lib/space';
@@ -74,6 +75,8 @@
   /** When this window last saved into the space: the status shows Syncing… until mtsync finishes a pass after it. */
   let syncPendingSince = $state<number | null>(null);
   let spaceDialog = $state(false);
+  /** The update dialog: `initial` is what the timer's check found, null while Help's check runs. */
+  let updateDialog = $state<{ initial: UpdateCheck | null } | null>(null);
   let descriptions = $state<FolderDescription[]>([]);
   let revealFolder = $state<string | null>(null);
   let docBytes = $state(0);
@@ -133,7 +136,13 @@
     try { await action(); } finally { running.delete(key); }
   }
 
+  /** Adds a line to the fault log (Help > Open Log Folder). */
+  function logFault(kind: string, text: string) {
+    invoke('log_fault', { kind, message: text }).catch(() => {});
+  }
+
   async function showError(error: unknown) {
+    logFault('error', String(error));
     await message(String(error), { title: 'Slate Viewer', kind: 'error' });
   }
 
@@ -258,8 +267,18 @@
     return target ? writeTo(target) : false;
   }
 
+  /**
+   * Shows a dialog, ignoring repeats while one is open. Only the dialog is guarded, not the work
+   * after it, so a slow open can never leave Open and Open Folder doing nothing.
+   */
+  async function pick<T>(show: () => Promise<T>): Promise<T | null> {
+    let picked: T | null = null;
+    await once('dialog', async () => { picked = await show(); });
+    return picked;
+  }
+
   async function chooseAndOpen() {
-    const picked = await openDialog({ multiple: true, directory: false, filters: MARKDOWN_FILTERS });
+    const picked = await pick(() => openDialog({ multiple: true, directory: false, filters: MARKDOWN_FILTERS }));
     const files = Array.isArray(picked) ? picked : picked ? [picked] : [];
     for (const [i, file] of files.entries()) {
       if (i === 0) await openDocument(file);
@@ -356,15 +375,22 @@
    * (see enterFolder); `quiet` skips the message when it can't be opened.
    */
   async function openFolder(dir: string, { showFiles = true, restore = true, quiet = false } = {}) {
+    // A later Open Folder (or Close Folder) wins over one still listing.
+    const request = ++folderRequest;
+    const started = performance.now();
     let listing: FolderListing;
     try {
       listing = await invoke<FolderListing>('list_folder', { root: dir });
     } catch (error) {
+      if (request !== folderRequest) return;
       recentFolderList.forget(dir);
       recentFolders = recentFolderList.list();
       if (!quiet) await showError(error);
       return;
     }
+    const seconds = (performance.now() - started) / 1000;
+    if (seconds > 3) logFault('slow', `Listing ${dir} took ${seconds.toFixed(1)} s (${listing.files.length} files${listing.truncated ? ', stopped early' : ''}).`);
+    if (request !== folderRequest) return;
     const reopened = root !== null && sameFolder(root, dir);
     if (!reopened) rememberPlace();
     root = dir;
@@ -379,12 +405,15 @@
     rememberSession();
   }
 
+  let folderRequest = 0;
+
   async function chooseFolder() {
-    const picked = await openDialog({ directory: true, multiple: false });
+    const picked = await pick(() => openDialog({ directory: true, multiple: false }));
     if (typeof picked === 'string') await openFolder(picked);
   }
 
   function closeFolder() {
+    folderRequest += 1;
     rememberPlace();
     root = null;
     folderFiles = [];
@@ -401,18 +430,37 @@
     folderRefreshTimer = setTimeout(() => void refreshFolder(), 300);
   }
 
-  async function refreshFolder() {
+  /** One listing at a time: changes that arrive meanwhile are picked up by one more listing after it. */
+  let refreshing: Promise<void> | null = null;
+  let refreshAgain = false;
+
+  function refreshFolder(): Promise<void> {
+    if (refreshing) {
+      refreshAgain = true;
+      return refreshing;
+    }
+    refreshing = (async () => {
+      do {
+        refreshAgain = false;
+        await listFolderAgain();
+      } while (refreshAgain);
+    })().finally(() => { refreshing = null; });
+    return refreshing;
+  }
+
+  async function listFolderAgain() {
     if (!root) return;
     const listed = root;
+    const request = folderRequest;
     try {
       const listing = await invoke<FolderListing>('list_folder', { root: listed });
-      if (listed !== root) return;
+      if (listed !== root || request !== folderRequest) return;
       folderFiles = listing.files;
       folderTruncated = listing.truncated;
       void offerConflictResolve();
     } catch {
       // The folder itself went away.
-      closeFolder();
+      if (listed === root && request === folderRequest) closeFolder();
     }
   }
 
@@ -425,8 +473,12 @@
     if (find && target === path) await findBar?.open(find, line ? line - 1 : undefined);
   }
 
-  async function createNote(noteName: string): Promise<string | null> {
-    const inFolder = folder() && (currentRelative !== null || !root) ? folder() : root;
+  /** Where a new note goes by default: beside the open document, or at the top of the open folder. */
+  function defaultNoteFolder(): string | null {
+    return folder() && (currentRelative !== null || !root) ? folder() : root;
+  }
+
+  async function createNote(noteName: string, inFolder = defaultNoteFolder()): Promise<string | null> {
     if (!inFolder) {
       await message('Save this document first, so the new note has a folder to go in.', { title: 'Slate Viewer', kind: 'info' });
       return null;
@@ -444,10 +496,47 @@
     }
   }
 
-  async function createNoteFromSidebar(noteName: string): Promise<boolean> {
-    const created = await createNote(noteName);
-    if (created) await openDocument(created);
+  /** The Files section's name box: creates the note in `relativeFolder` ("" = the root) and opens it for editing. */
+  async function createNoteFromSidebar(noteName: string, relativeFolder: string): Promise<boolean> {
+    if (!root) return false;
+    const created = await createNote(noteName, relativeFolder ? joinPath(root, relativeFolder) : root);
+    if (created) await openNewNote(created);
     return created !== null;
+  }
+
+  /** Opens a note just created and puts the cursor at its end in Edit, ready to type. */
+  async function openNewNote(created: string) {
+    await openDocument(created);
+    if (path !== created || !editor || readOnly) return;
+    await setMode('edit');
+    const end = editor.getMarkdown().length;
+    editor.restoreView({ selection: [end, end], topLine: 0, focus: true });
+  }
+
+  let filesSection = $state<ReturnType<typeof FilesSection>>();
+
+  /**
+   * File > New File: in folder mode, asks for a name in the Files section (beside the open note,
+   * or at the top of the folder with `inRoot`); otherwise asks where to save it.
+   */
+  async function newFile(inRoot = false) {
+    if (root) {
+      setSection('files', true);
+      await tick();
+      const rel = !inRoot && currentRelative !== null ? currentRelative.slice(0, Math.max(0, currentRelative.lastIndexOf('/'))) : '';
+      await filesSection?.startCreate(rel);
+      return;
+    }
+    const docFolder = folder();
+    const target = await pick(() => saveDialog({
+      title: 'New File',
+      defaultPath: docFolder ? joinPath(docFolder, 'Untitled.md') : 'Untitled.md',
+      filters: MARKDOWN_FILTERS,
+    }));
+    if (!target) return;
+    const noteName = basename(target).replace(/\.(md|markdown|mdown|mkd)$/i, '');
+    const created = await createNote(noteName, dirname(target));
+    if (created) await openNewNote(created);
   }
 
   function searchFolder(query: string) {
@@ -865,7 +954,8 @@
   function showWindow() {
     if (windowShown) return;
     windowShown = true;
-    void appWindow.show().catch(() => {});
+    // Shows it in front: a window opened from Explorer while the app runs would otherwise stay behind.
+    invoke('show_window').catch(() => appWindow.show().catch(() => {}));
   }
 
   function chooseTheme(next: ThemePref) {
@@ -1157,8 +1247,10 @@
         text: '&File',
         items: [
           { text: '&New Window', keys: 'Ctrl+N', action: () => void newWindow() },
-          { text: '&Open…', keys: 'Ctrl+O', action: () => void once('open', chooseAndOpen) },
-          { text: 'Open &Folder…', keys: 'Ctrl+Alt+O', action: () => void once('open', chooseFolder) },
+          { text: 'New F&ile…', keys: 'Ctrl+Alt+N', action: () => void newFile() },
+          { text: 'New File in Roo&t…', enabled: root !== null, action: () => void newFile(true) },
+          { text: '&Open…', keys: 'Ctrl+O', action: () => void chooseAndOpen() },
+          { text: 'Open &Folder…', keys: 'Ctrl+Alt+O', action: () => void chooseFolder() },
           { text: 'Open Metatrash S&pace…', keys: 'Ctrl+Alt+M', action: () => { spaceDialog = true; } },
           {
             text: 'Open &Recent',
@@ -1230,7 +1322,10 @@
       {
         text: '&Help',
         items: [
-          { text: 'Check for &Updates…', action: () => void invoke('check_for_updates').catch(console.error) },
+          { text: 'Check for &Updates…', action: () => { updateDialog = { initial: null }; } },
+          { separator: true },
+          { text: 'Open &Log Folder', action: () => void invoke('open_log_folder').catch(showError) },
+          { text: '&Developer Tools', action: () => void invoke('toggle_devtools').catch(showError) },
           { separator: true },
           { text: '&About Slate Viewer', action: () => void showAbout() },
         ],
@@ -1470,7 +1565,11 @@
     const shift = event.shiftKey;
     const handle = (action: () => unknown) => { event.preventDefault(); void action(); };
     if ((event.ctrlKey || event.metaKey) && event.altKey && event.code === 'KeyO') {
-      handle(() => once('open', chooseFolder));
+      handle(chooseFolder);
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && event.altKey && event.code === 'KeyN') {
+      handle(() => newFile());
       return;
     }
     if ((event.ctrlKey || event.metaKey) && event.altKey && event.code === 'KeyM') {
@@ -1488,7 +1587,7 @@
     // Inside the editor Slate handles Ctrl+Shift+O itself and tells us with slate:outline-toggle.
     if (key === 'o' && shift && !event.defaultPrevented) { handle(toggleOutline); return; }
 
-    if (key === 'o' && !shift) handle(() => once('open', chooseAndOpen));
+    if (key === 'o' && !shift) handle(chooseAndOpen);
     else if (key === 'n' && !shift) handle(newWindow);
     else if (key === 'w' && !shift) handle(() => appWindow.close());
     else if (key === 'p' && !shift) handle(() => once('print', print));
@@ -1580,6 +1679,9 @@
 
       cleanups.push(await getCurrentWebviewWindow().listen('document-changed', onDiskChange));
       cleanups.push(await getCurrentWebviewWindow().listen('folder-changed', onFolderChange));
+      cleanups.push(await getCurrentWebviewWindow().listen<UpdateCheck>('update-available', event => {
+        if (!updateDialog) updateDialog = { initial: event.payload };
+      }));
       cleanups.push(await appWindow.onCloseRequested(async event => {
         rememberPlace();
         if (!dirty) return;
@@ -1631,6 +1733,7 @@
         {#snippet section(id: SectionId)}
           {#if id === 'files'}
             <FilesSection
+              bind:this={filesSection}
               {root}
               files={folderFiles}
               truncated={folderTruncated}
@@ -1640,7 +1743,7 @@
               onOpen={(relative, options) => void openFromFolder(relative, options)}
               onCreate={createNoteFromSidebar}
               onCloseFolder={closeFolder}
-              onChooseFolder={() => void once('open', chooseFolder)}
+              onChooseFolder={() => void chooseFolder()}
               onOpenFolder={dir => void openFolder(dir)}
               {descriptions}
               reveal={revealFolder}
@@ -1700,6 +1803,10 @@
 
 {#if spaceDialog}
   <OpenSpace onOpened={(folder, ref) => void onSpaceOpened(folder, ref)} onClose={() => (spaceDialog = false)} />
+{/if}
+
+{#if updateDialog}
+  <UpdateDialog initial={updateDialog.initial} onClose={() => (updateDialog = null)} />
 {/if}
 
 {#if contextMenu}

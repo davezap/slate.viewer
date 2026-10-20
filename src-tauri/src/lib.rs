@@ -1,3 +1,4 @@
+mod applog;
 mod documents;
 mod mtsync;
 mod updates;
@@ -84,14 +85,33 @@ fn open_from_arg(app: &AppHandle, path: PathBuf) -> tauri::Result<()> {
     }
 }
 
-#[tauri::command]
+/// `async` because creating a window from a command that runs on the main thread can deadlock
+/// on Windows (WebView2), leaving the app stuck.
+#[tauri::command(async)]
 fn open_window(app: AppHandle, path: Option<String>, folder: Option<String>) -> Result<(), String> {
     open_document_window(&app, path.map(PathBuf::from), folder.map(PathBuf::from), Start::App).map_err(|e| e.to_string())
 }
 
+/// Shows a window and brings it to the front. Windows don't let a program that isn't in the
+/// foreground take focus, so a window opened from Explorer while Slate Viewer was running used to
+/// appear behind the others; tao's set_focus works around that.
+fn bring_to_front<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
+    let _ = window.show();
+    if window.is_minimized().unwrap_or(false) {
+        let _ = window.unminimize();
+    }
+    let _ = window.set_focus();
+}
+
+/// Called by the page once its theme is applied (windows start hidden, see open_document_window).
+#[tauri::command(async)]
+fn show_window(window: tauri::WebviewWindow) {
+    bring_to_front(&window);
+}
+
 /// Opens Windows Settings at Slate Viewer's Default Apps page (the installer registers it there).
 /// Windows 10/11 only let the user choose a default app, so this is as far as an app can go.
-#[tauri::command]
+#[tauri::command(async)]
 fn open_default_apps_settings(app: AppHandle) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
     app.opener()
@@ -107,21 +127,25 @@ pub fn run() {
             if paths.is_empty() {
                 // Show it too: a window whose page never finished loading is still hidden (windows
                 // start hidden until the theme is applied), and otherwise nothing would appear at all.
-                match app.webview_windows().values().next() {
-                    Some(window) => {
-                        let _ = window.show();
-                        let _ = window.unminimize();
-                        let _ = window.set_focus();
-                    }
-                    None => {
-                        let _ = open_document_window(app, None, None, Start::Resume);
+                if let Some(window) = app.webview_windows().values().next() {
+                    bring_to_front(window);
+                    return;
+                }
+            }
+            // This runs inside the message the second instance sent (Explorer's double-click), on
+            // the main thread. Creating a WebView2 window from there can hang the whole app, so
+            // the windows are opened from a worker thread once the message has been answered.
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                if paths.is_empty() {
+                    let _ = open_document_window(&app, None, None, Start::Resume);
+                }
+                for path in paths {
+                    if let Err(error) = open_from_arg(&app, path.clone()) {
+                        applog::write("window", &format!("Could not open {}: {error}", path.display()));
                     }
                 }
-                return;
-            }
-            for path in paths {
-                let _ = open_from_arg(app, path);
-            }
+            });
         }))
         .plugin(
             tauri_plugin_window_state::Builder::default()
@@ -134,6 +158,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             open_window,
+            show_window,
             open_default_apps_settings,
             documents::read_document,
             documents::write_document,
@@ -157,6 +182,13 @@ pub fn run() {
             mtsync::mtsync_cancel_login,
             updates::mtsync_setup,
             updates::check_for_updates,
+            updates::install_update,
+            updates::skip_update,
+            updates::change_notes,
+            updates::change_note,
+            applog::log_fault,
+            applog::open_log_folder,
+            applog::toggle_devtools,
         ])
         .manage(watcher::DocumentWatchers::default())
         .manage(mtsync::Mtsync::default())
@@ -167,6 +199,7 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            applog::init(app.handle());
             updates::start(app.handle());
             let cwd = std::env::current_dir().unwrap_or_default();
             let args: Vec<String> = std::env::args().collect();

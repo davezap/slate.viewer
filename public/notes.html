@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Change notes</title>
+    <!-- The update dialog's change notes (UpdateDialog.svelte). Slate allows one editor per page,
+         so the notes get a page of their own in an iframe. -->
+    <link rel="stylesheet" href="/slate/slate.css" />
+    <script src="/slate/slate.js"></script>
+    <style>
+      html, body { margin: 0; height: 100%; background: transparent; }
+      #host { height: 100%; }
+      /* Word counts mean nothing here. */
+      #host .statusbar { display: none; }
+    </style>
+  </head>
+  <body>
+    <div id="host"></div>
+    <script>
+      const host = document.getElementById('host');
+      const theme = new URLSearchParams(location.search).get('theme') === 'dark' ? 'dark' : 'light';
+      document.documentElement.dataset.theme = host.dataset.theme = theme;
+      // Relative links in a note point at other docs pages.
+      const base = 'https://metatrash.com/docs/slate-viewer/change-logs/';
+      const editor = window.SlateMarkdownEditor.mount(host, {
+        markdown: '',
+        persist: false,
+        persistSettings: false,
+        workspaceMode: 'preview',
+        readOnly: true,
+        interactiveTasks: false,
+        outlineOpen: false,
+        outlinePanel: false,
+        theme,
+        showReadyToast: false,
+      });
+      /** Called by the dialog with a note's Markdown. */
+      window.slateNotes = {
+        async show(markdown) {
+          const api = await editor;
+          await api.setMarkdown(markdown);
+          api.revealLine(0);
+        },
+      };
+      // Links never navigate this frame: the dialog opens web links in the browser.
+      host.addEventListener('click', event => {
+        const anchor = event.target.closest?.('a, .slate-external-icon');
+        if (!anchor) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const href = anchor.dataset.mdUrl ?? anchor.getAttribute('href') ?? '';
+        if (!href || href.startsWith('#')) return;
+        let url;
+        try { url = new URL(href, base).href; } catch { return; }
+        if (/^(https?|mailto):/i.test(url)) parent.postMessage({ type: 'slate-notes-link', url }, '*');
+      }, true);
+      addEventListener('keydown', event => {
+        if (event.key === 'Escape') parent.postMessage({ type: 'slate-notes-escape' }, '*');
+      });
+    </script>
+  </body>
+</html>

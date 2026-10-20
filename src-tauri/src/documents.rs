@@ -24,7 +24,7 @@ pub(crate) fn allow_document_folder(app: &AppHandle, path: &Path) {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn read_document(app: AppHandle, path: String) -> Result<LoadedDocument, String> {
     let path = PathBuf::from(path);
     let bytes = fs::read(&path).map_err(|e| format!("Could not read {}: {e}", path.display()))?;
@@ -40,7 +40,7 @@ pub fn read_document(app: AppHandle, path: String) -> Result<LoadedDocument, Str
 
 /// Writes via a temporary file in the same folder, then renames it into place,
 /// so a failed save never leaves a half-written document.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn write_document(app: AppHandle, path: String, text: String, has_bom: bool) -> Result<(), String> {
     let path = PathBuf::from(path);
     let mut bytes = Vec::with_capacity(text.len() + 3);
@@ -55,7 +55,7 @@ pub fn write_document(app: AppHandle, path: String, text: String, has_bom: bool)
 
 /// Deletes a sync conflict copy (`name.conflict-YYYYMMDD-HHMMSS.ext`) once the user has merged it.
 /// Refuses any other file, so this can't be used to delete documents.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_conflict_copy(path: String) -> Result<(), String> {
     let path = PathBuf::from(path);
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
@@ -83,7 +83,7 @@ fn is_conflict_copy(name: &str) -> bool {
 
 /// Copies a pasted or dropped file into `<document folder>/<folder>/` and returns
 /// the Markdown-relative path it was saved under (forward slashes).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_attachment(document_path: String, folder: String, name: String, bytes: Vec<u8>) -> Result<String, String> {
     let document = PathBuf::from(document_path);
     let base = document.parent().ok_or("The document has no folder.")?;

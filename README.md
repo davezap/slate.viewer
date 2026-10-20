@@ -100,6 +100,11 @@ Slate Viewer works on its own as a Markdown editor. Opening a Metatrash space th
 4. Right-click a folder (or the empty space inside one) or a `.md` file in Explorer and choose
    **Open in Slate Viewer**. On Windows 11 it is under **Show more options** (Shift+F10).
 
+Running a newer setup over an installed Slate Viewer offers **Do not uninstall** (install over it,
+keeping settings) as the default, with **Uninstall before installing** as the second choice. The same
+version offers Add/Reinstall first and Uninstall second. That page comes from
+`src-tauri/windows/installer.nsi`, our copy of Tauri's installer template (see its header).
+
 Uninstall from **Settings > Apps > Installed apps**. The app needs Microsoft Edge WebView2, which
 Windows 10 and 11 already have; if it's missing, the installer downloads it.
 
@@ -134,8 +139,16 @@ and the package manager updates and removes it.
 - **Update checks** run 15 seconds after launch and then every 12 hours, and from **Help > Check for Updates**:
   - mtsync, when installed, is updated quietly when the release has a newer one (stop, replace, start;
     sign-in and folders are kept).
-  - Slate Viewer asks when its release (`slateviewer.json`) has a newer version. On Windows **Update**
-    downloads the setup, checks it and runs it; on macOS and Linux it opens the download. **Later**
+  - **Help > Check for Updates** opens the update dialog at once ("Checking for updates…"); it then grows to
+    show the change notes. The timer's check opens the same dialog only when there is a newer version.
+  - The dialog shows the latest release's notes (its version comes from `slateviewer.json` on GitHub)
+    from the Metatrash docs, `https://metatrash.com/docs/slate-viewer/change-logs/changenotes_<version>.md`,
+    in a read-only Slate (`public/notes.html`, in an iframe because Slate allows one editor per page).
+    Older notes are listed down the side, taken from the docs' file tree. To publish notes for a release,
+    add `slate-viewer/change-logs/changenotes_<version>.md` to the docs space.
+  - When there is a newer version, **Update** on Windows downloads the setup, checks it and runs it
+    unattended (`/P /UPDATE /R`): just a progress bar, no questions, installed over the current version,
+    and the new version starts when it's done. On macOS and Linux it opens the download. **Later** (or ×)
     skips that version until the next one.
 - **Server changes.** The check also reads `https://metatrash.com/api/v1/tool-schema.json`. Its `clients`
   block names the oldest mtsync and Slate Viewer the server works with: a too-old mtsync is updated at
@@ -193,7 +206,11 @@ back at the scroll position it was left at. A folder opens where it was left, as
 - **File > Open Folder** (Ctrl+Alt+O), the Files section's **Open Folder** button, or a folder on the
   command line fills the Files section with every Markdown file in it (hidden folders, `node_modules`, `target`, `build` and similar are skipped).
   The tree updates as files are added, removed or renamed.
-- **+** in the sidebar creates a note next to the open document (or at the top of the folder).
+- **New File** (File > New File, Ctrl+Alt+N, or the first button in the Files header) asks for a name in the
+  Files section and creates the note next to the open document (or at the top of the folder); **New File in Root**
+  (File menu, or the second button) always creates it at the top of the folder. Right-click a folder in Files for
+  **New File in** that folder, or a note for **New File in Root**, Open in New Window, Show in Explorer and Copy Path.
+  The new note opens in Edit with the cursor under its heading. With no folder open, New File asks where to save it.
 - **Search** (Ctrl+Shift+F) searches every note; clicking a hit opens the note with Find showing,
   every match highlighted and the clicked line scrolled into view.
 - **Go > Go to File** (Ctrl+T) jumps to a note by typing part of its name.
@@ -238,7 +255,7 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
 
 ### Documents
 
-- **File menu:** New Window (Ctrl+N), Open (Ctrl+O), Open Recent, Save (Ctrl+S), Save As (Ctrl+Shift+S),
+- **File menu:** New Window (Ctrl+N), New File (Ctrl+Alt+N), New File in Root, Open (Ctrl+O), Open Recent, Save (Ctrl+S), Save As (Ctrl+Shift+S),
   Print (Ctrl+P, includes Microsoft Print to PDF), Close Window (Ctrl+W).
 - **View menu:** Edit / Preview / Source (Ctrl+1/2/3), Read Only checklist mode (Ctrl+Shift+R:
   text locked, task boxes still tick), Files / Search / Document Navigation / Version History, Theme (system, light, dark), Zoom In / Zoom Out / Reset Zoom (Ctrl+= / Ctrl+- / Ctrl+0, or Ctrl+mouse wheel;
@@ -271,6 +288,18 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
 - Window size and position, theme, zoom and the last editor mode are remembered. A window stays hidden until its theme is applied, so it doesn't flash white on start.
 - `.md` / `.markdown` file association in the installer; opening a second file reuses the running app.
 
+## When something goes wrong
+
+- **Fault log:** Help > Open Log Folder. `slate-viewer.log` records each start, panics in the Rust side
+  (release builds stop at once on a panic, so this is the only trace one leaves), uncaught script errors,
+  error messages shown to the user, and folders that were slow to list or watch. On Windows it is in
+  `%LOCALAPPDATA%\davezap.slateviewer\logs\`; past 1 MB it moves to `slate-viewer.old.log`.
+- **Developer Tools:** Help > Developer Tools opens Chromium's DevTools for the window (WebView2 on Windows:
+  console, elements, sources with breakpoints, network). It works in installed builds too (Tauri's
+  `devtools` feature). In `npm run tauri dev` right-click > Inspect works as well, and Rust output prints in the terminal.
+- WebView2 keeps crash reports of the page itself under `%LOCALAPPDATA%\davezap.slateviewer\EBWebView\Crashpad\reports\`,
+  and Windows logs app crashes in Event Viewer > Windows Logs > Application ("Application Error").
+
 ## Layout
 
 ```
@@ -278,7 +307,7 @@ public/slate/        Slate 0.15.0, vendored unchanged (slate.js, slate.css, merm
 src/App.svelte       menu, file handling, link handling, Slate mount
 src/lib/             icon bar and sidebar sections, Go to File, wiki-link resolving, paths, line endings, recent lists, preferences
 src-tauri/src/       Rust: windows, single instance, file read/write, attachments, file and folder
-                     watching, folder listing and search, mtsync commands (mtsync.rs)
+                     watching, folder listing and search, mtsync commands (mtsync.rs), fault log (applog.rs)
 ```
 
 To update Slate, run `npm run build` in the Slate repository, then copy its `slate.js`, `slate.css`, `slate-editor.d.ts`,

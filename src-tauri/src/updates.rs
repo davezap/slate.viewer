@@ -11,6 +11,11 @@
 //!
 //! The check runs shortly after launch and then twice a day, and from Help > Check for Updates.
 //! Everything downloaded is checked against its SHA-256 before use.
+//!
+//! A newer Slate Viewer is offered in the update dialog (UpdateDialog.svelte), which shows the
+//! release's change notes from the Metatrash docs (`/docs/slate-viewer/change-logs/changenotes_<version>.md`).
+//! The docs pages are plain web pages: the list comes from the page's file tree and each note's
+//! Markdown from its `<pre id="document-source">`.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -19,8 +24,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tauri::{AppHandle, Manager};
-use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+use tauri::{AppHandle, Emitter, EventTarget, Manager};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::mtsync::{self, DEFAULT_SERVER};
@@ -28,6 +32,9 @@ use crate::mtsync::{self, DEFAULT_SERVER};
 const MTSYNC_MANIFEST: &str = "https://github.com/davezap/metatrash/releases/latest/download/mtsync.json";
 const VIEWER_MANIFEST: &str = "https://github.com/davezap/slate.viewer/releases/latest/download/slateviewer.json";
 const SCHEMA_PATH: &str = "/api/v1/tool-schema.json";
+/// The docs folder of Slate Viewer change notes, one `changenotes_<version>.md` per release.
+const CHANGE_NOTES_PATH: &str = "/docs/slate-viewer/change-logs/";
+const NOTES_PREFIX: &str = "changenotes_";
 const FIRST_CHECK: Duration = Duration::from_secs(15);
 const CHECK_EVERY: Duration = Duration::from_secs(12 * 60 * 60);
 
@@ -77,10 +84,28 @@ struct Saved {
     schema_version: Option<String>,
 }
 
-/// One check at a time, so a manual check doesn't overlap the timer's.
 #[derive(Default)]
 pub struct Updates {
-    busy: Mutex<bool>,
+    /// One check at a time: the timer's skips while another runs, a manual one waits for it.
+    checking: tauri::async_runtime::Mutex<()>,
+    /// The installer the last check offered, for Update in the dialog.
+    offer: Mutex<Option<Asset>>,
+}
+
+/// What a check found, for the update dialog.
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckResult {
+    current: String,
+    /// The latest release's version, when the release could be read.
+    latest: Option<String>,
+    /// A newer Slate Viewer with an installer for this computer.
+    available: bool,
+    /// The server needs a newer Slate Viewer than this one.
+    required: bool,
+    /// The version mtsync was just updated to, if it was.
+    mtsync_updated: Option<String>,
+    problems: Vec<String>,
 }
 
 fn version(text: &str) -> Option<Version> {
@@ -93,6 +118,14 @@ fn client() -> Result<reqwest::Client, String> {
         .timeout(Duration::from_secs(300))
         .build()
         .map_err(|e| e.to_string())
+}
+
+async fn get_text(url: &str) -> Result<String, String> {
+    let response = client()?.get(url).send().await.map_err(|e| format!("Could not reach {url}: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!("{url} answered {}", response.status()));
+    }
+    response.text().await.map_err(|e| format!("Unexpected answer from {url}: {e}"))
 }
 
 async fn get_json<T: for<'de> Deserialize<'de>>(url: &str) -> Result<T, String> {
@@ -316,15 +349,12 @@ fn store_saved(app: &AppHandle, saved: &Saved) {
     }
 }
 
-/// What one check found, for the manual check's answer.
-struct Found {
-    viewer_offered: bool,
-    mtsync_updated: Option<String>,
-    problems: Vec<String>,
-}
-
-async fn check(app: &AppHandle, manual: bool) -> Found {
-    let mut found = Found { viewer_offered: false, mtsync_updated: None, problems: Vec::new() };
+/// Checks for updates: updates mtsync at once when it is out of date, and notes a newer Slate
+/// Viewer (and its installer) for the dialog to offer. `offer_now` is false when the user chose
+/// not to be asked about this version again and it isn't required.
+async fn check(app: &AppHandle) -> (CheckResult, bool) {
+    let current = app.package_info().version.to_string();
+    let mut found = CheckResult { current: current.clone(), ..Default::default() };
     let mut saved = load_saved(app);
 
     // The server says which clients it works with. Unreachable is fine: try again next time.
@@ -353,54 +383,27 @@ async fn check(app: &AppHandle, manual: bool) -> Found {
     }
 
     // Slate Viewer itself.
-    let current = app.package_info().version.to_string();
     let have = version(&current).unwrap_or_default();
-    let required = schema.clients.slate_viewer.as_ref().and_then(|c| version(&c.min_version)).is_some_and(|n| n > have);
+    found.required = schema.clients.slate_viewer.as_ref().and_then(|c| version(&c.min_version)).is_some_and(|n| n > have);
+    let mut offer = None;
+    let mut skipped = false;
     match get_json::<Manifest>(VIEWER_MANIFEST).await {
         Ok(manifest) => {
-            let newer = version(&manifest.version).is_some_and(|latest| latest > have);
-            let skipped = saved.skipped_version.as_deref() == Some(manifest.version.as_str());
-            if newer && (manual || required || !skipped) {
-                if let Some(asset) = manifest.files.get(viewer_platform()).cloned() {
-                    found.viewer_offered = true;
-                    offer_viewer_update(app, &current, &manifest.version, asset, required);
-                }
+            if version(&manifest.version).is_some_and(|latest| latest > have) {
+                offer = manifest.files.get(viewer_platform()).cloned();
+                skipped = saved.skipped_version.as_deref() == Some(manifest.version.as_str());
             }
+            found.latest = Some(manifest.version);
         }
         Err(e) => found.problems.push(e),
     }
-    found
+    found.available = offer.is_some();
+    *app.state::<Updates>().offer.lock().unwrap() = offer;
+    let offer_now = found.available && (found.required || !skipped);
+    (found, offer_now)
 }
 
-fn offer_viewer_update(app: &AppHandle, current: &str, latest: &str, asset: Asset, required: bool) {
-    let text = if required {
-        format!("Metatrash now needs a newer Slate Viewer for spaces to keep working.\n\nUpdate from {current} to {latest} now?")
-    } else {
-        format!("Slate Viewer {latest} is available. You have {current}.\n\nUpdate now?")
-    };
-    let app = app.clone();
-    let latest = latest.to_string();
-    app.dialog()
-        .message(text)
-        .title("Slate Viewer update")
-        .kind(if required { MessageDialogKind::Warning } else { MessageDialogKind::Info })
-        .buttons(MessageDialogButtons::OkCancelCustom("Update".into(), "Later".into()))
-        .show(move |update| {
-            if update {
-                tauri::async_runtime::spawn(async move {
-                    if let Err(e) = install_viewer(&app, asset).await {
-                        app.dialog().message(e).title("Slate Viewer update").kind(MessageDialogKind::Error).show(|_| {});
-                    }
-                });
-            } else {
-                let mut saved = load_saved(&app);
-                saved.skipped_version = Some(latest);
-                store_saved(&app, &saved);
-            }
-        });
-}
-
-/// Windows: downloads the setup, checks it, runs it and quits so it can replace the app.
+/// Windows: downloads the setup, checks it, runs it unattended and quits so it can replace the app.
 /// macOS and Linux: opens the download in the browser (a .dmg to drag in, or a package).
 async fn install_viewer(app: &AppHandle, asset: Asset) -> Result<(), String> {
     if !cfg!(windows) {
@@ -409,41 +412,112 @@ async fn install_viewer(app: &AppHandle, asset: Asset) -> Result<(), String> {
     let bytes = download(&asset).await?;
     let setup = std::env::temp_dir().join("SlateViewer-setup.exe");
     std::fs::write(&setup, bytes).map_err(|e| format!("Could not save the setup: {e}"))?;
-    std::process::Command::new(&setup).spawn().map_err(|e| format!("Could not start the setup: {e}"))?;
+    // Unattended: /P shows only a progress bar (no questions; it closes Slate Viewer if it is still
+    // running), /UPDATE installs over this version where it is and leaves the shortcuts alone, and
+    // /R starts the new version when it is done.
+    std::process::Command::new(&setup)
+        .args(["/P", "/UPDATE", "/R"])
+        .spawn()
+        .map_err(|e| format!("Could not start the setup: {e}"))?;
     app.exit(0);
     Ok(())
 }
 
-async fn run_check(app: &AppHandle, manual: bool) {
-    {
-        let state = app.state::<Updates>();
-        let mut busy = state.busy.lock().unwrap();
-        if *busy {
-            return;
-        }
-        *busy = true;
-    }
-    let found = check(app, manual).await;
-    *app.state::<Updates>().busy.lock().unwrap() = false;
+/// The timer's check: when there is a Slate Viewer to offer, the focused window (or any) opens the
+/// update dialog with it. Skipped while another check runs.
+async fn run_check(app: &AppHandle) {
+    let state = app.state::<Updates>();
+    let Ok(_one) = state.checking.try_lock() else { return };
+    let (found, offer_now) = check(app).await;
     for problem in &found.problems {
-        eprintln!("update check: {problem}");
+        crate::applog::write("update", problem);
     }
-    if manual && !found.viewer_offered {
-        let mut text = match &found.mtsync_updated {
-            Some(v) => format!("Metatrash Sync was updated to {v}. Slate Viewer is up to date."),
-            None => "Slate Viewer and Metatrash Sync are up to date.".to_string(),
-        };
-        if !found.problems.is_empty() {
-            text = format!("Couldn't check for updates.\n\n{}", found.problems.join("\n"));
-        }
-        app.dialog().message(text).title("Check for Updates").show(|_| {});
+    if !offer_now {
+        return;
+    }
+    let windows = app.webview_windows();
+    let target = windows.values().find(|w| w.is_focused().unwrap_or(false)).or_else(|| windows.values().next());
+    if let Some(window) = target {
+        let _ = app.emit_to(EventTarget::webview_window(window.label()), "update-available", found);
     }
 }
 
-/// Help > Check for Updates.
+/// Help > Check for Updates, from the update dialog while it shows "Checking…".
 #[tauri::command]
-pub async fn check_for_updates(app: AppHandle) {
-    run_check(&app, true).await;
+pub async fn check_for_updates(app: AppHandle) -> CheckResult {
+    let state = app.state::<Updates>();
+    let _one = state.checking.lock().await;
+    check(&app).await.0
+}
+
+/// Update in the dialog: installs what the last check offered (see `install_viewer`).
+#[tauri::command]
+pub async fn install_update(app: AppHandle) -> Result<(), String> {
+    let asset = app.state::<Updates>().offer.lock().unwrap().clone();
+    install_viewer(&app, asset.ok_or("There's no update to install. Check for updates again.")?).await
+}
+
+/// Closing the dialog the timer opened: don't offer this version again (unless it is required).
+#[tauri::command]
+pub fn skip_update(app: AppHandle, version: String) {
+    let mut saved = load_saved(&app);
+    saved.skipped_version = Some(version);
+    store_saved(&app, &saved);
+}
+
+/// A release version we will ask the docs for (`0.6.0`, `v1.2.3-beta`): no folders or odd characters.
+fn note_version_ok(v: &str) -> bool {
+    !v.is_empty() && v.len() <= 40 && v.starts_with(|c: char| c.is_ascii_alphanumeric()) && v.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-'))
+}
+
+/// The versions with change notes linked from a docs page's file tree, newest first.
+fn notes_in_page(html: &str) -> Vec<String> {
+    let link = format!("href=\"{CHANGE_NOTES_PATH}{NOTES_PREFIX}");
+    let mut found: Vec<String> = Vec::new();
+    for part in html.split(&link).skip(1) {
+        let name = part.split('"').next().unwrap_or_default();
+        if let Some(v) = name.strip_suffix(".md").filter(|v| note_version_ok(v) && version(v).is_some()) {
+            if !found.iter().any(|f| f == v) {
+                found.push(v.to_string());
+            }
+        }
+    }
+    found.sort_by_key(|v| std::cmp::Reverse(version(v)));
+    found
+}
+
+/// A docs page's file text: the contents of `<pre id="document-source"><code>`, unescaped.
+fn source_in_page(html: &str) -> Option<String> {
+    let start = html.find("id=\"document-source\"")?;
+    let rest = &html[start..];
+    let rest = &rest[rest.find("<code>")? + "<code>".len()..];
+    let text = &rest[..rest.find("</code>")?];
+    Some(
+        text.replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&#34;", "\"")
+            .replace("&#39;", "'")
+            .replace("&quot;", "\"")
+            .replace("&amp;", "&"),
+    )
+}
+
+/// The versions that have change notes in the docs, newest first (for reading older notes).
+#[tauri::command]
+pub async fn change_notes() -> Result<Vec<String>, String> {
+    // Any docs page carries the whole file tree.
+    let html = get_text(&format!("{DEFAULT_SERVER}/docs/")).await?;
+    Ok(notes_in_page(&html))
+}
+
+/// The change notes of one version (the latest release's version comes from GitHub), as Markdown.
+#[tauri::command]
+pub async fn change_note(version: String) -> Result<String, String> {
+    if !note_version_ok(&version) {
+        return Err(format!("{version} isn't a version."));
+    }
+    let html = get_text(&format!("{DEFAULT_SERVER}{CHANGE_NOTES_PATH}{NOTES_PREFIX}{version}.md")).await?;
+    source_in_page(&html).ok_or_else(|| format!("The notes for {version} came back in a form Slate Viewer doesn't recognise."))
 }
 
 /// Checks shortly after launch, then twice a day while the app runs.
@@ -452,7 +526,7 @@ pub fn start(app: &AppHandle) {
     std::thread::spawn(move || {
         std::thread::sleep(FIRST_CHECK);
         loop {
-            tauri::async_runtime::block_on(run_check(&app, false));
+            tauri::async_runtime::block_on(run_check(&app));
             std::thread::sleep(CHECK_EVERY);
         }
     });
@@ -488,6 +562,28 @@ mod tests {
         // Servers from before `clients` still parse.
         let old: Schema = serde_json::from_str(r#"{"schemaVersion":"0.8.0"}"#).unwrap();
         assert!(old.clients.mtsync.is_none());
+    }
+
+    #[test]
+    fn note_versions() {
+        assert!(note_version_ok("0.6.0") && note_version_ok("v1.2.3-beta"));
+        for bad in ["../x", "a/b", ".0", "0.6 0", "x%2F", ""] {
+            assert!(!note_version_ok(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn docs_pages() {
+        let tree = r#"<ul class="tree"><li><a href="/docs/README.md">README.md</a></li><li><details><summary>change-logs</summary><ul>
+            <li><a href="/docs/slate-viewer/change-logs/changenotes_0.5.0.md"><span>≡</span>changenotes_0.5.0.md</a></li>
+            <li><a href="/docs/slate-viewer/change-logs/README.md">README.md</a></li>
+            <li><a href="/docs/slate-viewer/change-logs/changenotes_0.10.0.md">x</a></li>
+            <li><a href="/docs/slate-viewer/change-logs/changenotes_0.6.0.md" aria-current="page">changenotes_0.6.0.md</a></li></ul></details></li></ul>"#;
+        assert_eq!(notes_in_page(tree), ["0.10.0", "0.6.0", "0.5.0"]);
+        let page = r#"<pre id="document-source" tabindex="0" aria-label="File contents"><code># 0.6.0 &amp; more
+- &lt;b&gt; &#34;quoted&#34; it&#39;s</code></pre>"#;
+        assert_eq!(source_in_page(page).as_deref(), Some("# 0.6.0 & more\n- <b> \"quoted\" it's"));
+        assert_eq!(source_in_page("<html>not found</html>"), None);
     }
 
     #[test]

@@ -2,6 +2,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
@@ -13,6 +14,10 @@ const MAX_FILES: usize = 5000;
 const MAX_DEPTH: usize = 12;
 const MAX_SEARCH_RESULTS: usize = 500;
 const MAX_SEARCH_FILE_BYTES: u64 = 4 * 1024 * 1024;
+/// A walk stops after this many folders or this long, so opening a drive or a home folder
+/// (or a cloud folder that is slow to list) can't keep the app busy for minutes.
+const MAX_FOLDERS: usize = 20_000;
+const MAX_WALK_TIME: Duration = Duration::from_secs(8);
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -48,15 +53,34 @@ fn skip_folder(name: &str) -> bool {
     name.starts_with('.') || SKIPPED_FOLDERS.iter().any(|s| s.eq_ignore_ascii_case(name))
 }
 
+/// True when `path` is inside a folder the listing skips (.git, node_modules, target…) below `root`.
+pub(crate) fn in_skipped_folder(root: &Path, path: &Path) -> bool {
+    let Ok(inside) = path.strip_prefix(root) else { return false };
+    let mut parts: Vec<_> = inside.components().collect();
+    parts.pop(); // the file or folder itself
+    parts.iter().any(|part| skip_folder(&part.as_os_str().to_string_lossy()))
+}
+
 fn relative(root: &Path, path: &Path) -> String {
     path.strip_prefix(root).unwrap_or(path).to_string_lossy().replace('\\', "/")
 }
 
 /// Walks `root` for Markdown files, sorted folder by folder, without following links.
+/// The flag is true when the walk stopped early (too many files or folders, or too slow).
 fn markdown_files(root: &Path) -> (Vec<PathBuf>, bool) {
+    let started = Instant::now();
     let mut found = Vec::new();
+    let mut folders = 0usize;
     let mut stack = vec![(root.to_path_buf(), 0usize)];
     while let Some((dir, depth)) = stack.pop() {
+        folders += 1;
+        if folders > MAX_FOLDERS || started.elapsed() > MAX_WALK_TIME {
+            crate::applog::write(
+                "slow",
+                &format!("Stopped listing {} after {folders} folders and {:.1} s.", root.display(), started.elapsed().as_secs_f32()),
+            );
+            return (found, true);
+        }
         let Ok(entries) = fs::read_dir(&dir) else { continue };
         let mut entries: Vec<_> = entries.flatten().collect();
         entries.sort_by_key(|e| e.file_name().to_string_lossy().to_lowercase());
@@ -81,18 +105,25 @@ fn markdown_files(root: &Path) -> (Vec<PathBuf>, bool) {
     (found, false)
 }
 
+/// Runs on a worker thread: a folder can take a while to list (a big tree, a OneDrive folder
+/// whose contents are fetched on demand), and a command without `async` would run on the main
+/// thread and freeze every window until it finished.
 #[tauri::command]
-pub fn list_folder(app: AppHandle, root: String) -> Result<FolderListing, String> {
-    let root = PathBuf::from(root);
-    if !root.is_dir() {
-        return Err(format!("{} is not a folder.", root.display()));
-    }
-    // Images anywhere in the folder can then be shown.
-    let _ = app.asset_protocol_scope().allow_directory(&root, true);
-    let (files, truncated) = markdown_files(&root);
-    let mut files: Vec<String> = files.iter().map(|p| relative(&root, p)).collect();
-    files.sort_by_key(|f| f.to_lowercase());
-    Ok(FolderListing { files, truncated })
+pub async fn list_folder(app: AppHandle, root: String) -> Result<FolderListing, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = PathBuf::from(root);
+        if !root.is_dir() {
+            return Err(format!("{} is not a folder.", root.display()));
+        }
+        // Images anywhere in the folder can then be shown.
+        let _ = app.asset_protocol_scope().allow_directory(&root, true);
+        let (files, truncated) = markdown_files(&root);
+        let mut files: Vec<String> = files.iter().map(|p| relative(&root, p)).collect();
+        files.sort_by_key(|f| f.to_lowercase());
+        Ok(FolderListing { files, truncated })
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Case-insensitive plain-text search through every Markdown file under `root`.
@@ -142,7 +173,7 @@ fn trim_line(line: &str) -> String {
 }
 
 /// Creates `<folder>/<name>.md` with a heading, unless it already exists. Returns its path.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_note(folder: String, name: String, title: Option<String>) -> Result<String, String> {
     let name = name.trim().trim_end_matches(".md");
     if name.is_empty() || name.contains(['/', '\\', ':', '*', '?', '"', '<', '>', '|']) || name.starts_with('.') {
@@ -242,6 +273,11 @@ mod tests {
         let created = create_note(root.join("notes").to_string_lossy().into(), "New idea".into(), None).unwrap();
         assert!(created.ends_with("New idea.md"));
         assert!(create_note(root.to_string_lossy().into(), "a/b".into(), None).is_err());
+
+        assert!(in_skipped_folder(&root, &root.join(".git").join("index")));
+        assert!(in_skipped_folder(&root, &root.join("notes").join("node_modules").join("x")));
+        assert!(!in_skipped_folder(&root, &root.join(".git")));
+        assert!(!in_skipped_folder(&root, &root.join("notes").join("a.md")));
         fs::remove_dir_all(&root).unwrap();
     }
 }

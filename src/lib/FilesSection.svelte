@@ -1,9 +1,12 @@
 <script lang="ts">
   import { tick, untrack } from 'svelte';
-  import { basename } from './paths';
+  import { revealItemInDir } from '@tauri-apps/plugin-opener';
+  import { basename, joinPath } from './paths';
   import { conflictOriginal, type FolderDescription } from './space';
   import Section from './Section.svelte';
   import KindIcon from './KindIcon.svelte';
+  import ContextMenu from './ContextMenu.svelte';
+  import type { MenuEntry } from './menu';
   import type { RecentEntry } from './recent';
   import { displayName, isNewWindowClick, type OpenOptions } from './types';
 
@@ -17,7 +20,8 @@
     /** Whether the open folder is a plain folder or a Metatrash space. */
     rootKind?: 'folder' | 'space';
     onOpen: (relative: string, options: OpenOptions) => void;
-    onCreate: (name: string) => Promise<boolean>;
+    /** Creates a note called `name` in `folder` (relative to root, "" for the root itself). */
+    onCreate: (name: string, folder: string) => Promise<boolean>;
     onCloseFolder: () => void;
     onChooseFolder: () => void;
     onOpenFolder: (folder: string) => void;
@@ -124,13 +128,29 @@
     return about ? `${node.path}\n${about}` : node.path;
   }
 
-  // ---- New note ------------------------------------------------------------------
+  // ---- New file ------------------------------------------------------------------
 
   let creating = $state(false);
+  /** Where the new file goes: a folder relative to root, "" for the root. */
+  let createIn = $state('');
   let newName = $state('');
   let newInput = $state<HTMLInputElement>();
 
-  async function startCreate() {
+  const parentOf = (path: string) => path.slice(0, Math.max(0, path.lastIndexOf('/')));
+  /** The open document's folder (relative), or the root when it is outside the folder. */
+  const currentFolder = $derived(current ? parentOf(current) : '');
+  const rootName = $derived(root ? basename(root) || root : '');
+  const folderLabel = (folder: string) => (folder ? `${folder}/` : `${rootName} (top)`);
+
+  /** Shows the name box for a new file in `folder` (relative, "" for the root), opening the folder in the tree. */
+  export async function startCreate(folder: string = currentFolder) {
+    createIn = folder;
+    if (folder) {
+      const parts = folder.split('/');
+      const next = new Set(expanded);
+      for (let i = 1; i <= parts.length; i++) next.add(parts.slice(0, i).join('/'));
+      expanded = next;
+    }
     creating = true;
     newName = '';
     await tick();
@@ -140,7 +160,35 @@
   async function finishCreate(event: KeyboardEvent) {
     if (event.key === 'Escape') { creating = false; return; }
     if (event.key !== 'Enter' || !newName.trim()) return;
-    if (await onCreate(newName.trim())) creating = false;
+    if (await onCreate(newName.trim(), createIn)) creating = false;
+  }
+
+  // ---- Right-click menu ------------------------------------------------------------
+
+  let menu = $state<{ x: number; y: number; items: MenuEntry[] } | null>(null);
+  const revealLabel = /Mac/i.test(navigator.userAgent) ? 'Reveal in &Finder' : /Windows/i.test(navigator.userAgent) ? 'Show in &Explorer' : 'Show in File &Manager';
+
+  /** New File here (in a folder, or beside a file), New File in Root, and the usual extras. */
+  function showMenu(event: MouseEvent, node: Node | null) {
+    if (!root) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const items: MenuEntry[] = [];
+    const folder = node ? (node.folder ? node.path : parentOf(node.path)) : '';
+    if (folder) items.push({ text: `&New File in ${folder.split('/').pop()!.replace(/&/g, '&&')}…`, action: () => void startCreate(folder) });
+    items.push({ text: 'New File in &Root…', action: () => void startCreate('') });
+    if (node && !node.folder) {
+      items.push({ separator: true });
+      items.push({ text: '&Open', action: () => onOpen(node.path, { newWindow: false }) });
+      items.push({ text: 'Open in New &Window', action: () => onOpen(node.path, { newWindow: true }) });
+    }
+    if (node) {
+      const target = joinPath(root, node.path);
+      items.push({ separator: true });
+      items.push({ text: revealLabel, action: () => void revealItemInDir(target).catch(console.error) });
+      items.push({ text: 'Copy &Path', action: () => void navigator.clipboard.writeText(target).catch(console.error) });
+    }
+    menu = { x: event.clientX, y: event.clientY, items };
   }
 </script>
 
@@ -150,12 +198,18 @@
   {/snippet}
   {#snippet actions()}
     {#if root}
-      <button title="New note" aria-label="New note" onclick={startCreate}>+</button>
+      <button title="New file in {folderLabel(currentFolder)} (Ctrl+Alt+N)" aria-label="New file" onclick={() => void startCreate()}>
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8.5 1.5h-4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h4M8.5 1.5l4 4V8M8.5 1.5v4h4M12 10v5M9.5 12.5h5" /></svg>
+      </button>
+      <button title="New file in {folderLabel('')}" aria-label="New file in root" onclick={() => void startCreate('')}>
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 1.5h11M8.5 4h-4a1 1 0 0 0-1 1v8.5a1 1 0 0 0 1 1h4M8.5 4l3 3v1M12 10v5M9.5 12.5h5" /></svg>
+      </button>
       <button title="Close folder" aria-label="Close folder" onclick={onCloseFolder}>×</button>
     {/if}
   {/snippet}
 
-  <div class="scroll">
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="scroll" oncontextmenu={event => showMenu(event, null)}>
     {#if !root}
       <p class="empty">No folder is open.</p>
       <button class="open-folder" onclick={onChooseFolder}>Open Folder…</button>
@@ -175,7 +229,8 @@
           class="field"
           bind:this={newInput}
           bind:value={newName}
-          placeholder="New note name, then Enter"
+          placeholder="New file in {folderLabel(createIn)}: name, Enter"
+          title="A name for the new Markdown file (.md is added). Escape cancels."
           onkeydown={finishCreate}
           onblur={() => (creating = false)}
         />
@@ -194,6 +249,7 @@
                   data-folder={node.path}
                   title={describe(node.path, true) ?? undefined}
                   onclick={() => toggle(node.path)}
+                  oncontextmenu={event => showMenu(event, node)}
                 >
                   <span class="twisty" class:open={expanded.has(node.path)}>›</span>{node.name}
                   {#if isGithub(node.path)}<span class="badge" title="Mirrors a GitHub repository">GitHub</span>{/if}
@@ -210,6 +266,7 @@
                   title={fileTitle(node)}
                   onclick={event => onOpen(node.path, { newWindow: isNewWindowClick(event) })}
                   onauxclick={event => { if (event.button === 1) onOpen(node.path, { newWindow: true }); }}
+                  oncontextmenu={event => showMenu(event, node)}
                 >{#if conflictOriginal(node.name) !== null}<span class="warn">⚠</span>{/if}{displayName(node.name)}</button>
               {/if}
             </li>
@@ -224,6 +281,12 @@
   </div>
 </Section>
 
+{#if menu}
+  {#key menu}
+    <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => (menu = null)} />
+  {/key}
+{/if}
+
 <style>
   .scroll { flex: 1; overflow: auto; padding: 4px 0 12px; }
   button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
@@ -233,6 +296,8 @@
     border: 1px solid var(--side-border); border-radius: 5px; outline: none;
   }
   .field:focus { border-color: var(--side-accent); }
+  .field::placeholder { color: var(--side-muted); }
+  svg { width: 16px; height: 16px; vertical-align: middle; fill: none; stroke: currentColor; stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; }
   ul { list-style: none; margin: 0; padding: 0; }
   .row {
     display: block; width: 100%; text-align: left; padding: 3px 10px;

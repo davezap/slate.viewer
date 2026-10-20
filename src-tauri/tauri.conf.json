@@ -60,7 +60,8 @@
         "languages": [
           "English"
         ],
-        "installerHooks": "windows/installer-hooks.nsh"
+        "installerHooks": "windows/installer-hooks.nsh",
+        "template": "windows/installer.nsi"
       }
     },
     "macOS": {
