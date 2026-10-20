@@ -946,7 +946,8 @@
     const resolved = theme === 'system' ? (systemDark.matches ? 'dark' : 'light') : theme;
     host.dataset.theme = resolved;
     document.documentElement.dataset.theme = resolved;
-    void appWindow.setTheme(theme === 'system' ? null : theme).catch(() => {});
+    // Paper is a light theme as far as the window frame goes.
+    void appWindow.setTheme(theme === 'system' ? null : theme === 'dark' ? 'dark' : 'light').catch(() => {});
   }
 
   /** Windows start hidden (see open_document_window in lib.rs) until the theme is applied. */
@@ -1300,6 +1301,7 @@
               { text: 'Match &System', checked: theme === 'system', action: () => chooseTheme('system') },
               { text: '&Light', checked: theme === 'light', action: () => chooseTheme('light') },
               { text: '&Dark', checked: theme === 'dark', action: () => chooseTheme('dark') },
+              { text: '&Paper', checked: theme === 'paper', action: () => chooseTheme('paper') },
             ],
           },
           separator,

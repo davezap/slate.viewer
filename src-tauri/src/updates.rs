@@ -13,7 +13,7 @@
 //! Everything downloaded is checked against its SHA-256 before use.
 //!
 //! A newer Slate Viewer is offered in the update dialog (UpdateDialog.svelte), which shows the
-//! release's change notes from the Metatrash docs (`/docs/slate-viewer/change-logs/changenotes_<version>.md`).
+//! release's change notes from the Metatrash docs (`/docs/tools/slate-viewer/change-logs/changenotes_<version>.md`).
 //! The docs pages are plain web pages: the list comes from the page's file tree and each note's
 //! Markdown from its `<pre id="document-source">`.
 
@@ -33,7 +33,7 @@ const MTSYNC_MANIFEST: &str = "https://github.com/davezap/metatrash/releases/lat
 const VIEWER_MANIFEST: &str = "https://github.com/davezap/slate.viewer/releases/latest/download/slateviewer.json";
 const SCHEMA_PATH: &str = "/api/v1/tool-schema.json";
 /// The docs folder of Slate Viewer change notes, one `changenotes_<version>.md` per release.
-const CHANGE_NOTES_PATH: &str = "/docs/slate-viewer/change-logs/";
+const CHANGE_NOTES_PATH: &str = "/docs/tools/slate-viewer/change-logs/";
 const NOTES_PREFIX: &str = "changenotes_";
 const FIRST_CHECK: Duration = Duration::from_secs(15);
 const CHECK_EVERY: Duration = Duration::from_secs(12 * 60 * 60);
@@ -575,10 +575,10 @@ mod tests {
     #[test]
     fn docs_pages() {
         let tree = r#"<ul class="tree"><li><a href="/docs/README.md">README.md</a></li><li><details><summary>change-logs</summary><ul>
-            <li><a href="/docs/slate-viewer/change-logs/changenotes_0.5.0.md"><span>≡</span>changenotes_0.5.0.md</a></li>
-            <li><a href="/docs/slate-viewer/change-logs/README.md">README.md</a></li>
-            <li><a href="/docs/slate-viewer/change-logs/changenotes_0.10.0.md">x</a></li>
-            <li><a href="/docs/slate-viewer/change-logs/changenotes_0.6.0.md" aria-current="page">changenotes_0.6.0.md</a></li></ul></details></li></ul>"#;
+            <li><a href="/docs/tools/slate-viewer/change-logs/changenotes_0.5.0.md"><span>≡</span>changenotes_0.5.0.md</a></li>
+            <li><a href="/docs/tools/slate-viewer/change-logs/README.md">README.md</a></li>
+            <li><a href="/docs/tools/slate-viewer/change-logs/changenotes_0.10.0.md">x</a></li>
+            <li><a href="/docs/tools/slate-viewer/change-logs/changenotes_0.6.0.md" aria-current="page">changenotes_0.6.0.md</a></li></ul></details></li></ul>"#;
         assert_eq!(notes_in_page(tree), ["0.10.0", "0.6.0", "0.5.0"]);
         let page = r#"<pre id="document-source" tabindex="0" aria-label="File contents"><code># 0.6.0 &amp; more
 - &lt;b&gt; &#34;quoted&#34; it&#39;s</code></pre>"#;

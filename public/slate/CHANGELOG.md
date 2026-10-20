@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.16.0 — 2026-10-20
+
+- Added a **paper** theme: a soft, warm page (not white) with near-black text and ink-blue links, for strong contrast without glare. Hosts set `data-theme="paper"` on the host, or mount with `theme: 'paper'`. It's only a set of colour variables in `slate.css`, like light and dark.
+- Diagrams in the paper theme are drawn with Mermaid's `base` theme coloured to match the page.
+
 ## 0.15.0 — 2026-10-19
 
 - Edit: a plain click on a link in a table (or in a block's caption) no longer opens the link; it places the cursor in that cell to edit it, like links in the text. Ctrl+click opens it. Before, the editor ignored clicks inside blocks, so the browser followed the link into a new window.

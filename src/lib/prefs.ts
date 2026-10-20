@@ -1,6 +1,6 @@
 // Small per-machine preferences, shared by every window.
 
-export type ThemePref = 'system' | 'light' | 'dark';
+export type ThemePref = 'system' | 'light' | 'dark' | 'paper';
 
 const THEME_KEY = 'slate-viewer.theme';
 const ZOOM_KEY = 'slate-viewer.zoom';
@@ -15,7 +15,7 @@ function write(key: string, value: string): void {
 
 export function themePref(): ThemePref {
   const value = read(THEME_KEY);
-  return value === 'light' || value === 'dark' ? value : 'system';
+  return value === 'light' || value === 'dark' || value === 'paper' ? value : 'system';
 }
 
 export function setThemePref(theme: ThemePref): void {

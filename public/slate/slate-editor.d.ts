@@ -41,7 +41,7 @@ export interface SlateMountOptions {
   outlineOpen?: boolean;
   readOnly?: boolean;
   interactiveTasks?: boolean;
-  theme?: "auto" | "light" | "dark";
+  theme?: "auto" | "light" | "dark" | "paper";
   showReadyToast?: boolean;
   attachmentHandler?: SlateAttachmentHandler | null;
   resolveUrl?: SlateUrlResolver | null;

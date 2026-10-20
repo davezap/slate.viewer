@@ -18,10 +18,11 @@
     <div id="host"></div>
     <script>
       const host = document.getElementById('host');
-      const theme = new URLSearchParams(location.search).get('theme') === 'dark' ? 'dark' : 'light';
+      const requested = new URLSearchParams(location.search).get('theme');
+      const theme = requested === 'dark' || requested === 'paper' ? requested : 'light';
       document.documentElement.dataset.theme = host.dataset.theme = theme;
       // Relative links in a note point at other docs pages.
-      const base = 'https://metatrash.com/docs/slate-viewer/change-logs/';
+      const base = 'https://metatrash.com/docs/tools/slate-viewer/change-logs/';
       const editor = window.SlateMarkdownEditor.mount(host, {
         markdown: '',
         persist: false,

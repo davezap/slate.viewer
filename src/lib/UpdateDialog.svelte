@@ -34,7 +34,7 @@
   let frame = $state<HTMLIFrameElement>();
   let frameReady = $state(false);
   const cache = new Map<string, string>();
-  const theme = document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+  const theme = document.documentElement.dataset.theme ?? 'light';
 
   /** -1, 0 or 1, comparing x.y.z versions (a missing part is 0). */
   function compare(a: string, b: string): number {

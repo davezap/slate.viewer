@@ -38,6 +38,26 @@
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
 }
 
+/* Paper: a soft, warm page (not white) with near-black ink, for contrast without glare. */
+.slate-editor-host[data-theme="paper"]{
+  color-scheme: light;
+  --bg: #d9d2c3;
+  --panel: #e2dccf;
+  --panel-muted: #dad4c5;
+  --panel-hover: #d5cdbc;
+  --border: #cac0ac;
+  --border-strong: #b8ac95;
+  --text: #16130f;
+  --text-muted: #4f473b;
+  --accent: #234f99;
+  --accent-soft: #d2d7de;
+  --accent-strong: #173f85;
+  --danger: #a8303c;
+  --danger-soft: #e5cfca;
+  --complete: #1f8f4e;
+  --shadow: 0 10px 30px rgba(70, 52, 22, 0.12);
+}
+
 .slate-editor-host, .slate-editor-host *{ box-sizing: border-box; }
 .slate-editor-host [hidden]{ display: none !important; }
 

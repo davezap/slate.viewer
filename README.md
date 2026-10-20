@@ -142,10 +142,11 @@ and the package manager updates and removes it.
   - **Help > Check for Updates** opens the update dialog at once ("Checking for updates…"); it then grows to
     show the change notes. The timer's check opens the same dialog only when there is a newer version.
   - The dialog shows the latest release's notes (its version comes from `slateviewer.json` on GitHub)
-    from the Metatrash docs, `https://metatrash.com/docs/slate-viewer/change-logs/changenotes_<version>.md`,
+    from the Metatrash docs, `https://metatrash.com/docs/tools/slate-viewer/change-logs/changenotes_<version>.md`,
     in a read-only Slate (`public/notes.html`, in an iframe because Slate allows one editor per page).
     Older notes are listed down the side, taken from the docs' file tree. To publish notes for a release,
-    add `slate-viewer/change-logs/changenotes_<version>.md` to the docs space.
+    write `docs/change-notes/changenotes_<version>.md` in this repository and copy it to
+    `tools/slate-viewer/change-logs/` in the docs space (`dave-zap/metatrash-com`).
   - When there is a newer version, **Update** on Windows downloads the setup, checks it and runs it
     unattended (`/P /UPDATE /R`): just a progress bar, no questions, installed over the current version,
     and the new version starts when it's done. On macOS and Linux it opens the download. **Later** (or ×)
@@ -258,7 +259,7 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
 - **File menu:** New Window (Ctrl+N), New File (Ctrl+Alt+N), New File in Root, Open (Ctrl+O), Open Recent, Save (Ctrl+S), Save As (Ctrl+Shift+S),
   Print (Ctrl+P, includes Microsoft Print to PDF), Close Window (Ctrl+W).
 - **View menu:** Edit / Preview / Source (Ctrl+1/2/3), Read Only checklist mode (Ctrl+Shift+R:
-  text locked, task boxes still tick), Files / Search / Document Navigation / Version History, Theme (system, light, dark), Zoom In / Zoom Out / Reset Zoom (Ctrl+= / Ctrl+- / Ctrl+0, or Ctrl+mouse wheel;
+  text locked, task boxes still tick), Files / Search / Document Navigation / Version History, Theme (system, light, dark, paper), Zoom In / Zoom Out / Reset Zoom (Ctrl+= / Ctrl+- / Ctrl+0, or Ctrl+mouse wheel;
   Reset Zoom shows the current size).
 - **Go menu:** Back / Forward (Alt+Left / Alt+Right), Find in Document (Ctrl+F).
 - A `•` in the title while there are unsaved changes; closing a changed window asks to save.
@@ -303,7 +304,8 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
 ## Layout
 
 ```
-public/slate/        Slate 0.15.0, vendored unchanged (slate.js, slate.css, mermaid/, themes, .d.ts)
+docs/change-notes/   changenotes_<version>.md per release, also published to the docs space (see Updates)
+public/slate/        Slate 0.16.0, vendored unchanged (slate.js, slate.css, mermaid/, themes, .d.ts)
 src/App.svelte       menu, file handling, link handling, Slate mount
 src/lib/             icon bar and sidebar sections, Go to File, wiki-link resolving, paths, line endings, recent lists, preferences
 src-tauri/src/       Rust: windows, single instance, file read/write, attachments, file and folder
