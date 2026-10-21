@@ -12,6 +12,19 @@ export interface HistoryEntry {
   timestamp: string;
   /** Where that revision's path is in the synced folder; absent when it was outside it. */
   file?: string;
+  /** Who made the change (Metatrash 0.47.0 and mtsync 0.47.0; absent on older changes). */
+  by?: ChangeAuthor;
+}
+
+/** An account name, the app it worked through, and whether a person or an agent made the change. */
+export interface ChangeAuthor { name?: string; app?: string; kind: 'person' | 'agent' | string }
+
+/** "dave" for a person's change, "Claude (agent) for dave" or "space key (agent)" for an agent's, or null. */
+export function describeAuthor(by: ChangeAuthor | undefined): string | null {
+  if (!by) return null;
+  if (by.kind === 'person') return by.name || by.app || 'a person';
+  const agent = `${by.app || 'an agent'} (agent)`;
+  return by.name ? `${agent} for ${by.name}` : agent;
 }
 
 export interface HistoryPage {

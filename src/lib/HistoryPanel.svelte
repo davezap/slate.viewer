@@ -1,7 +1,7 @@
 <script lang="ts">
   import { basename } from './paths';
   import Section from './Section.svelte';
-  import { fileHistory, formatWhen, relativeWhen, describeOperation, type HistoryEntry } from './history';
+  import { fileHistory, formatWhen, relativeWhen, describeOperation, describeAuthor, type HistoryEntry } from './history';
 
   interface Props {
     /** The open space file, or null when the document isn't in a space. */
@@ -73,6 +73,7 @@
               {describeOperation(entry, entries[i + 1]?.path ?? null)}
               {#if i === 0}<em>· latest in space</em>{/if}
             </span>
+            {#if describeAuthor(entry.by)}<span class="who">by {describeAuthor(entry.by)}</span>{/if}
             <span class="ago">{relativeWhen(entry.timestamp)}</span>
           </button>
         </li>
@@ -107,6 +108,7 @@
   .what { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .what em { font-style: normal; color: var(--side-muted); }
   .ago { font-size: 12px; color: var(--side-muted); }
+  .who { font-size: 12px; color: var(--side-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .note { margin: 10px 12px; color: var(--side-muted); }
   .note.error { color: #c0392b; white-space: pre-wrap; }
   .more {

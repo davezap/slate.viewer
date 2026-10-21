@@ -180,7 +180,8 @@ and the package manager updates and removes it.
 - The pin in Document Nav's header (or View > Pin Document Navigation) moves it out of the stack to its own
   column just left of the document, with its own width. There the **‹** button (or the icon bar, or
   Ctrl+Shift+O) folds it to a thin strip and clicking the strip opens it again. Unpinning puts it back in the stack.
-- History lists a space file's earlier versions (from `mtsync history`, which needs mtsync 0.41.0).
+- History lists a space file's earlier versions (from `mtsync history`, which needs mtsync 0.41.0), each with who
+  made it: `by dave` for a person, `by Claude (agent) for dave` for an agent (Metatrash and mtsync 0.47.0).
   Picking one compares it with the document inline (Slate's Compare): take parts or all of it,
   press **Done**, then save to restore. Deleted entries have no text to compare.
 - Which sections are on, their sizes, the labels setting and the pinned Document Nav are one setting for
