@@ -32,7 +32,7 @@
   import UpdateDialog, { type UpdateCheck } from './lib/UpdateDialog.svelte';
   import {
     mtsync, sameFolder, describeState, lastSyncTime, spacePathProblem, spaceSafeName, conflictOriginal, isSignedOut, SPACE_FILE_LIMIT,
-    DEFAULT_SERVER, type SpaceRef, type FolderDescription } from './lib/space';
+    DEFAULT_SERVER, fileLock, type SpaceRef, type FolderDescription } from './lib/space';
   import QuickOpen from './lib/QuickOpen.svelte';
   import HistoryPanel from './lib/HistoryPanel.svelte';
   import { revisionText, versionLabel, type HistoryEntry } from './lib/history';
@@ -573,9 +573,25 @@
 
   /** Files can be added, renamed, moved and deleted anywhere but in a read-only space. */
   const canManageFiles = $derived(openedSpace?.access !== 'read only');
-  /** Files that stay where they are: every folder of a space keeps its AGENTS.md and .metatrash.json. */
-  const lockedFiles = $derived(openedSpace ? folderFiles.filter(isSpaceFolderFile) : []);
+  /**
+   * Files that stay where they are: every folder of a space keeps its AGENTS.md and .metatrash.json,
+   * and files its settings lock for everyone (readOnly) can't change at all.
+   */
+  const lockedForEveryone = (relative: string) => openedSpace !== null && fileLock(descriptions, relative) === 'everyone';
+  const lockedFiles = $derived(openedSpace ? folderFiles.filter(f => isSpaceFolderFile(f) || lockedForEveryone(f)) : []);
   const folderFileReason = 'every folder in a Metatrash space keeps its AGENTS.md and .metatrash.json (they can be rewritten, and go when the folder is deleted)';
+  const everyoneReason = 'is read-only for everyone in this space: a readOnly entry in its folder\'s .metatrash.json locks it. Lift the lock there to change it';
+  /** Why `relative` (a file, or a folder and everything in it) can't be renamed, moved or deleted, or null. */
+  function lockedWhy(relative: string, isFolder: boolean): string | null {
+    if (!openedSpace) return null;
+    if (!isFolder) {
+      if (lockedForEveryone(relative)) return `${relative} ${everyoneReason}.`;
+      if (isSpaceFolderFile(relative)) return `${relative}: ${folderFileReason}.`;
+      return null;
+    }
+    const inside = folderFiles.find(f => f.startsWith(relative + '/') && lockedForEveryone(f));
+    return inside ? `${relative} holds ${inside}, which ${everyoneReason}.` : null;
+  }
   const trashName = /Windows/i.test(navigator.userAgent) ? 'Recycle Bin' : 'Trash';
 
   async function refuseReadOnly() {
@@ -666,8 +682,9 @@
   async function relocate(relative: string, isFolder: boolean, target: string): Promise<string | null> {
     if (!root) return null;
     if (!canManageFiles) { await refuseReadOnly(); return null; }
-    if (lockedFiles.includes(relative)) {
-      await message(`${relative} can't be renamed or moved: ${folderFileReason}.`, { title: 'Slate Viewer', kind: 'info' });
+    const lockedNote = lockedWhy(relative, isFolder);
+    if (lockedNote) {
+      await message(`Can't rename or move it. ${lockedNote}`, { title: 'Slate Viewer', kind: 'info' });
       return null;
     }
     const problem = spaceProblem(target, isFolder, relative);
@@ -721,8 +738,9 @@
   async function deleteEntry(relative: string, isFolder: boolean) {
     if (!root) return;
     if (!canManageFiles) { await refuseReadOnly(); return; }
-    if (lockedFiles.includes(relative)) {
-      await message(`${relative} can't be deleted: ${folderFileReason}.`, { title: 'Slate Viewer', kind: 'info' });
+    const lockedNote = lockedWhy(relative, isFolder);
+    if (lockedNote) {
+      await message(`Can't delete it. ${lockedNote}`, { title: 'Slate Viewer', kind: 'info' });
       return;
     }
     const target = joinPath(root, relative);
@@ -1239,6 +1257,7 @@
     const rel = currentRelative;
     if (rel === null) return null;
     if (openedSpace.access === 'read only') return `${openedSpace.space} is a read-only space.`;
+    if (lockedForEveryone(rel)) return `${rel} ${everyoneReason}.`;
     return null;
   });
 

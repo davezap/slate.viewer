@@ -233,6 +233,8 @@ pub struct FolderDescription {
     children: std::collections::BTreeMap<String, String>,
     /// The folder mirrors a GitHub repository.
     github: bool,
+    /// Locked files: name, pattern or `subfolder/` to "agents" or "everyone".
+    read_only: std::collections::BTreeMap<String, String>,
 }
 
 /// The `.metatrash.json` descriptions in a Metatrash space folder (any folder may have one).
@@ -256,11 +258,22 @@ pub async fn folder_descriptions(root: String) -> Result<Vec<FolderDescription>,
                     let github = value["services"]
                         .as_array()
                         .is_some_and(|list| list.iter().any(|s| s["type"].as_str() == Some("github")));
+                    // A list locks each name for agents, as a map with "agents" does.
+                    let read_only = match &value["readOnly"] {
+                        serde_json::Value::Array(list) => {
+                            list.iter().filter_map(|v| Some((v.as_str()?.to_string(), "agents".to_string()))).collect()
+                        }
+                        serde_json::Value::Object(map) => {
+                            map.iter().filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_string()))).collect()
+                        }
+                        _ => Default::default(),
+                    };
                     found.push(FolderDescription {
                         folder,
                         purpose: value["purpose"].as_str().map(String::from),
                         children,
                         github,
+                        read_only,
                     });
                 }
             }

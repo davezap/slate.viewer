@@ -258,6 +258,8 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
   at most 8 folder levels, 64 KB per file, UTF-8 without BOM. New notes get a space-safe name (`My Idea` → `my-idea.md`)
   and `[[My Idea]]` finds `my-idea.md`. Read-only spaces open locked. `README.md` is an ordinary note; each folder's
   `AGENTS.md` (instructions for agents) and `.metatrash.json` (settings) can be edited but not renamed or deleted.
+- Files a folder's `.metatrash.json` locks for everyone (`"readOnly": {"spec.md": "everyone"}`) open locked and
+  can't be renamed, moved or deleted, until the lock is lifted there. Files locked only for agents stay editable here.
 - Renames, moves and new folders in a space get space-safe names too, and are refused when a note would break the
   rules. mtsync sends a rename or move as a move, so the note keeps its history; a deleted note is deleted in the
   space. An empty folder stays on this computer until a note is put in it.

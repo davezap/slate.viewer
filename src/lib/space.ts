@@ -107,7 +107,55 @@ export function conflictOriginal(fileName: string): string | null {
 // ---- mtsync --------------------------------------------------------------------
 
 /** A `.metatrash.json` description: `folder` is "" for the root or "notes/" style. */
-export interface FolderDescription { folder: string; purpose: string | null; children: Record<string, string>; github: boolean }
+export interface FolderDescription {
+  folder: string;
+  purpose: string | null;
+  children: Record<string, string>;
+  github: boolean;
+  /** Locked files: a name, pattern (`*.pdf`) or subfolder (`archive/`) to "agents" or "everyone". */
+  readOnly: Record<string, string>;
+}
+
+/** A Go path.Match pattern (`*`, `?`, `[a-z]`, `\\` escapes) as a regular expression. */
+function globRegex(pattern: string): RegExp {
+  let out = '';
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i];
+    if (c === '*') out += '[^/]*';
+    else if (c === '?') out += '[^/]';
+    else if (c === '\\' && i + 1 < pattern.length) out += pattern[++i].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    else if (c === '[') {
+      const end = pattern.indexOf(']', i + 1);
+      if (end < 0) return /$^/;
+      out += `[${pattern.slice(i + 1, end)}]`;
+      i = end;
+    } else out += c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+  return new RegExp(`^${out}$`);
+}
+
+/**
+ * The lock Metatrash puts on a space file (`readOnly` in the `.metatrash.json` of a folder holding it):
+ * "everyone" (nobody can change it, people included), "agents" (only agents are stopped) or null.
+ * A `.metatrash.json` is never locked for everyone, so its locks can always be lifted.
+ */
+export function fileLock(descriptions: FolderDescription[], relative: string): 'agents' | 'everyone' | null {
+  let level: 'agents' | 'everyone' | null = null;
+  for (const d of descriptions) {
+    if (!relative.startsWith(d.folder)) continue;
+    const rest = relative.slice(d.folder.length);
+    const slash = rest.indexOf('/');
+    const name = slash < 0 ? rest : rest.slice(0, slash);
+    for (const [entry, l] of Object.entries(d.readOnly ?? {})) {
+      const isFolder = entry.endsWith('/');
+      if (isFolder !== slash >= 0 || !globRegex(isFolder ? entry.slice(0, -1) : entry).test(name)) continue;
+      if (l === 'everyone') level = 'everyone';
+      else if (l === 'agents' && level === null) level = 'agents';
+    }
+  }
+  if (level === 'everyone' && relative.split('/').pop() === '.metatrash.json') level = 'agents';
+  return level;
+}
 
 export interface MtsyncInfo {
   path: string | null;
