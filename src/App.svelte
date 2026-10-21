@@ -14,11 +14,11 @@
   import {
     themePref, setThemePref, zoomPref, setZoomPref, ZOOM_MIN, ZOOM_MAX, sidebarWidthPref, setSidebarWidthPref,
     sectionsPref, setSectionsPref, sectionWeightsPref, setSectionWeightsPref, activityLabelsPref, setActivityLabelsPref,
-    outlinePinnedPref, setOutlinePinnedPref, pinnedOutlineWidthPref, setPinnedOutlineWidthPref,
+    outlinePinnedPref, setOutlinePinnedPref, pinnedOutlineWidthPref, setPinnedOutlineWidthPref, showHiddenPref, setShowHiddenPref,
     SECTION_IDS, type ThemePref, type SectionId,
   } from './lib/prefs';
   import { resolveWikiLink, noteFileName } from './lib/wiki';
-  import type { SearchMatch } from './lib/types';
+  import { firstNote, isHiddenFile, isSpaceFolderFile, type SearchMatch } from './lib/types';
   import ActivityBar from './lib/ActivityBar.svelte';
   import SidePanel from './lib/SidePanel.svelte';
   import FilesSection from './lib/FilesSection.svelte';
@@ -106,6 +106,7 @@
   let pinnedOutlineWidth = $state(pinnedOutlineWidthPref());
   const openSections = $derived(SECTION_IDS.filter(id => sections[id] && !(id === 'outline' && outlinePinned)));
   let theme = $state<ThemePref>(themePref());
+  let showHidden = $state(showHiddenPref());
   let readOnly = $state(false);
   let zoom = $state(zoomPref());
 
@@ -344,7 +345,8 @@
       return rel !== null ? folderFiles.find(f => f.toLowerCase() === rel.toLowerCase()) ?? null : null;
     };
     const savedFile = inFolder(saved?.file);
-    const target = savedFile ?? folderFiles.find(f => f.toLowerCase() === 'readme.md') ?? (folderFiles.length === 1 ? folderFiles[0] : null);
+    const notes = folderFiles.filter(f => !isHiddenFile(f));
+    const target = savedFile ?? notes.find(f => f.toLowerCase() === 'readme.md') ?? (notes.length === 1 ? notes[0] : null);
     await whileRestoring(async () => {
       if (target && !(path && sameFolder(path, joinPath(dir, target)))) {
         if (!(await confirmDiscard())) return;
@@ -382,7 +384,7 @@
     const started = performance.now();
     let listing: FolderListing;
     try {
-      listing = await invoke<FolderListing>('list_folder', { root: dir });
+      listing = await invoke<FolderListing>('list_folder', { root: dir, hidden: showHidden });
     } catch (error) {
       if (request !== folderRequest) return;
       recentFolderList.forget(dir);
@@ -457,7 +459,7 @@
     const listed = root;
     const request = folderRequest;
     try {
-      const listing = await invoke<FolderListing>('list_folder', { root: listed });
+      const listing = await invoke<FolderListing>('list_folder', { root: listed, hidden: showHidden });
       if (listed !== root || request !== folderRequest) return;
       folderFiles = listing.files;
       emptyFolders = listing.emptyFolders;
@@ -473,6 +475,11 @@
   async function openFromFolder(relative: string, { newWindow = false, find, line }: { newWindow?: boolean; find?: string; line?: number } = {}) {
     if (!root) return;
     const target = joinPath(root, relative);
+    // A hidden file that isn't text (an image, a PDF) opens in its own app, as a link to it does.
+    if (!MARKDOWN_EXTENSIONS.includes(extname(target).toLowerCase()) && !(await invoke('read_document', { path: target }).then(() => true, () => false))) {
+      await openPath(target).catch(() => revealItemInDir(target).catch(showError));
+      return;
+    }
     if (newWindow) { await openWindow(target); return; }
     if (target !== path) await openDocument(target);
     if (find && target === path) await findBar?.open(find, line ? line - 1 : undefined);
@@ -566,8 +573,9 @@
 
   /** Files can be added, renamed, moved and deleted anywhere but in a read-only space. */
   const canManageFiles = $derived(openedSpace?.access !== 'read only');
-  /** Files that stay where they are: a space's README is managed on metatrash.com. */
-  const lockedFiles = $derived(openedSpace ? ['README.md'] : []);
+  /** Files that stay where they are: every folder of a space keeps its AGENTS.md and .metatrash.json. */
+  const lockedFiles = $derived(openedSpace ? folderFiles.filter(isSpaceFolderFile) : []);
+  const folderFileReason = 'every folder in a Metatrash space keeps its AGENTS.md and .metatrash.json (they can be rewritten, and go when the folder is deleted)';
   const trashName = /Windows/i.test(navigator.userAgent) ? 'Recycle Bin' : 'Trash';
 
   async function refuseReadOnly() {
@@ -659,7 +667,7 @@
     if (!root) return null;
     if (!canManageFiles) { await refuseReadOnly(); return null; }
     if (lockedFiles.includes(relative)) {
-      await message(`${relative} can't be renamed or moved: the space's README is managed on metatrash.com.`, { title: 'Slate Viewer', kind: 'info' });
+      await message(`${relative} can't be renamed or moved: ${folderFileReason}.`, { title: 'Slate Viewer', kind: 'info' });
       return null;
     }
     const problem = spaceProblem(target, isFolder, relative);
@@ -714,7 +722,7 @@
     if (!root) return;
     if (!canManageFiles) { await refuseReadOnly(); return; }
     if (lockedFiles.includes(relative)) {
-      await message(`${relative} can't be deleted: the space's README is managed on metatrash.com.`, { title: 'Slate Viewer', kind: 'info' });
+      await message(`${relative} can't be deleted: ${folderFileReason}.`, { title: 'Slate Viewer', kind: 'info' });
       return;
     }
     const target = joinPath(root, relative);
@@ -771,7 +779,7 @@
   }
 
   function searchFolder(query: string) {
-    return invoke<{ matches: SearchMatch[]; truncated: boolean }>('search_folder', { root, query });
+    return invoke<{ matches: SearchMatch[]; truncated: boolean }>('search_folder', { root, query, hidden: showHidden });
   }
 
   async function showSearch() {
@@ -1225,13 +1233,12 @@
 
   // ---- Metatrash spaces ---------------------------------------------------------
 
-  /** Why the open document can't be edited (a read-only space, the space's own README), or null. */
+  /** Why the open document can't be edited (a read-only space), or null. */
   const lockReason = $derived.by(() => {
     if (!openedSpace || !path) return null;
     const rel = currentRelative;
     if (rel === null) return null;
     if (openedSpace.access === 'read only') return `${openedSpace.space} is a read-only space.`;
-    if (rel === 'README.md') return "The space's README is managed on metatrash.com, so it opens read only.";
     return null;
   });
 
@@ -1406,10 +1413,10 @@
     const wanted = ref.path.replace(/\/+$/, '');
     if (ref.path.endsWith('/') && wanted) { revealFolder = wanted; return; }
     // The first download can take a while; open the note as soon as it appears.
-    const target = wanted || 'README.md';
     const deadline = Date.now() + (wanted ? 5 * 60_000 : 60_000);
     while (root === dir && Date.now() < deadline) {
-      if (folderFiles.includes(target)) {
+      const target = wanted || firstNote(folderFiles);
+      if (target && folderFiles.includes(target)) {
         if (!path && !dirty) await openFromFolder(target);
         else if (wanted) await openFromFolder(target);
         return;
@@ -1421,6 +1428,13 @@
 
   function toggleOutline() {
     toggleSection('outline');
+  }
+
+  /** View > Show Hidden Files: AGENTS.md, .metatrash.json, images and other files that aren't notes. */
+  function toggleShowHidden() {
+    showHidden = !showHidden;
+    setShowHiddenPref(showHidden);
+    void refreshFolder();
   }
 
   function setZoom(next: number) {
@@ -1526,6 +1540,7 @@
           { text: 'Pin Document Navi&gation', checked: outlinePinned, action: toggleOutlinePinned },
           { text: 'Version Histor&y', keys: 'Ctrl+Shift+H', checked: sections.history, action: () => toggleSection('history') },
           { text: 'Sidebar &Labels', checked: activityLabels, action: toggleActivityLabels },
+          { text: 'Show Hidden Fil&es', checked: showHidden, action: toggleShowHidden },
           separator,
           {
             text: '&Theme',

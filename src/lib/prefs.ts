@@ -34,6 +34,17 @@ export function setZoomPref(zoom: number): void {
   write(ZOOM_KEY, String(zoom));
 }
 
+const HIDDEN_KEY = 'slate-viewer.show-hidden';
+
+/** View > Show Hidden Files: list files that aren't notes (AGENTS.md, settings, images) too. */
+export function showHiddenPref(): boolean {
+  return read(HIDDEN_KEY) === 'true';
+}
+
+export function setShowHiddenPref(show: boolean): void {
+  write(HIDDEN_KEY, String(show));
+}
+
 const SIDEBAR_KEY = 'slate-viewer.sidebar-width';
 
 export function sidebarWidthPref(): number {

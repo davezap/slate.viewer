@@ -8,7 +8,7 @@
   import ContextMenu from './ContextMenu.svelte';
   import type { MenuEntry } from './menu';
   import type { RecentEntry } from './recent';
-  import { displayName, isNewWindowClick, type OpenOptions } from './types';
+  import { displayName, isHiddenFile, isNewWindowClick, type OpenOptions } from './types';
 
   interface Props {
     root: string | null;
@@ -459,6 +459,7 @@
                   class:current={node.path === current}
                   style:padding-left="{22 + depth * 14}px"
                   class:conflict={conflictOriginal(node.name) !== null}
+                  class:hidden-file={isHiddenFile(node.path)}
                   class:dragged={dragging?.path === node.path}
                   title={fileTitle(node)}
                   draggable={canChange(node) && !!onMove}
@@ -470,7 +471,7 @@
                   ondragend={onDragEnd}
                   ondragover={event => onDragOver(event, parentOf(node.path))}
                   ondrop={event => void onDrop(event)}
-                >{#if conflictOriginal(node.name) !== null}<span class="warn">⚠</span>{/if}{displayName(node.name)}</button>
+                >{#if conflictOriginal(node.name) !== null}<span class="warn">⚠</span>{/if}{isHiddenFile(node.path) ? node.name : displayName(node.name)}</button>
               {/if}
             </li>
           {/each}
@@ -530,6 +531,8 @@
   .recent-title { margin: 10px 14px 2px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--side-muted); }
   .row .where { display: block; font-size: 11px; color: var(--side-muted); overflow: hidden; text-overflow: ellipsis; }
   .row.recent { display: flex; align-items: flex-start; gap: 8px; padding-left: 14px; }
+  /* Listed only with View > Show Hidden Files. */
+  .row.file.hidden-file { opacity: 0.6; }
   .row.recent :global(.kind) { margin-top: 2px; color: var(--side-muted); }
   .row.recent :global(.kind.space) { color: var(--side-accent); }
   .what { min-width: 0; overflow: hidden; text-overflow: ellipsis; }

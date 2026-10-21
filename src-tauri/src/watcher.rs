@@ -111,10 +111,9 @@ pub fn watch_folder(window: WebviewWindow, root: Option<String>) -> Result<(), S
             EventKind::Create(_) | EventKind::Remove(_) | EventKind::Modify(ModifyKind::Name(_)) | EventKind::Any
         );
         // Builds and git (node_modules, target, .git…) change thousands of files the listing
-        // never shows; re-listing for each burst kept the app busy.
-        let relevant = event.paths.iter().any(|p| {
-            (crate::workspace::is_markdown(p) || p.extension().is_none()) && !crate::workspace::in_skipped_folder(&watched, p)
-        });
+        // never shows; re-listing for each burst kept the app busy. Other files count too:
+        // the listing shows them when hidden files are shown.
+        let relevant = event.paths.iter().any(|p| !crate::workspace::in_skipped_folder(&watched, p));
         if structural && relevant {
             let _ = app.emit_to(EventTarget::webview_window(&label), "folder-changed", ());
         }

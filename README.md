@@ -218,7 +218,11 @@ back at the scroll position it was left at. A folder opens where it was left, as
   folder onto a folder to move it, or onto empty space below the tree to move it to the top; resting on a closed folder
   opens it. Renaming keeps a note's extension unless you type one. The open note follows a rename or move, unsaved
   changes and all; deleting it shows the note before it. Empty folders show in the tree so they can be filled.
-  None of this is offered in a read-only space, and a space's root `README.md` can't be renamed, moved or deleted.
+  None of this is offered in a read-only space, and a space's `AGENTS.md` and `.metatrash.json` files can't be
+  renamed, moved or deleted (Metatrash keeps one of each in every folder).
+- **View > Show Hidden Files** shows what Files normally leaves out: `AGENTS.md`, `.metatrash.json`, other dot files,
+  and every file that isn't a note, images included. Images still show inside the notes that use them. Hidden files
+  show dimmed; one that isn't a note opens in its own app.
 - **Search** (Ctrl+Shift+F) searches every note; clicking a hit opens the note with Find showing,
   every match highlighted and the clicked line scrolled into view.
 - **Go > Go to File** (Ctrl+T) jumps to a note by typing part of its name.
@@ -252,7 +256,8 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
   Click it to start the service when it isn't running, sign in again when signed out, or see the recent sync log.
 - Space rules are checked when saving: names with letters, digits, `.`, `-`, `_` only (a fixed name is offered),
   at most 8 folder levels, 64 KB per file, UTF-8 without BOM. New notes get a space-safe name (`My Idea` → `my-idea.md`)
-  and `[[My Idea]]` finds `my-idea.md`. Read-only spaces and the space's root `README.md` open locked.
+  and `[[My Idea]]` finds `my-idea.md`. Read-only spaces open locked. `README.md` is an ordinary note; each folder's
+  `AGENTS.md` (instructions for agents) and `.metatrash.json` (settings) can be edited but not renamed or deleted.
 - Renames, moves and new folders in a space get space-safe names too, and are refused when a note would break the
   rules. mtsync sends a rename or move as a move, so the note keeps its history; a deleted note is deleted in the
   space. An empty folder stays on this computer until a note is put in it.

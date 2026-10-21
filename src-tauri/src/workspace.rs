@@ -1,4 +1,8 @@
 //! Folder mode: listing a folder's Markdown files, searching them, and creating notes.
+//!
+//! The listing hides files that aren't notes: anything but Markdown (images, settings), a
+//! folder's AGENTS.md (instructions for agents) and names starting with a dot. View > Show
+//! Hidden Files lists them too. Images stay usable in documents either way.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -22,9 +26,9 @@ const MAX_WALK_TIME: Duration = Duration::from_secs(8);
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FolderListing {
-    /// Markdown files, relative to the root, using `/`.
+    /// Markdown files (every file with hidden ones shown), relative to the root, using `/`.
     files: Vec<String>,
-    /// Folders with nothing in them (but hidden files), so a new folder shows before it has notes.
+    /// Folders with nothing in them but hidden files, so a new folder shows before it has notes.
     empty_folders: Vec<String>,
     /// True when the listing stopped at MAX_FILES.
     truncated: bool,
@@ -51,6 +55,13 @@ pub fn is_markdown(path: &Path) -> bool {
         .is_some_and(|e| MARKDOWN_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
 }
 
+/// A file the listing hides unless hidden files are shown: not Markdown, a folder's
+/// AGENTS.md, or a name starting with a dot (.metatrash.json, .gitignore).
+pub fn is_hidden_file(path: &Path) -> bool {
+    let name = path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
+    !is_markdown(path) || name.eq_ignore_ascii_case("AGENTS.md") || name.starts_with('.')
+}
+
 fn skip_folder(name: &str) -> bool {
     name.starts_with('.') || SKIPPED_FOLDERS.iter().any(|s| s.eq_ignore_ascii_case(name))
 }
@@ -69,7 +80,7 @@ fn relative(root: &Path, path: &Path) -> String {
 
 /// What a walk of a folder found.
 struct Walk {
-    /// Markdown files, sorted folder by folder.
+    /// Markdown files (every file with `hidden`), sorted folder by folder.
     files: Vec<PathBuf>,
     /// Folders below the root with nothing in them but hidden files.
     empty_folders: Vec<PathBuf>,
@@ -77,8 +88,9 @@ struct Walk {
     stopped: bool,
 }
 
-/// Walks `root` for Markdown files, sorted folder by folder, without following links.
-fn markdown_files(root: &Path) -> Walk {
+/// Walks `root` for Markdown files (with `hidden`, every file), sorted folder by folder,
+/// without following links.
+fn markdown_files(root: &Path, hidden: bool) -> Walk {
     let started = Instant::now();
     let mut found = Vec::new();
     let mut empty_folders = Vec::new();
@@ -95,7 +107,11 @@ fn markdown_files(root: &Path) -> Walk {
         }
         let Ok(entries) = fs::read_dir(&dir) else { continue };
         let mut entries: Vec<_> = entries.flatten().collect();
-        if dir != root && entries.iter().all(|e| e.file_name().to_string_lossy().starts_with('.')) {
+        let shown = |e: &fs::DirEntry| {
+            let is_dir = e.file_type().is_ok_and(|t| t.is_dir());
+            if is_dir { !e.file_name().to_string_lossy().starts_with('.') } else { hidden || !is_hidden_file(&e.path()) }
+        };
+        if dir != root && !entries.iter().any(shown) {
             empty_folders.push(dir.clone());
         }
         entries.sort_by_key(|e| e.file_name().to_string_lossy().to_lowercase());
@@ -107,7 +123,7 @@ fn markdown_files(root: &Path) -> Walk {
                 if depth < MAX_DEPTH && !skip_folder(&entry.file_name().to_string_lossy()) {
                     subfolders.push((path, depth + 1));
                 }
-            } else if kind.is_file() && is_markdown(&path) {
+            } else if kind.is_file() && (hidden || !is_hidden_file(&path)) {
                 if found.len() >= MAX_FILES {
                     return Walk { files: found, empty_folders, stopped: true };
                 }
@@ -124,7 +140,8 @@ fn markdown_files(root: &Path) -> Walk {
 /// whose contents are fetched on demand), and a command without `async` would run on the main
 /// thread and freeze every window until it finished.
 #[tauri::command]
-pub async fn list_folder(app: AppHandle, root: String) -> Result<FolderListing, String> {
+pub async fn list_folder(app: AppHandle, root: String, hidden: Option<bool>) -> Result<FolderListing, String> {
+    let hidden = hidden.unwrap_or(false);
     tauri::async_runtime::spawn_blocking(move || {
         let root = PathBuf::from(root);
         if !root.is_dir() {
@@ -132,7 +149,7 @@ pub async fn list_folder(app: AppHandle, root: String) -> Result<FolderListing, 
         }
         // Images anywhere in the folder can then be shown.
         let _ = app.asset_protocol_scope().allow_directory(&root, true);
-        let walk = markdown_files(&root);
+        let walk = markdown_files(&root, hidden);
         let mut files: Vec<String> = walk.files.iter().map(|p| relative(&root, p)).collect();
         files.sort_by_key(|f| f.to_lowercase());
         let empty_folders = walk.empty_folders.iter().map(|p| relative(&root, p)).collect();
@@ -142,16 +159,18 @@ pub async fn list_folder(app: AppHandle, root: String) -> Result<FolderListing, 
     .map_err(|e| e.to_string())?
 }
 
-/// Case-insensitive plain-text search through every Markdown file under `root`.
+/// Case-insensitive plain-text search through every Markdown file under `root` (with
+/// `hidden`, AGENTS.md and the other hidden text files too).
 #[tauri::command]
-pub async fn search_folder(root: String, query: String) -> Result<SearchResults, String> {
+pub async fn search_folder(root: String, query: String, hidden: Option<bool>) -> Result<SearchResults, String> {
+    let hidden = hidden.unwrap_or(false);
     let needle = query.trim().to_lowercase();
     if needle.is_empty() {
         return Ok(SearchResults { matches: Vec::new(), truncated: false });
     }
     let root = PathBuf::from(root);
     tauri::async_runtime::spawn_blocking(move || {
-        let files = markdown_files(&root).files;
+        let files = markdown_files(&root, hidden).files;
         let mut matches = Vec::new();
         for file in files {
             if fs::metadata(&file).map(|m| m.len()).unwrap_or(0) > MAX_SEARCH_FILE_BYTES {
@@ -273,11 +292,12 @@ mod tests {
         for dir in ["notes/sub", ".git", "node_modules/pkg", "empty", "hidden-only"] {
             fs::create_dir_all(root.join(dir)).unwrap();
         }
-        for file in ["b.md", "a.MD", "notes/c.markdown", "notes/sub/d.md", "notes/x.txt", ".git/e.md", "node_modules/pkg/f.md"] {
+        for file in ["b.md", "a.MD", "notes/c.markdown", "notes/sub/d.md", "notes/x.txt", ".git/e.md", "node_modules/pkg/f.md", "notes/AGENTS.md"] {
             fs::write(root.join(file), "# hello world\n").unwrap();
         }
         fs::write(root.join("hidden-only/.metatrash.json"), "{}").unwrap();
-        let walk = markdown_files(&root);
+        fs::write(root.join("hidden-only/agents.md"), "# agents\n").unwrap();
+        let walk = markdown_files(&root, false);
         let mut names: Vec<String> = walk.files.iter().map(|p| relative(&root, p)).collect();
         names.sort();
         assert_eq!(names, ["a.MD", "b.md", "notes/c.markdown", "notes/sub/d.md"]);
@@ -286,8 +306,18 @@ mod tests {
         assert_eq!(empty, ["empty", "hidden-only"]);
         assert!(!walk.stopped);
 
-        let results = tauri::async_runtime::block_on(search_folder(root.to_string_lossy().into(), "WORLD".into())).unwrap();
+        // Shown hidden files: everything but skipped folders.
+        let walk = markdown_files(&root, true);
+        let mut names: Vec<String> = walk.files.iter().map(|p| relative(&root, p)).collect();
+        names.sort();
+        assert_eq!(names, ["a.MD", "b.md", "hidden-only/.metatrash.json", "hidden-only/agents.md", "notes/AGENTS.md", "notes/c.markdown", "notes/sub/d.md", "notes/x.txt"]);
+        let empty: Vec<String> = walk.empty_folders.iter().map(|p| relative(&root, p)).collect();
+        assert_eq!(empty, ["empty"]);
+
+        let results = tauri::async_runtime::block_on(search_folder(root.to_string_lossy().into(), "WORLD".into(), None)).unwrap();
         assert_eq!(results.matches.len(), 4);
+        let results = tauri::async_runtime::block_on(search_folder(root.to_string_lossy().into(), "WORLD".into(), Some(true))).unwrap();
+        assert_eq!(results.matches.len(), 6);
         assert_eq!(results.matches[0].line, 1);
 
         let created = create_note(root.join("notes").to_string_lossy().into(), "New idea".into(), None).unwrap();
