@@ -30,6 +30,7 @@
   import FindBar from './lib/FindBar.svelte';
   import OpenSpace from './lib/OpenSpace.svelte';
   import UpdateDialog, { type UpdateCheck } from './lib/UpdateDialog.svelte';
+  import FolderProperties from './lib/FolderProperties.svelte';
   import {
     mtsync, sameFolder, describeState, lastSyncTime, spacePathProblem, spaceSafeName, conflictOriginal, isSignedOut, SPACE_FILE_LIMIT,
     DEFAULT_SERVER, fileLock, type SpaceRef, type FolderDescription } from './lib/space';
@@ -80,6 +81,8 @@
   /** The update dialog: `initial` is what the timer's check found, null while Help's check runs. */
   let updateDialog = $state<{ initial: UpdateCheck | null } | null>(null);
   let descriptions = $state<FolderDescription[]>([]);
+  /** The folder whose Properties are open (relative, "" for the top of the space), or null. */
+  let propertiesFor = $state<string | null>(null);
   let revealFolder = $state<string | null>(null);
   let docBytes = $state(0);
   /** The file's text as it was on disk when loaded or last saved, to notice changes made elsewhere. */
@@ -425,6 +428,7 @@
     emptyFolders = [];
     openedSpace = null;
     descriptions = [];
+    propertiesFor = null;
     quickOpen = false;
     invoke('watch_folder', { root: null }).catch(console.error);
     rememberSession();
@@ -464,6 +468,8 @@
       folderFiles = listing.files;
       emptyFolders = listing.emptyFolders;
       folderTruncated = listing.truncated;
+      // Settings can change with any sync (or a save from Properties).
+      if (openedSpace) void loadDescriptions();
       void offerConflictResolve();
     } catch {
       // The folder itself went away.
@@ -1348,7 +1354,9 @@
 
   async function loadDescriptions() {
     if (!root) return;
-    descriptions = await invoke<FolderDescription[]>('folder_descriptions', { root }).catch(() => []);
+    const dir = root;
+    const found = await invoke<FolderDescription[]>('folder_descriptions', { root: dir }).catch(() => []);
+    if (dir === root) descriptions = found;
   }
 
   async function refreshSpaceState() {
@@ -2018,6 +2026,7 @@
               onMove={moveEntry}
               onDuplicate={relative => void duplicateEntry(relative)}
               onDelete={(relative, isFolder) => void deleteEntry(relative, isFolder)}
+              onProperties={openedSpace ? (relative => (propertiesFor = relative)) : undefined}
               onCloseFolder={closeFolder}
               onChooseFolder={() => void chooseFolder()}
               onOpenFolder={dir => void openFolder(dir)}
@@ -2079,6 +2088,18 @@
 
 {#if spaceDialog}
   <OpenSpace onOpened={(folder, ref) => void onSpaceOpened(folder, ref)} onClose={() => (spaceDialog = false)} />
+{/if}
+
+{#if propertiesFor !== null && openedSpace && root}
+  <FolderProperties
+    {root}
+    folder={propertiesFor ? propertiesFor + '/' : ''}
+    space={openedSpace}
+    {descriptions}
+    onClose={() => (propertiesFor = null)}
+    onSaved={() => { syncPendingSince = Date.now(); void loadDescriptions(); }}
+    onOpenFile={relative => void openFromFolder(relative)}
+  />
 {/if}
 
 {#if updateDialog}

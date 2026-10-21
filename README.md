@@ -271,6 +271,15 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
   inline (Slate's Compare), you take or keep each difference, and **Done** asks to save the original
   and delete the copy (it is never deleted without asking).
 - `.metatrash.json` descriptions show as tooltips on folders and files; folders that mirror GitHub show a badge.
+- **Properties** (right-click a folder, or Alt+Enter on it; right-click empty space in Files for the top of the space)
+  edits the folder's `.metatrash.json` as a guided dialog instead of raw JSON: **General** (use the parent folder's
+  settings, the folder's AGENTS.md, a summary and descriptions of what's inside), **Security** (read-only files and
+  patterns with a preview of the files they lock, and which settings are locked for agents or for everyone),
+  **Connections** (the GitHub repository the folder mirrors, branch and push mode), **Automation** (triggers and actions,
+  reserved until Metatrash has them) and **Settings File** (the exact JSON Save writes, and the settings the folder sees
+  with inherited ones). It checks the same rules Metatrash does (lengths, names, patterns, no nested GitHub folders, locks
+  for everyone, inherited ones included) before saving, so a change is never quietly refused by Sync. Keys left alone keep
+  how they were written. Read-only spaces show the settings without Save. Logic: `src/lib/folderSettings.ts`.
 
 ### Documents
 
@@ -325,7 +334,7 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
 docs/change-notes/   changenotes_<version>.md per release, also published to the docs space (see Updates)
 public/slate/        Slate 0.16.0, vendored unchanged (slate.js, slate.css, mermaid/, themes, .d.ts)
 src/App.svelte       menu, file handling, link handling, Slate mount
-src/lib/             icon bar and sidebar sections, Go to File, wiki-link resolving, paths, line endings, recent lists, preferences
+src/lib/             icon bar and sidebar sections, folder Properties (FolderProperties.svelte, folderSettings.ts), Go to File, wiki-link resolving, paths, line endings, recent lists, preferences
 src-tauri/src/       Rust: windows, single instance, file read/write, attachments, file and folder
                      watching, folder listing and search, rename/move/delete/new folder (files.rs),
                      mtsync commands (mtsync.rs), fault log (applog.rs)

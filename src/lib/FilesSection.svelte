@@ -44,12 +44,14 @@
     onMove?: (path: string, folder: boolean, toFolder: string) => Promise<string | null>;
     onDuplicate?: (path: string) => void;
     onDelete?: (path: string, folder: boolean) => void;
+    /** Opens a folder's Properties (its .metatrash.json settings); "" is the top of the space. Spaces only. */
+    onProperties?: (folder: string) => void;
   }
 
   let {
     root, files, truncated, current, recentFolders, rootKind = 'folder', onOpen, onCreate, onCloseFolder, onChooseFolder, onOpenFolder,
     descriptions = [], reveal = null, onOpenSpace, emptyFolders = [], editable = true, locked = [],
-    onCreateFolder, onRename, onMove, onDuplicate, onDelete,
+    onCreateFolder, onRename, onMove, onDuplicate, onDelete, onProperties,
   }: Props = $props();
 
   // ---- Space descriptions ------------------------------------------------------
@@ -236,8 +238,13 @@
     if (node.folder) followFolder(node.path, renamed);
   }
 
-  /** F2 renames and Delete deletes the file or folder with the keyboard focus. */
+  /** F2 renames and Delete deletes the file or folder with the keyboard focus; Alt+Enter shows a folder's Properties. */
   function onRowKeydown(event: KeyboardEvent, node: Node) {
+    if (node.folder && onProperties && event.key === 'Enter' && event.altKey) {
+      event.preventDefault();
+      onProperties(node.path);
+      return;
+    }
     if (!canChange(node)) return;
     if (event.key === 'F2') {
       event.preventDefault();
@@ -346,6 +353,11 @@
       separate();
       items.push({ text: revealLabel, action: () => void revealItemInDir(target).catch(console.error) });
       items.push({ text: 'Copy &Path', action: () => void navigator.clipboard.writeText(target).catch(console.error) });
+    }
+    if (onProperties && (!node || node.folder)) {
+      separate();
+      const which = node ? node.path : '';
+      items.push({ text: node ? 'P&roperties…' : `P&roperties of ${rootName.replace(/&/g, '&&')}…`, keys: node ? 'Alt+Enter' : undefined, action: () => onProperties(which) });
     }
     if (!items.length) return;
     menu = { x: event.clientX, y: event.clientY, items };
