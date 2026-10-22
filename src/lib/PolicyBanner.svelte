@@ -22,6 +22,8 @@
   const by = $derived(describeAuthor(folder.by));
   const published = $derived(`Published version ${folder.version} · ${formatWhen(folder.timestamp)}${by ? ` by ${by}` : ''}`);
   const toRead = $derived(file?.tracked === true && file.outstanding);
+  /** The text on screen is the published one: shown from history, or the file has no draft. */
+  const readingPublished = $derived(viewing === 'published' || (file !== null && !file.draft));
 </script>
 
 <div class="bar" class:to-read={toRead} role="status">
@@ -37,7 +39,7 @@
     {:else}
       <b>{published}</b>
     {/if}
-    {#if toRead && viewing === 'published'}
+    {#if toRead && readingPublished}
       <span class="ask">{file?.acknowledged ? `You read version ${file.acknowledged.version}; this version changed it. ` : ''}Please read it, then confirm.</span>
     {:else if file?.tracked && file.acknowledged?.current}
       <span class="done">✓ You confirmed reading it on {formatWhen(file.acknowledged.timestamp)}.</span>
@@ -48,7 +50,7 @@
   {:else if file?.draft}
     <button onclick={onShowPublished}>Show Published Version</button>
   {/if}
-  {#if toRead && viewing === 'published'}
+  {#if toRead && readingPublished}
     <button class="primary" disabled={busy} onclick={onConfirm}>{busy ? 'Confirming…' : 'I Have Read This'}</button>
   {/if}
 </div>
