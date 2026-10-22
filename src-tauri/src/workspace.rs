@@ -235,6 +235,10 @@ pub struct FolderDescription {
     github: bool,
     /// Locked files: name, pattern or `subfolder/` to "agents" or "everyone".
     read_only: std::collections::BTreeMap<String, String>,
+    /// The folder's published version (`publishedVersion`, Metatrash 0.48.0), if it publishes.
+    published_version: Option<u64>,
+    /// People are asked to confirm they read the published files (an acknowledge service).
+    acknowledge: bool,
 }
 
 /// The `.metatrash.json` descriptions in a Metatrash space folder (any folder may have one).
@@ -255,9 +259,11 @@ pub async fn folder_descriptions(root: String) -> Result<Vec<FolderDescription>,
                         .as_object()
                         .map(|map| map.iter().filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_string()))).collect())
                         .unwrap_or_default();
-                    let github = value["services"]
-                        .as_array()
-                        .is_some_and(|list| list.iter().any(|s| s["type"].as_str() == Some("github")));
+                    let has_service = |kind: &str| {
+                        value["services"].as_array().is_some_and(|list| list.iter().any(|s| s["type"].as_str() == Some(kind)))
+                    };
+                    let github = has_service("github");
+                    let acknowledge = has_service("acknowledge");
                     // A list locks each name for agents, as a map with "agents" does.
                     let read_only = match &value["readOnly"] {
                         serde_json::Value::Array(list) => {
@@ -274,6 +280,8 @@ pub async fn folder_descriptions(root: String) -> Result<Vec<FolderDescription>,
                         children,
                         github,
                         read_only,
+                        published_version: value["publishedVersion"].as_u64(),
+                        acknowledge,
                     });
                 }
             }

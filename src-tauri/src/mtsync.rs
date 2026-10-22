@@ -296,6 +296,49 @@ pub async fn mtsync_show(file: String, revision: String) -> Result<String, Strin
     Ok(out.stdout)
 }
 
+/// Published versions and read confirmations need mtsync 0.48.0. An older mtsync reads
+/// `policies FOLDER` as "sync space policies into FOLDER", so the version is checked first.
+const POLICIES_VERSION: (u32, u32, u32) = (0, 48, 0);
+
+async fn require_policies() -> Result<(), String> {
+    let out = run(None, vec!["version".into()]).await?;
+    match parse_version(&out.stdout) {
+        Some(v) if out.ok && v >= POLICIES_VERSION => Ok(()),
+        _ => Err("Published versions need mtsync 0.48.0 or later. Update mtsync and try again.".into()),
+    }
+}
+
+/// The published folders of the space synced at `folder`, and which files this person still has
+/// to read: `mtsync -json policies` as mtsync prints it (mtsync 0.48.0).
+#[tauri::command]
+pub async fn mtsync_policies(folder: String) -> Result<String, String> {
+    require_policies().await?;
+    let out = run(None, vec!["-json".into(), "policies".into(), folder]).await?;
+    if !out.ok {
+        return Err(out.message());
+    }
+    Ok(out.stdout)
+}
+
+/// Confirms that this person read `file` as published in `version` of its folder.
+#[tauri::command]
+pub async fn mtsync_ack(file: String, version: u32) -> Result<(), String> {
+    require_policies().await?;
+    let out = run(None, vec!["ack".into(), file, version.to_string()]).await?;
+    if out.ok { Ok(()) } else { Err(out.message()) }
+}
+
+/// Who has read what in the space synced at `folder` (needs read-write access).
+#[tauri::command]
+pub async fn mtsync_readers(folder: String) -> Result<String, String> {
+    require_policies().await?;
+    let out = run(None, vec!["-json".into(), "readers".into(), folder]).await?;
+    if !out.ok {
+        return Err(out.message());
+    }
+    Ok(out.stdout)
+}
+
 /// mtsync before 0.41.0 has no history or show; say so rather than echo its usage text.
 fn history_error(out: &Output) -> String {
     let all = format!("{}{}", out.stderr, out.stdout);
@@ -399,5 +442,7 @@ mod tests {
         assert_eq!(parse_version("mtsync 0.39.0"), Some((0, 39, 0)));
         assert!(parse_version("mtsync 0.37.1").unwrap() < MIN_VERSION);
         assert!(parse_version("mtsync v0.37.2").unwrap() >= MIN_VERSION);
+        assert!(parse_version("mtsync 0.47.3").unwrap() < POLICIES_VERSION);
+        assert!(parse_version("mtsync 0.48.0").unwrap() >= POLICIES_VERSION);
     }
 }

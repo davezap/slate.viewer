@@ -6,9 +6,11 @@
   import type { FolderDescription } from './space';
   import {
     SETTINGS_FILE, LOCK_KEYS, LOCK_KEY_LABELS, check, defaultSettingsText, effectiveLocks, effectiveSettings, folderChain,
-    frozenKeys, lockedBy, parentFolder, parseObject, stableJson, toObject, toSettings, toText,
+    frozenKeys, lockedBy, parentFolder, parseObject, stableJson, toObject, toSavedVersion, toSettings, toText,
     type FolderSettings, type LockKey, type LockLevel, type Problem, type PushMode, type SpaceContext,
   } from './folderSettings';
+  import { fetchReaders, type ReaderReport } from './policies';
+  import { formatWhen } from './history';
 
   interface Props {
     /** The space's local folder. */
@@ -28,12 +30,13 @@
 
   interface LoadedDocument { path: string; text: string; hasBom: boolean }
   interface FolderListing { files: string[]; emptyFolders: string[]; truncated: boolean }
-  type Page = 'general' | 'security' | 'connections' | 'automation' | 'file';
+  type Page = 'general' | 'security' | 'connections' | 'publishing' | 'automation' | 'file';
 
   const PAGES: { id: Page; title: string; about: string }[] = [
     { id: 'general', title: 'General', about: 'What the folder is for' },
     { id: 'security', title: 'Security', about: 'Read-only files and locks' },
     { id: 'connections', title: 'Connections', about: 'GitHub repository' },
+    { id: 'publishing', title: 'Publishing', about: 'Versions and who has read them' },
     { id: 'automation', title: 'Automation', about: 'Triggers and actions' },
     { id: 'file', title: 'Settings File', about: SETTINGS_FILE },
   ];
@@ -163,6 +166,47 @@
       : githubAround ? `This folder is inside ${githubAround}, which already mirrors a repository, and GitHub folders can't nest.`
       : null,
   );
+
+  // ---- Publishing ---------------------------------------------------------------------------------
+
+  /** The version published now (as saved), or null. */
+  const savedVersion = $derived(toSavedVersion(texts.get(folder) ?? null));
+  const nextVersion = $derived((savedVersion ?? 0) + 1);
+  const servicesWhy = $derived(space.space === 'public' ? 'Only your own spaces can track who has read the published files.' : null);
+
+  function setPublishing(on: boolean) {
+    if (!form) return;
+    form.publishedVersion = on ? savedVersion ?? 1 : null;
+  }
+
+  function setAcknowledge(on: boolean) {
+    if (!form) return;
+    form.acknowledge = on ? { files: [] } : null;
+  }
+
+  let readers = $state<ReaderReport | null>(null);
+  let readersError = $state('');
+  let readersLoading = $state(false);
+
+  async function loadReaders() {
+    readersLoading = true;
+    readersError = '';
+    try {
+      readers = await fetchReaders(root);
+    } catch (e) {
+      readersError = String(e);
+    } finally {
+      readersLoading = false;
+    }
+  }
+
+  /** The report's files in this folder (all of them when the space is synced under a prefix). */
+  const readerColumns = $derived.by(() => {
+    if (!readers) return [];
+    const all = readers.files.map((f, i) => ({ ...f, i }));
+    const here = all.filter(f => f.path.startsWith(folder));
+    return here.length ? here : all;
+  });
 
   // ---- Editing helpers --------------------------------------------------------------------------
 
@@ -454,6 +498,101 @@
               {#if lockNote('services')}<p class="lock-note">{lockNote('services')}</p>{/if}
             </section>
 
+          {:else if page === 'publishing'}
+            <section>
+              <h3>Published versions</h3>
+              <p class="hint">Publish this folder's files as numbered versions, like an official edition. Everyone opens the published text by default, and History marks it. Edits after it are a draft, visible to the space, until you publish the next version. A subfolder can publish on its own.</p>
+              <label class="check">
+                <input type="checkbox" checked={form.publishedVersion !== null} disabled={disabled('publishedVersion')} onchange={event => setPublishing(event.currentTarget.checked)} />
+                <span><b>This folder publishes versions</b></span>
+              </label>
+              {#if form.publishedVersion !== null}
+                <div class="card version">
+                  {#if savedVersion === null}
+                    <p>Saving publishes version {form.publishedVersion}: the folder's files as they are now.</p>
+                  {:else if form.publishedVersion === savedVersion}
+                    <p>Version <b>{savedVersion}</b> is published. Publishing the next version makes the files as they are now the official text.</p>
+                  {:else}
+                    <p>Saving publishes version <b>{form.publishedVersion}</b>: the folder's files as they are now. Version {savedVersion} is published until then.</p>
+                  {/if}
+                  <div class="buttons">
+                    <button class="small" disabled={disabled('publishedVersion') || form.publishedVersion === nextVersion} onclick={() => (form!.publishedVersion = nextVersion)}>Publish Version {nextVersion}</button>
+                    {#if savedVersion !== null && form.publishedVersion !== savedVersion}
+                      <button class="small" onclick={() => (form!.publishedVersion = savedVersion)}>Keep Version {savedVersion}</button>
+                    {/if}
+                  </div>
+                </div>
+                <p class="hint small-print">Save any edits to the files first, and let Metatrash Sync send them: a version is the files as the space has them when this setting arrives. The number only goes up. Agents can publish too when asked, unless the published version is locked for agents on the Security page.</p>
+              {/if}
+              {#if lockNote('publishedVersion')}<p class="lock-note">{lockNote('publishedVersion')}</p>{/if}
+            </section>
+
+            <section>
+              <h3>Ask people to confirm they've read them</h3>
+              <p class="hint">Everyone in the space sees a dot on each published file, and a count on Slate Viewer's taskbar button, until they open it and choose I Have Read This. A new version asks again for the files whose text changed. Metatrash keeps who confirmed what, and when.</p>
+              <label class="check">
+                <input type="checkbox" checked={form.acknowledge !== null} disabled={disabled('services') || (servicesWhy !== null && form.acknowledge === null)} onchange={event => setAcknowledge(event.currentTarget.checked)} />
+                <span><b>Ask everyone to confirm they've read the published files</b>
+                  {#if servicesWhy && form.acknowledge === null}<span class="hint">{servicesWhy}</span>{/if}
+                  {#if form.acknowledge && form.publishedVersion === null}<span class="hint">Nobody is asked until the folder publishes a version.</span>{/if}
+                </span>
+              </label>
+              {#if form.acknowledge}
+                <h4>Which files</h4>
+                <div class="choice">
+                  <label><input type="radio" name="ack-files" checked={form.acknowledge.files.length === 0} disabled={disabled('services')} onchange={() => (form!.acknowledge!.files = [])} /> Every Markdown file (.md) in this folder and its subfolders</label>
+                  <label><input type="radio" name="ack-files" checked={form.acknowledge.files.length > 0} disabled={disabled('services')} onchange={() => (form!.acknowledge!.files = [''])} /> Only these</label>
+                </div>
+                {#if form.acknowledge.files.length}
+                  {#each form.acknowledge.files as _, i (i)}
+                    <div class="pair">
+                      <input class="name wide" list="folder-entries" bind:value={form.acknowledge.files[i]} placeholder="leave.md, *.md or hr/" spellcheck="false" disabled={disabled('services')} />
+                      <button class="remove" aria-label="Remove" title="Remove" disabled={disabled('services') || form.acknowledge.files.length === 1} onclick={() => form!.acknowledge!.files.splice(i, 1)}>×</button>
+                    </div>
+                    <p class="matches">{previewMatches(form.acknowledge.files[i]).replace(/^Locks /, 'Asks for ')}</p>
+                  {/each}
+                  <datalist id="folder-entries">{#each entries as e (e)}<option value={e}></option>{/each}</datalist>
+                  <button class="small" disabled={disabled('services')} onclick={() => form!.acknowledge!.files.push('')}>Add a File</button>
+                {/if}
+              {/if}
+              {#if lockNote('services')}<p class="lock-note">{lockNote('services')}</p>{/if}
+            </section>
+
+            {#if toSettings(original).acknowledge && savedVersion !== null}
+              <section>
+                <h3>Who has read them</h3>
+                <p class="hint">Everyone in the space, and which published files each still has to read. Needs read-write access to the space.</p>
+                {#if readersError}<p class="problem">{readersError}</p>{/if}
+                {#if readers}
+                  {#if !readerColumns.length}
+                    <p class="hint">No published files to read yet.</p>
+                  {:else}
+                    <table class="readers">
+                      <tbody>
+                        {#each readers.people as person (person.name)}
+                          {@const missing = readerColumns.filter(f => person.files[f.i]?.status !== 'read')}
+                          <tr>
+                            <th>{person.name}</th>
+                            <td>
+                              {#if !missing.length}
+                                <span class="all-read">All read</span>
+                              {:else}
+                                {#each missing as f (f.id)}
+                                  {@const st = person.files[f.i]}
+                                  <span class="to-read" title={st?.acknowledged ? `Read version ${st.acknowledged.version} on ${formatWhen(st.acknowledged.timestamp)}` : 'Not read yet'}>{f.path.slice(folder.length)}{st?.status === 'older' ? ' (read an older version)' : ''}</span>
+                                {/each}
+                              {/if}
+                            </td>
+                          </tr>
+                        {/each}
+                      </tbody>
+                    </table>
+                  {/if}
+                {/if}
+                <button class="small" disabled={readersLoading} onclick={() => void loadReaders()}>{readersLoading ? 'Asking Metatrash…' : readers ? 'Refresh' : 'Show Who Has Read Them'}</button>
+              </section>
+            {/if}
+
           {:else if page === 'automation'}
             <section>
               <h3>Triggers and actions</h3>
@@ -463,6 +602,7 @@
                 <ul class="levels">
                   <li>Every folder gets an AGENTS.md and a {SETTINGS_FILE} when it gets its first file, and loses them with its last one.</li>
                   <li>Metatrash Sync keeps this folder and the space in step, both ways.</li>
+                  {#if form.publishedVersion !== null}<li>Version {form.publishedVersion} of this folder's files is what people open by default{form.acknowledge ? ', and everyone is asked to confirm they read it' : ''} (Publishing).</li>{/if}
                   {#if form.github}<li>Pushing to GitHub: {PUSH_MODES.find(m => m.mode === (form!.github!.push || 'agent'))!.title.toLowerCase()} (Connections).</li>{/if}
                 </ul>
               </div>
@@ -581,6 +721,13 @@
   .locks select { width: 100%; }
   .fixed { display: inline-block; padding-top: 6px; color: var(--side-muted); }
   .levels { margin: 4px 0 8px; padding-left: 18px; color: var(--side-muted); }
+  .version { margin-top: 8px; }
+  table.readers { width: 100%; border-collapse: collapse; margin: 6px 0 10px; }
+  .readers th, .readers td { padding: 5px 4px; border-top: 1px solid var(--side-border); text-align: left; vertical-align: top; }
+  .readers th { width: 160px; font-weight: 600; }
+  .readers .to-read { display: inline-block; margin: 0 6px 2px 0; padding: 0 6px; border-radius: 9px; font-size: 12px; color: #8f2318; background: #fbe4e1; }
+  :global([data-theme="dark"]) .readers .to-read { color: #ffb4a8; background: #4a2420; }
+  .readers .all-read { color: var(--side-muted); }
   .levels li { margin-bottom: 3px; }
   footer { display: flex; gap: 8px; align-items: center; padding: 10px 16px 12px 20px; border-top: 1px solid var(--side-border); }
   .footer-note { font-size: 12px; color: var(--side-muted); }

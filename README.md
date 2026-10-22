@@ -280,6 +280,17 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
   with inherited ones). It checks the same rules Metatrash does (lengths, names, patterns, no nested GitHub folders, locks
   for everyone, inherited ones included) before saving, so a change is never quietly refused by Sync. Keys left alone keep
   how they were written. Read-only spaces show the settings without Save. Logic: `src/lib/folderSettings.ts`.
+- **Published versions and read tracking** (Metatrash 0.48.0 and mtsync 0.48.0). A folder whose `.metatrash.json` sets
+  `"publishedVersion"` has an official version: its files as they were when the number was last raised. Publish a folder
+  from its right-click menu (**Publish Version N…**) or its Properties (**Publishing**); unsaved edits are saved and synced
+  first. Everyone opens a file's published text by default, read only, with a bar above it naming the version; files changed
+  since show **Show Draft** (and **Show Published Version** to go back). History marks each published text **Published vN**.
+  With **Ask everyone to confirm they've read the published files** (an `acknowledge` service), each published file a person
+  hasn't confirmed shows a red dot in Files (folders holding one too), the bar asks them to read it and choose
+  **I Have Read This**, the status chip says how many are left, and Slate Viewer's taskbar button shows the count as a red
+  number. A new version asks again only for files whose text changed. Properties > Publishing also shows who has read what
+  (read-write access). The app reads this with `mtsync policies`, `mtsync ack` and `mtsync readers` (`src/lib/policies.ts`,
+  `PolicyBanner.svelte`; the taskbar number is drawn in `src-tauri/src/attention.rs`).
 
 ### Documents
 
@@ -337,7 +348,7 @@ src/App.svelte       menu, file handling, link handling, Slate mount
 src/lib/             icon bar and sidebar sections, folder Properties (FolderProperties.svelte, folderSettings.ts), Go to File, wiki-link resolving, paths, line endings, recent lists, preferences
 src-tauri/src/       Rust: windows, single instance, file read/write, attachments, file and folder
                      watching, folder listing and search, rename/move/delete/new folder (files.rs),
-                     mtsync commands (mtsync.rs), fault log (applog.rs)
+                     mtsync commands (mtsync.rs), taskbar count (attention.rs), fault log (applog.rs)
 ```
 
 To update Slate, run `npm run build` in the Slate repository, then copy its `slate.js`, `slate.css`, `slate-editor.d.ts`,

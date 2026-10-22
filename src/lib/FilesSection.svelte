@@ -46,12 +46,16 @@
     onDelete?: (path: string, folder: boolean) => void;
     /** Opens a folder's Properties (its .metatrash.json settings); "" is the top of the space. Spaces only. */
     onProperties?: (folder: string) => void;
+    /** Files (relative) the person still has to read: published, and not confirmed yet. */
+    unread?: string[];
+    /** Publishes the next version of a folder ("" for the top of the space). Spaces only. */
+    onPublish?: (folder: string) => void;
   }
 
   let {
     root, files, truncated, current, recentFolders, rootKind = 'folder', onOpen, onCreate, onCloseFolder, onChooseFolder, onOpenFolder,
     descriptions = [], reveal = null, onOpenSpace, emptyFolders = [], editable = true, locked = [],
-    onCreateFolder, onRename, onMove, onDuplicate, onDelete, onProperties,
+    onCreateFolder, onRename, onMove, onDuplicate, onDelete, onProperties, unread = [], onPublish,
   }: Props = $props();
 
   // ---- Space descriptions ------------------------------------------------------
@@ -69,6 +73,13 @@
   }
 
   const isGithub = (path: string) => described.get(path + '/')?.github === true;
+  /** The published version of a folder (relative, no trailing slash; "" for the top), or null. */
+  const publishedVersion = (path: string) => described.get(path ? path + '/' : '')?.publishedVersion ?? null;
+
+  // ---- Files still to read (published, not confirmed) --------------------------------
+
+  const unreadSet = $derived(new Set(unread));
+  const unreadIn = (folder: string) => unread.filter(f => f.startsWith(folder + '/')).length;
 
   // ---- Tree ------------------------------------------------------------------
 
@@ -354,6 +365,12 @@
       items.push({ text: revealLabel, action: () => void revealItemInDir(target).catch(console.error) });
       items.push({ text: 'Copy &Path', action: () => void navigator.clipboard.writeText(target).catch(console.error) });
     }
+    if (editable && onPublish && (!node || node.folder)) {
+      const which = node ? node.path : '';
+      const version = publishedVersion(which);
+      separate();
+      items.push({ text: version ? `&Publish Version ${version + 1}…` : 'P&ublish This Folder…', action: () => onPublish(which) });
+    }
     if (onProperties && (!node || node.folder)) {
       separate();
       const which = node ? node.path : '';
@@ -461,6 +478,8 @@
                 >
                   <span class="twisty" class:open={expanded.has(node.path)}>›</span>{node.name}
                   {#if isGithub(node.path)}<span class="badge" title="Mirrors a GitHub repository">GitHub</span>{/if}
+                  {#if publishedVersion(node.path)}<span class="badge published" title="Publishes its files as versions: version {publishedVersion(node.path)} is the official one">v{publishedVersion(node.path)}</span>{/if}
+                  {#if unreadIn(node.path)}<span class="unread" title="{unreadIn(node.path)} published {unreadIn(node.path) === 1 ? 'file' : 'files'} to read in here">●</span>{/if}
                 </button>
                 {#if expanded.has(node.path)}
                   <ul>{@render branch(node.children, depth + 1)}</ul>
@@ -473,7 +492,8 @@
                   class:conflict={conflictOriginal(node.name) !== null}
                   class:hidden-file={isHiddenFile(node.path)}
                   class:dragged={dragging?.path === node.path}
-                  title={fileTitle(node)}
+                  class:to-read={unreadSet.has(node.path)}
+                  title={unreadSet.has(node.path) ? `${fileTitle(node)}\nPublished, and you haven't confirmed reading it yet.` : fileTitle(node)}
                   draggable={canChange(node) && !!onMove}
                   onclick={event => onOpen(node.path, { newWindow: isNewWindowClick(event) })}
                   onauxclick={event => { if (event.button === 1) onOpen(node.path, { newWindow: true }); }}
@@ -483,7 +503,7 @@
                   ondragend={onDragEnd}
                   ondragover={event => onDragOver(event, parentOf(node.path))}
                   ondrop={event => void onDrop(event)}
-                >{#if conflictOriginal(node.name) !== null}<span class="warn">⚠</span>{/if}{isHiddenFile(node.path) ? node.name : displayName(node.name)}</button>
+                >{#if unreadSet.has(node.path)}<span class="unread before" aria-label="To read">●</span>{/if}{#if conflictOriginal(node.name) !== null}<span class="warn">⚠</span>{/if}{isHiddenFile(node.path) ? node.name : displayName(node.name)}</button>
               {/if}
             </li>
           {/each}
@@ -528,6 +548,11 @@
     margin-left: 6px; padding: 0 5px; font-size: 10px; border-radius: 3px;
     color: var(--side-muted); border: 1px solid var(--side-border);
   }
+  .badge.published { color: var(--side-accent); border-color: var(--side-accent); }
+  /* A published file still to read, and the folders holding one. */
+  .unread { margin-left: 6px; font-size: 9px; vertical-align: 1px; color: #d93025; }
+  .unread.before { margin: 0 5px 0 -12px; }
+  .row.file.to-read { font-weight: 600; }
   .row.conflict { color: #b26a00; }
   .warn { margin-right: 4px; }
   .open-folder.secondary, :global([data-theme="dark"]) .open-folder.secondary { color: var(--side-fg); background: var(--side-hover); }

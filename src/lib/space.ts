@@ -114,6 +114,10 @@ export interface FolderDescription {
   github: boolean;
   /** Locked files: a name, pattern (`*.pdf`) or subfolder (`archive/`) to "agents" or "everyone". */
   readOnly: Record<string, string>;
+  /** The folder's published version (`publishedVersion`, Metatrash 0.48.0), or null when it doesn't publish. */
+  publishedVersion?: number | null;
+  /** People are asked to confirm they read the published files (an acknowledge service). */
+  acknowledge?: boolean;
 }
 
 /** A Go path.Match pattern (`*`, `?`, `[a-z]`, `\\` escapes) as a regular expression. */

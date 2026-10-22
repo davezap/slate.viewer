@@ -2,12 +2,13 @@
 // dialog can edit and written back. The rules mirror Metatrash's own checks (folder_config.go and
 // locks.go, 0.46.0+), so a change Metatrash would refuse is caught here instead of failing quietly
 // in Metatrash Sync. Writes from Slate Viewer go through Sync, so Metatrash counts them as a person's.
+// Publishing (publishedVersion and the acknowledge service) follows Metatrash 0.48.0.
 
 export const SETTINGS_FILE = '.metatrash.json';
 
 export type LockLevel = '' | 'agents' | 'everyone';
-export type LockKey = 'purpose' | 'children' | 'services' | 'inherit' | 'readOnly' | 'locked';
-export const LOCK_KEYS: LockKey[] = ['purpose', 'children', 'readOnly', 'services', 'inherit', 'locked'];
+export type LockKey = 'purpose' | 'children' | 'services' | 'inherit' | 'readOnly' | 'publishedVersion' | 'locked';
+export const LOCK_KEYS: LockKey[] = ['purpose', 'children', 'readOnly', 'services', 'publishedVersion', 'inherit', 'locked'];
 export type PushMode = 'agent' | 'auto' | 'review';
 
 /** What each lockable key is, in the dialog's words. */
@@ -15,7 +16,8 @@ export const LOCK_KEY_LABELS: Record<LockKey, { title: string; about: string }> 
   purpose: { title: 'Folder summary', about: 'The short summary on the General page.' },
   children: { title: 'File and subfolder descriptions', about: 'The descriptions on the General page.' },
   readOnly: { title: 'Read-only files', about: 'Which files are locked (the list above).' },
-  services: { title: 'Connections', about: 'The GitHub repository this folder mirrors.' },
+  services: { title: 'Connections and read tracking', about: 'The GitHub repository, and asking people to confirm they read the published files.' },
+  publishedVersion: { title: 'Published version', about: 'Who can publish a new version of this folder.' },
   inherit: { title: 'Use the parent folder\'s settings', about: 'Whether this folder takes its parent\'s settings.' },
   locked: { title: 'This list of locked settings', about: 'Agents can never change it; people always can, so every lock can be lifted.' },
 };
@@ -24,13 +26,17 @@ const MAX_PURPOSE = 2000;
 const MAX_CHILDREN = 200;
 const MAX_CHILD_TEXT = 1000;
 const MAX_LOCKS = 200;
-const KNOWN_KEYS = ['inherit', 'purpose', 'children', 'locked', 'readOnly', 'services', 'actions'];
+const KNOWN_KEYS = ['inherit', 'purpose', 'children', 'locked', 'readOnly', 'publishedVersion', 'services', 'actions'];
+export const MAX_PUBLISHED_VERSION = 1_000_000;
+const MAX_ACKNOWLEDGE_FILES = 50;
 
 const CHILD_NAME = /^[A-Za-z0-9._][A-Za-z0-9._-]*\/?$/;
 const GITHUB_REPO = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
 const GIT_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/;
 
 export interface GithubService { repo: string; branch: string; push: PushMode | ''; pull: string }
+/** Asks everyone in the space to confirm they read the published files: `files` empty means every .md file. */
+export interface AcknowledgeService { files: string[] }
 
 /** The editable form of one folder's settings. Empty text or lists mean "not set". */
 export interface FolderSettings {
@@ -42,6 +48,9 @@ export interface FolderSettings {
   locked: Record<LockKey, LockLevel>;
   readOnly: { name: string; level: 'agents' | 'everyone' }[];
   github: GithubService | null;
+  /** The published version, or null when the folder doesn't publish. Publishing raises it. */
+  publishedVersion: number | null;
+  acknowledge: AcknowledgeService | null;
 }
 
 /** One folder's settings file: `folder` is "" for the root or "notes/" style. */
@@ -98,7 +107,7 @@ export function lockMap(value: unknown): Record<string, string> {
   return {};
 }
 
-const emptyLocks = (): Record<LockKey, LockLevel> => ({ purpose: '', children: '', services: '', inherit: '', readOnly: '', locked: '' });
+const emptyLocks = (): Record<LockKey, LockLevel> => ({ purpose: '', children: '', services: '', inherit: '', readOnly: '', publishedVersion: '', locked: '' });
 
 /** The form for a settings object. */
 export function toSettings(raw: Record<string, unknown>): FolderSettings {
@@ -113,6 +122,7 @@ export function toSettings(raw: Record<string, unknown>): FolderSettings {
     .map(([name, level]) => ({ name, level: level === 'everyone' ? 'everyone' as const : 'agents' as const }));
   const services = Array.isArray(raw.services) ? raw.services as Record<string, unknown>[] : [];
   const gh = services.find(s => s && s.type === 'github');
+  const ack = services.find(s => s && s.type === 'acknowledge');
   return {
     inherit: raw.inherit === true,
     purpose: typeof raw.purpose === 'string' ? raw.purpose : '',
@@ -123,6 +133,8 @@ export function toSettings(raw: Record<string, unknown>): FolderSettings {
     github: gh
       ? { repo: String(gh.repo ?? ''), branch: String(gh.branch ?? ''), push: (['agent', 'auto', 'review'].includes(String(gh.push)) ? gh.push : '') as PushMode | '', pull: String(gh.pull ?? '') }
       : null,
+    publishedVersion: typeof raw.publishedVersion === 'number' ? raw.publishedVersion : null,
+    acknowledge: ack ? { files: Array.isArray(ack.files) ? (ack.files as unknown[]).map(String) : [] } : null,
   };
 }
 
@@ -139,13 +151,20 @@ function keyValues(s: FolderSettings, isRoot: boolean): Record<string, unknown> 
   if (!inheritsLocks && (locks.length || (s.inherit && !isRoot))) out.locked = Object.fromEntries(locks);
   const readOnly = s.readOnly.filter(r => r.name.trim());
   if (readOnly.length) out.readOnly = Object.fromEntries(readOnly.map(r => [r.name.trim(), r.level]));
+  const services: Record<string, unknown>[] = [];
   if (s.github) {
     const svc: Record<string, string> = { type: 'github', repo: s.github.repo.trim() };
     if (s.github.branch.trim()) svc.branch = s.github.branch.trim();
     if (s.github.push) svc.push = s.github.push;
     if (s.github.pull) svc.pull = s.github.pull;
-    out.services = [svc];
+    services.push(svc);
   }
+  if (s.acknowledge) {
+    const files = s.acknowledge.files.map(f => f.trim()).filter(Boolean);
+    services.push(files.length ? { type: 'acknowledge', files } : { type: 'acknowledge' });
+  }
+  if (services.length) out.services = services;
+  if (s.publishedVersion !== null) out.publishedVersion = s.publishedVersion;
   return out;
 }
 
@@ -167,7 +186,7 @@ export function toObject(s: FolderSettings, original: Record<string, unknown>, i
     if (!(key in values)) continue;
     out[key] = comparable(key, values[key]) === comparable(key, original[key]) ? original[key] : values[key];
   }
-  for (const key of ['inherit', 'purpose', 'children', 'locked', 'readOnly', 'services']) {
+  for (const key of ['inherit', 'purpose', 'children', 'locked', 'readOnly', 'publishedVersion', 'services']) {
     if (key in values && !(key in out)) out[key] = values[key];
   }
   return out;
@@ -191,7 +210,7 @@ export interface Effective { keys: Record<string, string>; from: Record<string, 
 /**
  * A folder's settings with inherited ones filled in, as Metatrash's effectiveSettings: `texts` maps
  * a folder to its settings text (missing folders start as Metatrash makes them). Services,
- * readOnly and inherit itself are never inherited.
+ * readOnly, publishedVersion and inherit itself are never inherited.
  */
 export function effectiveSettings(texts: Map<string, string | null>, folder: string): Effective {
   const own = texts.get(folder) ?? defaultSettingsText(folder);
@@ -200,7 +219,7 @@ export function effectiveSettings(texts: Map<string, string | null>, folder: str
   if (folder === '' || keys.inherit !== 'true') return { keys, from };
   const parent = effectiveSettings(texts, parentFolder(folder));
   for (const [k, v] of Object.entries(parent.keys)) {
-    if (!(k in keys) && k !== 'services' && k !== 'readOnly' && k !== 'inherit') {
+    if (!(k in keys) && k !== 'services' && k !== 'readOnly' && k !== 'publishedVersion' && k !== 'inherit') {
       keys[k] = v;
       from[k] = parent.from[k];
     }
@@ -289,7 +308,7 @@ export interface SpaceContext {
 }
 
 /** One problem with the form, and the dialog page it is on. */
-export interface Problem { page: 'general' | 'security' | 'connections'; text: string }
+export interface Problem { page: 'general' | 'security' | 'connections' | 'publishing'; text: string }
 
 const hasDotName = (path: string) => path.split('/').some((seg, i, all) => seg.startsWith('.') && !(i === all.length - 1 && seg === SETTINGS_FILE));
 
@@ -345,6 +364,24 @@ export function check(s: FolderSettings, text: string, folder: string, ctx: Spac
     if (dotted) problems.push({ page: 'connections', text: `This folder holds ${dotted}. Names starting with a dot are allowed only in GitHub folders, so move or delete such files before removing the repository.` });
   }
 
+  if (s.publishedVersion !== null) {
+    const v = s.publishedVersion;
+    const saved = toSavedVersion(ctx.texts.get(folder) ?? null);
+    if (!Number.isInteger(v) || v < 1 || v > MAX_PUBLISHED_VERSION) problems.push({ page: 'publishing', text: `The published version should be a whole number from 1 to ${MAX_PUBLISHED_VERSION}.` });
+    else if (saved !== null && v < saved) problems.push({ page: 'publishing', text: `The published version only goes up: it is ${saved}, so publish the next version as ${saved + 1}.` });
+  }
+  if (s.acknowledge) {
+    if (ctx.publicSpace) problems.push({ page: 'publishing', text: 'Only your own spaces can track who has read the published files.' });
+    const files = s.acknowledge.files.map(f => f.trim()).filter(Boolean);
+    if (files.length > MAX_ACKNOWLEDGE_FILES) problems.push({ page: 'publishing', text: `There are ${files.length} files to read; ${MAX_ACKNOWLEDGE_FILES} entries is the most.` });
+    for (const entry of files) {
+      const name = entry.replace(/\/$/, '');
+      if (!name || entry.length > 240 || name.includes('/') || name.includes('\\') || name === '.' || name === '..' || badPattern(name)) {
+        problems.push({ page: 'publishing', text: `"${entry}" should be one file name or pattern in this folder (leave.md, *.md) or a subfolder ending in / (hr/).` });
+      }
+    }
+  }
+
   // Locks for everyone guard the values the folder sees, inherited ones included.
   const after = new Map(ctx.texts);
   after.set(folder, text);
@@ -354,11 +391,35 @@ export function check(s: FolderSettings, text: string, folder: string, ctx: Spac
     if (before.keys[key] === now.keys[key]) continue;
     const label = key in LOCK_KEY_LABELS ? LOCK_KEY_LABELS[key as LockKey].title : key;
     problems.push({
-      page: key === 'services' ? 'connections' : key === 'readOnly' || key === 'inherit' ? 'security' : 'general',
+      page: key === 'services' ? 'connections' : key === 'publishedVersion' ? 'publishing' : key === 'readOnly' || key === 'inherit' ? 'security' : 'general',
       text: where === folder
         ? `"${label}" is locked for everyone, so it can't change. Set its lock to Unlocked or Agents on the Security page, save, and change it once that has synced.`
         : `"${label}" is locked for everyone by ${where || 'the top of the space'}, so this folder can't change it. Lift the lock in that folder's properties first.`,
     });
   }
   return problems;
+}
+
+/** The publishedVersion of a settings text as saved, or null. */
+export function toSavedVersion(text: string | null): number | null {
+  const raw = text === null ? null : parseObject(text);
+  return raw && typeof raw === 'object' && typeof raw.publishedVersion === 'number' ? raw.publishedVersion : null;
+}
+
+/**
+ * The settings text with the next version published (`publishedVersion` one higher, or 1), and
+ * optionally an acknowledge service added; every other key stays exactly as it was. Throws when
+ * the file isn't valid settings.
+ */
+export function publishText(text: string | null, folder: string, askToRead: boolean): string {
+  const raw = parseObject(text ?? defaultSettingsText(folder));
+  if (typeof raw === 'string') throw new Error(`${folder}${SETTINGS_FILE} can't be read as settings. ${raw}`);
+  const current = typeof raw.publishedVersion === 'number' ? raw.publishedVersion : 0;
+  const out: Record<string, unknown> = { ...raw, publishedVersion: current + 1 };
+  if (askToRead) {
+    const services = Array.isArray(raw.services) ? [...raw.services as Record<string, unknown>[]] : [];
+    if (!services.some(s => s && s.type === 'acknowledge')) services.push({ type: 'acknowledge' });
+    out.services = services;
+  }
+  return toText(out);
 }

@@ -54,7 +54,7 @@
     <p class="note error">{error}</p>
     <button class="more" type="button" onclick={() => void load(file)}>Try Again</button>
   {:else}
-    <p class="hint">Pick a version to compare it with the document. Use its parts, or all of it, then save.</p>
+    <p class="hint">Pick a version to compare it with the document. Use its parts, or all of it, then save.{#if entries.some(e => e.published?.length)} Published versions are marked; the changes above the newest one are a draft.{/if}</p>
     <ul>
       {#each entries as entry, i (entry.revision + i)}
         {@const unavailable = entry.operation === 'delete' || !entry.file}
@@ -68,7 +68,16 @@
               : `${entry.path} · ${entry.revision.slice(0, 12)}`}
             onclick={() => onCompare(entry)}
           >
-            <span class="when">{formatWhen(entry.timestamp)}</span>
+            <span class="when">
+              {formatWhen(entry.timestamp)}
+              {#if entry.published?.length}
+                {@const versions = entry.published.join(', ')}
+                <span class="published" title="The official text of version {versions}: what people were asked to read">
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5l1.6 1.2 2-.1.6 1.9 1.6 1.2-.6 1.9.6 1.9-1.6 1.2-.6 1.9-2-.1L8 14.5l-1.6-1.2-2 .1-.6-1.9-1.6-1.2.6-1.9-.6-1.9 1.6-1.2.6-1.9 2 .1z" /><path d="M5.6 8.1l1.6 1.6 3.2-3.3" /></svg>
+                  Published v{versions}
+                </span>
+              {/if}
+            </span>
             <span class="what">
               {describeOperation(entry, entries[i + 1]?.path ?? null)}
               {#if i === 0}<em>· latest in space</em>{/if}
@@ -104,7 +113,12 @@
   li button:hover:not(:disabled) { background: var(--side-hover); }
   li button.current { background: var(--side-accent-soft); border-left-color: var(--side-accent); }
   li button:disabled { cursor: default; opacity: .55; }
-  .when { font-weight: 600; }
+  .when { font-weight: 600; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; }
+  .published {
+    display: inline-flex; align-items: center; gap: 3px; padding: 0 6px 0 3px; border-radius: 9px;
+    font-size: 11px; font-weight: 600; color: var(--side-accent); background: var(--side-accent-soft);
+  }
+  .published svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.2; stroke-linejoin: round; stroke-linecap: round; }
   .what { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .what em { font-style: normal; color: var(--side-muted); }
   .ago { font-size: 12px; color: var(--side-muted); }

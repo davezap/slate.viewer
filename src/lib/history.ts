@@ -14,6 +14,8 @@ export interface HistoryEntry {
   file?: string;
   /** Who made the change (Metatrash 0.47.0 and mtsync 0.47.0; absent on older changes). */
   by?: ChangeAuthor;
+  /** The folder versions that published this text (Metatrash 0.48.0); absent for drafts. */
+  published?: number[];
 }
 
 /** An account name, the app it worked through, and whether a person or an agent made the change. */

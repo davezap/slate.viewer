@@ -1,4 +1,5 @@
 mod applog;
+mod attention;
 mod documents;
 mod files;
 mod mtsync;
@@ -183,6 +184,10 @@ pub fn run() {
             mtsync::mtsync_log,
             mtsync::mtsync_history,
             mtsync::mtsync_show,
+            mtsync::mtsync_policies,
+            mtsync::mtsync_ack,
+            mtsync::mtsync_readers,
+            attention::set_attention_badge,
             mtsync::mtsync_login,
             mtsync::mtsync_cancel_login,
             updates::mtsync_setup,

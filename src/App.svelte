@@ -38,6 +38,9 @@
   import HistoryPanel from './lib/HistoryPanel.svelte';
   import { revisionText, versionLabel, type HistoryEntry } from './lib/history';
   import { lastSession, saveSession, placeView, savePlaceView, type PlaceView } from './lib/session';
+  import PolicyBanner from './lib/PolicyBanner.svelte';
+  import { acknowledge, fetchPolicies, outstandingFiles, policyFor, setAttentionBadge, type Policies } from './lib/policies';
+  import { SETTINGS_FILE, folderChain, frozenKeys, publishText, toSavedVersion } from './lib/folderSettings';
 
   interface LoadedDocument { path: string; text: string; hasBom: boolean }
   interface FolderListing { files: string[]; emptyFolders: string[]; truncated: boolean }
@@ -159,6 +162,7 @@
   }
 
   function setDocument(doc: LoadedDocument) {
+    publishedView = null;
     path = doc.path;
     format = detectFormat(doc.text, doc.hasBom);
     diskText = doc.text;
@@ -182,6 +186,7 @@
       recent = recentFileList.list();
       rememberSession();
       void offerConflictResolve();
+      void syncPublishedView();
     } catch (error) {
       recentFileList.forget(target);
       recent = recentFileList.list();
@@ -428,6 +433,7 @@
     emptyFolders = [];
     openedSpace = null;
     descriptions = [];
+    policies = null;
     propertiesFor = null;
     quickOpen = false;
     invoke('watch_folder', { root: null }).catch(console.error);
@@ -469,7 +475,7 @@
       emptyFolders = listing.emptyFolders;
       folderTruncated = listing.truncated;
       // Settings can change with any sync (or a save from Properties).
-      if (openedSpace) void loadDescriptions();
+      if (openedSpace) { void loadDescriptions(); schedulePolicies(); }
       void offerConflictResolve();
     } catch {
       // The folder itself went away.
@@ -1012,6 +1018,12 @@
     }
     if (watched !== path) return;
     missingOnDisk = false;
+    if (publishedView?.path === watched) {
+      // The published text stays on screen; the change may be a new version, so ask Metatrash.
+      diskText = doc.text;
+      schedulePolicies(1000);
+      return;
+    }
 
     const current = editor.getMarkdown();
     if (doc.text === toFileText(current, format) && doc.hasBom === format.hasBom) {
@@ -1203,6 +1215,200 @@
     if (scroller) scroller.scrollTop = scrollTop;
   }
 
+  // ---- Published versions and read confirmations (Metatrash 0.48.0) ------------------
+
+  /** The space's published folders and what this person still has to read, from mtsync. */
+  let policies = $state<Policies | null>(null);
+  /** Why they couldn't be read (mtsync too old, signed out), shown on files in a publishing folder. */
+  let policiesProblem = $state<string | null>(null);
+  /** The open file shows its published text rather than the file on disk. */
+  let publishedView = $state<{ path: string; version: number; revision: string } | null>(null);
+  /** Files whose draft the person chose to see in this window. */
+  const draftChosen = new Set<string>();
+  let confirming = $state(false);
+  let policiesTimer: ReturnType<typeof setTimeout> | undefined;
+  let policiesRequest = 0;
+  let publishedRequest = 0;
+
+  const unreadFiles = $derived(outstandingFiles(policies));
+  const currentPolicy = $derived(currentRelative !== null && !isSpaceFolderFile(currentRelative) ? policyFor(policies, currentRelative) : null);
+  /** A publishing folder (by its settings) holds the open file, but mtsync couldn't say more. */
+  const policyNotice = $derived.by(() => {
+    if (!policiesProblem || policies || currentRelative === null || isSpaceFolderFile(currentRelative)) return null;
+    const rel = currentRelative;
+    return descriptions.some(d => d.publishedVersion && rel.startsWith(d.folder)) ? policiesProblem : null;
+  });
+
+  async function loadPolicies() {
+    clearTimeout(policiesTimer);
+    const space = openedSpace;
+    if (!space) return;
+    const request = ++policiesRequest;
+    try {
+      const found = await fetchPolicies(space.folder);
+      if (request !== policiesRequest || openedSpace?.folder !== space.folder) return;
+      policies = found;
+      policiesProblem = null;
+    } catch (error) {
+      if (request !== policiesRequest || openedSpace?.folder !== space.folder) return;
+      // Keep what was known (offline for a moment); an older mtsync or server just has none.
+      policiesProblem = String(error);
+    }
+    await syncPublishedView();
+  }
+
+  /** Asks again shortly, once a burst of changes (a sync pass) has settled. */
+  function schedulePolicies(delay = 3000) {
+    if (!openedSpace) return;
+    clearTimeout(policiesTimer);
+    policiesTimer = setTimeout(() => void loadPolicies(), delay);
+  }
+
+  // Published versions can change without a file changing here (someone confirms, a new member).
+  $effect(() => {
+    if (!openedSpace?.folder) return;
+    const timer = setInterval(() => void loadPolicies(), 5 * 60_000);
+    return () => clearInterval(timer);
+  });
+
+  // The red number on the taskbar button: published files this person still has to read.
+  $effect(() => {
+    void setAttentionBadge(policies?.outstanding ?? 0).catch(() => {});
+  });
+
+  /**
+   * Shows the open file's published text when it has a draft (unless the person chose the draft),
+   * and goes back to the file when it no longer has one.
+   */
+  async function syncPublishedView() {
+    if (!editor || !path) return;
+    const target = path;
+    const found = currentPolicy;
+    const file = found?.file;
+    const want = !!(found && file?.draft && file.publishedFile && !draftChosen.has(target));
+    const showing = publishedView?.path === target ? publishedView : null;
+    if (showing && want && showing.revision === found!.folder.revision) return;
+    if (showing && !want) { await showFileOnDisk(); return; }
+    if (!want || dirty) return;
+    const request = ++publishedRequest;
+    let text: string;
+    try {
+      text = await invoke<string>('mtsync_show', { file: file!.publishedFile, revision: found!.folder.revision });
+    } catch (error) {
+      logFault('published', String(error));
+      return;
+    }
+    if (request !== publishedRequest || path !== target || dirty) return;
+    publishedView = { path: target, version: found!.folder.version, revision: found!.folder.revision };
+    await editor.setMarkdown(text);
+    baseline = editor.getMarkdown();
+    dirty = false;
+  }
+
+  /** Back from the published text to the file as it is now. */
+  async function showFileOnDisk() {
+    if (!path) return;
+    const target = path;
+    try {
+      const doc = await invoke<LoadedDocument>('read_document', { path: target });
+      if (path === target) await reloadFrom(doc);
+    } catch (error) {
+      await showError(error);
+    }
+  }
+
+  async function showDraft() {
+    if (!path) return;
+    draftChosen.add(path);
+    await showFileOnDisk();
+  }
+
+  async function showPublished() {
+    if (!path) return;
+    if (dirty) {
+      await message('Save or undo your changes first, then show the published version.', { title: 'Slate Viewer', kind: 'info' });
+      return;
+    }
+    draftChosen.delete(path);
+    await syncPublishedView();
+  }
+
+  /** I Have Read This: Metatrash records that this person read the published text. */
+  async function confirmRead() {
+    const found = currentPolicy;
+    if (!found?.file || !path || confirming) return;
+    confirming = true;
+    try {
+      await acknowledge(found.file.file ?? path, found.folder.version);
+      await loadPolicies();
+    } catch (error) {
+      await loadPolicies();
+      await showError(error);
+    } finally {
+      confirming = false;
+    }
+  }
+
+  /** Waits (up to about 40 s) for mtsync to send this window's saves to the space. */
+  async function waitForSync() {
+    for (let i = 0; i < 25 && syncPendingSince !== null; i++) {
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      await refreshSpaceState();
+    }
+  }
+
+  /**
+   * Publishes the next version of a folder ("" for the top of the space): raises publishedVersion
+   * in its .metatrash.json, so the files as the space has them now become the official text.
+   */
+  async function publishFolder(relative: string) {
+    if (!root || !openedSpace || !canManageFiles) return;
+    const dir = root;
+    const prefix = relative ? relative + '/' : '';
+    const label = relative || openedSpace.space;
+    const readText = (rel: string) => invoke<LoadedDocument>('read_document', { path: joinPath(dir, rel) }).then(d => d.text, () => null);
+    const chain = folderChain(prefix);
+    const texts = new Map(await Promise.all(chain.map(async f => [f, await readText(f + SETTINGS_FILE)] as const)));
+    const frozen = frozenKeys(texts, prefix);
+    if (frozen.has('publishedVersion')) {
+      await message(`Publishing ${label} is locked for everyone. Lift the lock in its Properties (Security) first.`, { title: 'Slate Viewer', kind: 'info' });
+      return;
+    }
+    const current = toSavedVersion(texts.get(prefix) ?? null);
+    const asks = descriptions.find(d => d.folder === prefix)?.acknowledge === true;
+    let askToRead = false;
+    if (current === null) {
+      const canAsk = openedSpace.space !== 'public' && !frozen.has('services');
+      const choice = await message(`Publish version 1 of ${label}?\n\nIts files as they are now become the official text, which everyone opens by default. Later edits are a draft until you publish the next version.${canAsk ? '\n\nAlso ask everyone in the space to confirm they have read its Markdown files?' : ''}`, {
+        title: 'Slate Viewer',
+        kind: 'info',
+        buttons: canAsk ? { yes: 'Publish and Ask to Read', no: 'Publish Only', cancel: 'Cancel' } : { ok: 'Publish', cancel: 'Cancel' },
+      });
+      if (choice !== 'Publish and Ask to Read' && choice !== 'Publish Only' && choice !== 'Publish') return;
+      askToRead = choice === 'Publish and Ask to Read';
+    } else {
+      const next = `Publish Version ${current + 1}`;
+      const choice = await message(`Publish version ${current + 1} of ${label}?\n\nIts files as they are now replace version ${current} as the official text.${asks ? ' Everyone is asked to read the files that changed.' : ''}`, {
+        title: 'Slate Viewer',
+        kind: 'info',
+        buttons: { ok: next, cancel: 'Cancel' },
+      });
+      if (choice !== next) return;
+    }
+    // Unsaved edits go first, and must reach the space before the version does.
+    if (dirty && !(await confirmDiscard())) return;
+    await waitForSync();
+    try {
+      const now = await readText(prefix + SETTINGS_FILE);
+      await invoke('write_document', { path: joinPath(dir, prefix + SETTINGS_FILE), text: publishText(now, prefix, askToRead), hasBom: false });
+    } catch (error) {
+      await showError(error);
+      return;
+    }
+    syncPendingSince = Date.now();
+    void loadDescriptions();
+  }
+
   // ---- View ---------------------------------------------------------------------
 
   function applyTheme() {
@@ -1262,6 +1468,7 @@
     if (!openedSpace || !path) return null;
     const rel = currentRelative;
     if (rel === null) return null;
+    if (publishedView?.path === path) return 'You are reading the published version. Choose Show Draft above the document to see the file as it is now, and edit it.';
     if (openedSpace.access === 'read only') return `${openedSpace.space} is a read-only space.`;
     if (lockedForEveryone(rel)) return `${rel} ${everyoneReason}.`;
     return null;
@@ -1320,6 +1527,7 @@
     openedSpace = null;
     syncPendingSince = null;
     descriptions = [];
+    policies = null;
     try {
       const info = await mtsync.info();
       if (!info.path) return;
@@ -1333,6 +1541,7 @@
       if (dir !== root) return;
       openedSpace = { space: registration.space, server, access, folder: registration.folder, state: registration.state };
       void loadDescriptions();
+      void loadPolicies();
     } catch {
       // mtsync missing or failing: an ordinary folder.
     }
@@ -1369,6 +1578,7 @@
     if (syncPendingSince !== null && !syncStillPending(state, syncPendingSince)) {
       syncPendingSince = null;
       historyStamp += 1; // the save has reached the space, so it is in the history now
+      schedulePolicies(500); // and a published version, if it was one, is known there
     }
   }
 
@@ -1405,6 +1615,7 @@
     const { label, tone } = syncing ? { label: 'Syncing…', tone: 'busy' as const } : describeState(openedSpace.state);
     const parts = [label];
     if (conflictCount) parts.push(`${conflictCount} conflict${conflictCount === 1 ? '' : 's'}`);
+    if (policies?.outstanding) parts.push(`${policies.outstanding} to read`);
     if (currentRelative !== null && docBytes > SPACE_FILE_LIMIT * 0.85) parts.push(`${Math.ceil(docBytes / 1024)} of 64 KB`);
     return {
       label: parts.join(' · '),
@@ -2027,6 +2238,8 @@
               onDuplicate={relative => void duplicateEntry(relative)}
               onDelete={(relative, isFolder) => void deleteEntry(relative, isFolder)}
               onProperties={openedSpace ? (relative => (propertiesFor = relative)) : undefined}
+              unread={unreadFiles}
+              onPublish={openedSpace ? (relative => void publishFolder(relative)) : undefined}
               onCloseFolder={closeFolder}
               onChooseFolder={() => void chooseFolder()}
               onOpenFolder={dir => void openFolder(dir)}
@@ -2080,6 +2293,19 @@
     {/if}
   {/if}
   <div class="editor">
+    {#if currentPolicy}
+      <PolicyBanner
+        folder={currentPolicy.folder}
+        file={currentPolicy.file}
+        viewing={publishedView?.path === path ? 'published' : 'current'}
+        busy={confirming}
+        onShowDraft={() => void showDraft()}
+        onShowPublished={() => void showPublished()}
+        onConfirm={() => void confirmRead()}
+      />
+    {:else if policyNotice}
+      <p class="policy-notice">This folder publishes versions, but they can't be shown here: {policyNotice}</p>
+    {/if}
     <div class="host" bind:this={host}></div>
     <FindBar bind:this={findBar} getHost={() => host} getEditor={() => editor} inEditor={() => editor?.getWorkspaceMode() !== 'preview'} />
   </div>
@@ -2126,7 +2352,7 @@
   .side { flex: none; height: 100%; border-right: 1px solid var(--side-border); }
   .resizer { flex: none; width: 5px; margin-left: -3px; cursor: col-resize; z-index: 1; }
   .resizer:hover { background: var(--side-accent-soft); }
-  .editor { position: relative; flex: 1; min-width: 0; height: 100%; }
+  .editor { position: relative; flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; }
   .pinned-nav {
     flex: none; height: 100%; min-width: 0; border-right: 1px solid var(--side-border);
     background: var(--side-bg); color: var(--side-fg); font: 13px/1.35 Inter, "Segoe UI", system-ui, sans-serif;
@@ -2139,5 +2365,9 @@
   .nav-strip:hover { color: var(--side-fg); background: var(--side-hover); }
   .nav-strip span { writing-mode: vertical-rl; }
   .nav-strip svg { flex: none; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
-  .host { height: 100%; }
+  .host { flex: 1; min-height: 0; }
+  .policy-notice {
+    margin: 0; padding: 7px 14px; font: 13px/1.4 Inter, "Segoe UI", system-ui, sans-serif;
+    color: var(--side-muted); background: var(--side-bg); border-bottom: 1px solid var(--side-border);
+  }
 </style>
