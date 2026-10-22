@@ -1,19 +1,26 @@
 <script lang="ts">
   import { basename } from './paths';
   import Section from './Section.svelte';
-  import { fileHistory, formatWhen, relativeWhen, describeOperation, describeAuthor, type HistoryEntry } from './history';
+  import { fileHistory, formatWhen, relativeWhen, describeOperation, describeAuthor, entryLabel, type HistoryEntry } from './history';
 
   interface Props {
     /** The open space file, or null when the document isn't in a space. */
     file: string | null;
     /** Bumped when the file was saved or changed, to reload the list. */
     stamp: number;
-    /** The revision being compared, to mark it. */
+    /** The revision being merged with Compare, to mark it. */
     comparing: string | null;
-    onCompare: (entry: HistoryEntry) => void;
+    /** Show Changes: the version changes are shown from, and the one they go to (null: the text on screen). */
+    from: HistoryEntry | null;
+    to: HistoryEntry | null;
+    /** A click picks the version to show changes from; Ctrl+click (`second`) the one to show them to. */
+    onPick: (entry: HistoryEntry, second: boolean) => void;
+    /** Merge parts of a version into the document (Slate's Compare). */
+    onMerge: (entry: HistoryEntry) => void;
+    onClear: () => void;
   }
 
-  let { file, stamp, comparing, onCompare }: Props = $props();
+  let { file, stamp, comparing, from, to, onPick, onMerge, onClear }: Props = $props();
 
   let entries = $state<HistoryEntry[]>([]);
   let nextOffset = $state<number | null>(null);
@@ -54,7 +61,16 @@
     <p class="note error">{error}</p>
     <button class="more" type="button" onclick={() => void load(file)}>Try Again</button>
   {:else}
-    <p class="hint">Pick a version to compare it with the document. Use its parts, or all of it, then save.{#if entries.some(e => e.published?.length)} Published versions are marked; the changes above the newest one are a draft.{/if}</p>
+    <p class="hint">Click a version to see what changed since then. Ctrl+click a second one to see what changed between the two.{#if entries.some(e => e.published?.length)} Published versions are marked; the changes above the newest one are a draft.{/if}</p>
+    {#if from}
+      <div class="picked">
+        <span>Changes from <b>{entryLabel(from)}</b> to <b>{to ? entryLabel(to) : 'the text on screen'}</b></span>
+        <span class="picked-actions">
+          {#if !to}<button type="button" title="Bring parts of {entryLabel(from)} back into the document, then save" onclick={() => onMerge(from)}>Merge…</button>{/if}
+          <button type="button" onclick={onClear}>Clear</button>
+        </span>
+      </div>
+    {/if}
     <ul>
       {#each entries as entry, i (entry.revision + i)}
         {@const unavailable = entry.operation === 'delete' || !entry.file}
@@ -62,11 +78,13 @@
           <button
             type="button"
             class:current={comparing === entry.revision}
+            class:from={from?.revision === entry.revision}
+            class:to={to?.revision === entry.revision}
             disabled={unavailable}
             title={unavailable
               ? (entry.operation === 'delete' ? 'Deleted here: no text to compare' : `Was outside this folder (${entry.path})`)
-              : `${entry.path} · ${entry.revision.slice(0, 12)}`}
-            onclick={() => onCompare(entry)}
+              : `${entry.path} · ${entry.revision.slice(0, 12)}\nClick: changes since this version · Ctrl+click: changes up to it`}
+            onclick={event => onPick(entry, event.ctrlKey || event.metaKey)}
           >
             <span class="when">
               {formatWhen(entry.timestamp)}
@@ -81,6 +99,7 @@
             <span class="what">
               {describeOperation(entry, entries[i + 1]?.path ?? null)}
               {#if i === 0}<em>· latest in space</em>{/if}
+              {#if from?.revision === entry.revision}<span class="pick">From</span>{:else if to?.revision === entry.revision}<span class="pick">To</span>{/if}
             </span>
             {#if describeAuthor(entry.by)}<span class="who">by {describeAuthor(entry.by)}</span>{/if}
             <span class="ago">{relativeWhen(entry.timestamp)}</span>
@@ -111,7 +130,22 @@
     font: inherit; color: inherit; background: none; border: 0; border-left: 3px solid transparent; border-radius: 4px; cursor: pointer;
   }
   li button:hover:not(:disabled) { background: var(--side-hover); }
-  li button.current { background: var(--side-accent-soft); border-left-color: var(--side-accent); }
+  li button.current, li button.from, li button.to { background: var(--side-accent-soft); border-left-color: var(--side-accent); }
+  .pick {
+    margin-left: 6px; padding: 0 5px; border-radius: 4px; font-size: 11px; font-weight: 600;
+    color: #fff; background: var(--side-accent);
+  }
+  :global([data-theme="dark"]) .pick { color: #1d1a22; }
+  .picked {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 4px 8px; padding: 6px 8px;
+    font-size: 12px; border: 1px solid var(--side-border); border-radius: 6px; background: var(--side-input);
+  }
+  .picked-actions { display: inline-flex; gap: 6px; margin-left: auto; }
+  .picked button {
+    padding: 2px 8px; font: inherit; color: inherit; cursor: pointer;
+    background: var(--side-bg); border: 1px solid var(--side-border); border-radius: 5px;
+  }
+  .picked button:hover { background: var(--side-hover); }
   li button:disabled { cursor: default; opacity: .55; }
   .when { font-weight: 600; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; }
   .published {

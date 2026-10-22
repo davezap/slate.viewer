@@ -182,8 +182,14 @@ and the package manager updates and removes it.
   Ctrl+Shift+O) folds it to a thin strip and clicking the strip opens it again. Unpinning puts it back in the stack.
 - History lists a space file's earlier versions (from `mtsync history`, which needs mtsync 0.41.0), each with who
   made it: `by dave` for a person, `by Claude (agent) for dave` for an agent (Metatrash and mtsync 0.47.0).
-  Picking one compares it with the document inline (Slate's Compare): take parts or all of it,
-  press **Done**, then save to restore. Deleted entries have no text to compare.
+  Clicking one shows what changed since it (Slate's Show Changes, read only); Ctrl+clicking a second one shows what
+  changed between the two. **Merge…** under the list compares the picked version with the document inline (Slate's
+  Compare): take parts or all of it, press **Done**, then save to restore. Deleted entries have no text to compare.
+- **Show Changes** (the **± Changes** toggle in the toolbar, View > Show Changes or Ctrl+Shift+D) shows a space file's
+  changes read only: removed words struck through in red and added words in green in Preview, the Markdown the same way in
+  Edit and Source. A draft shows its changes since the published version, a published text its changes since the version
+  before, and any other file its changes since it was last saved to the space. The toggle shows in read-only documents
+  too (the published text), so readers can use it.
 - Which sections are on, their sizes, the labels setting and the pinned Document Nav are one setting for
   every window, whatever file or folder it shows.
 
@@ -288,7 +294,8 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
   With **Ask everyone to confirm they've read the published files** (an `acknowledge` service), each published file a person
   hasn't confirmed shows a red dot in Files (folders holding one too), the bar asks them to read it and choose
   **I Have Read This**, the status chip says how many are left, and Slate Viewer's taskbar button shows the count as a red
-  number. A new version asks again only for files whose text changed. Properties > Publishing also shows who has read what
+  number. A new version asks again only for files whose text changed. The bar also offers **Changes in vN** (since the
+  version before) and, when you confirmed an older version, **Changes Since You Read It**. Properties > Publishing also shows who has read what
   (read-write access). The app reads this with `mtsync policies`, `mtsync ack` and `mtsync readers` (`src/lib/policies.ts`,
   `PolicyBanner.svelte`; the taskbar number is drawn in `src-tauri/src/attention.rs`).
 
@@ -297,7 +304,7 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
 - **File menu:** New Window (Ctrl+N), New File (Ctrl+Alt+N), New File in Root, New Folder, Open (Ctrl+O), Open Recent, Save (Ctrl+S), Save As (Ctrl+Shift+S),
   Print (Ctrl+P, includes Microsoft Print to PDF), Close Window (Ctrl+W).
 - **View menu:** Edit / Preview / Source (Ctrl+1/2/3), Read Only checklist mode (Ctrl+Shift+R:
-  text locked, task boxes still tick), Files / Search / Document Navigation / Version History, Theme (system, light, dark, paper), Zoom In / Zoom Out / Reset Zoom (Ctrl+= / Ctrl+- / Ctrl+0, or Ctrl+mouse wheel;
+  text locked, task boxes still tick), Show Changes (Ctrl+Shift+D), Files / Search / Document Navigation / Version History, Theme (system, light, dark, paper), Zoom In / Zoom Out / Reset Zoom (Ctrl+= / Ctrl+- / Ctrl+0, or Ctrl+mouse wheel;
   Reset Zoom shows the current size).
 - **Go menu:** Back / Forward (Alt+Left / Alt+Right), Find in Document (Ctrl+F).
 - A `•` in the title while there are unsaved changes; closing a changed window asks to save.

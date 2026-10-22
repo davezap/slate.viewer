@@ -14,9 +14,11 @@
     onShowDraft: () => void;
     onShowPublished: () => void;
     onConfirm: () => void;
+    /** Show Changes from the file as published in `version` to the text on screen. */
+    onChangesSince: (version: number, label: string) => void;
   }
 
-  let { folder, file, viewing, busy, onShowDraft, onShowPublished, onConfirm }: Props = $props();
+  let { folder, file, viewing, busy, onShowDraft, onShowPublished, onConfirm, onChangesSince }: Props = $props();
 
   const where = $derived(folder.folder ? folder.folder.replace(/\/$/, '') : 'this space');
   const by = $derived(describeAuthor(folder.by));
@@ -24,6 +26,11 @@
   const toRead = $derived(file?.tracked === true && file.outstanding);
   /** The text on screen is the published one: shown from history, or the file has no draft. */
   const readingPublished = $derived(viewing === 'published' || (file !== null && !file.draft));
+  /** The older version this person read, when this version changed it. */
+  const readBefore = $derived(readingPublished && file?.acknowledged && !file.acknowledged.current && file.acknowledged.version < folder.version
+    ? file.acknowledged.version
+    : null);
+  const previous = $derived(readingPublished && file && folder.version > 1 && readBefore !== folder.version - 1 ? folder.version - 1 : null);
 </script>
 
 <div class="bar" class:to-read={toRead} role="status">
@@ -45,6 +52,12 @@
       <span class="done">✓ You confirmed reading it on {formatWhen(file.acknowledged.timestamp)}.</span>
     {/if}
   </div>
+  {#if readBefore !== null}
+    <button onclick={() => onChangesSince(readBefore!, `version ${readBefore}, which you read`)} title="Show what changed since version {readBefore}, the one you read">Changes Since You Read It</button>
+  {/if}
+  {#if previous !== null}
+    <button onclick={() => onChangesSince(previous!, `version ${previous}`)} title="Show what changed since version {previous}">Changes in v{folder.version}</button>
+  {/if}
   {#if file?.draft && viewing === 'published'}
     <button onclick={onShowDraft} title="Show the file as it is now, with the changes since version {folder.version}">Show Draft</button>
   {:else if file?.draft}

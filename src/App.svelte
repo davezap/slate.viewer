@@ -7,7 +7,7 @@
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
   import { open as openDialog, save as saveDialog, message } from '@tauri-apps/plugin-dialog';
   import { openUrl, openPath, revealItemInDir } from '@tauri-apps/plugin-opener';
-  import type { SlateCompareEndDetail, SlateEditorApi, SlateOutline, SlateOutlineHeading, SlateUploadedAttachment, SlateWorkspaceMode } from '../public/slate/slate-editor';
+  import type { SlateChangesEndDetail, SlateCompareEndDetail, SlateEditorApi, SlateOutline, SlateOutlineHeading, SlateUploadedAttachment, SlateWorkspaceMode } from '../public/slate/slate-editor';
   import { basename, dirname, extname, joinPath, toLocalPath } from './lib/paths';
   import { detectFormat, toFileText, NEW_FILE_FORMAT, type FileFormat } from './lib/document';
   import { recentFileList, recentFolderList, byDate, type RecentEntry } from './lib/recent';
@@ -36,7 +36,7 @@
     DEFAULT_SERVER, fileLock, type SpaceRef, type FolderDescription } from './lib/space';
   import QuickOpen from './lib/QuickOpen.svelte';
   import HistoryPanel from './lib/HistoryPanel.svelte';
-  import { revisionText, versionLabel, type HistoryEntry } from './lib/history';
+  import { entryLabel, fileHistory, findPublishedEntry, revisionText, versionLabel, type HistoryEntry } from './lib/history';
   import { lastSession, saveSession, placeView, savePlaceView, type PlaceView } from './lib/session';
   import PolicyBanner from './lib/PolicyBanner.svelte';
   import { acknowledge, fetchPolicies, outstandingFiles, policyFor, setAttentionBadge, type Policies } from './lib/policies';
@@ -162,6 +162,8 @@
   }
 
   function setDocument(doc: LoadedDocument) {
+    // The changes shown were for the text being replaced.
+    if (editor?.isShowingChanges()) editor.hideChanges();
     publishedView = null;
     path = doc.path;
     format = detectFormat(doc.text, doc.hasBom);
@@ -1215,6 +1217,141 @@
     if (scroller) scroller.scrollTop = scrollTop;
   }
 
+  // ---- Show Changes (Slate 0.17.0): what changed since another version, read only ------
+
+  let showingChanges = $state(false);
+  /** The history versions picked to show changes from and to (to: null is the text on screen). */
+  let changesFrom = $state<HistoryEntry | null>(null);
+  let changesTo = $state<HistoryEntry | null>(null);
+  let changesRequest = 0;
+
+  function sameText(a: string, b: string) {
+    const tidy = (text: string) => text.replace(/\r\n?/g, '\n').replace(/\s+$/, '');
+    return tidy(a) === tidy(b);
+  }
+
+  async function showChangesFrom(fromText: string, label: string, to?: { text: string; label: string }) {
+    if (!editor) return;
+    await editor.showChanges(fromText, { label, to: to?.text ?? null, toLabel: to?.label });
+    showingChanges = true;
+  }
+
+  /** History: a click shows changes since that version; Ctrl+click picks the version they go up to. */
+  async function pickVersion(entry: HistoryEntry, second: boolean) {
+    if (!editor || !path) return;
+    let from = changesFrom;
+    let to = changesTo;
+    if (second && from && from.revision !== entry.revision) {
+      to = to?.revision === entry.revision ? null : entry;
+    } else if (!second && from?.revision === entry.revision && !to && showingChanges) {
+      editor.hideChanges();
+      return;
+    } else {
+      from = entry;
+      to = null;
+    }
+    // From the older to the newer, whichever was picked first.
+    if (to && Date.parse(to.timestamp) < Date.parse(from!.timestamp)) [from, to] = [to, from];
+    const request = ++changesRequest;
+    const file = path;
+    try {
+      const [fromText, toText] = await Promise.all([revisionText(from!, file), to ? revisionText(to, file) : null]);
+      if (request !== changesRequest || path !== file) return;
+      await showChangesFrom(fromText, entryLabel(from!), to && toText !== null ? { text: toText, label: entryLabel(to) } : undefined);
+      changesFrom = from;
+      changesTo = to;
+    } catch (error) {
+      if (request === changesRequest) await showError(error);
+    }
+  }
+
+  /** Changes from the file as published in `version` of its folder to the text on screen; false when it wasn't in it. */
+  async function showChangesSinceVersion(version: number, label = `version ${version}`): Promise<boolean> {
+    if (!path) return false;
+    const file = path;
+    const request = ++changesRequest;
+    const entry = await findPublishedEntry(file, version);
+    if (!entry || request !== changesRequest || path !== file) return false;
+    const text = await revisionText(entry, file);
+    if (request !== changesRequest || path !== file) return false;
+    await showChangesFrom(text, label);
+    changesFrom = entry;
+    changesTo = null;
+    return true;
+  }
+
+  /** The policy bar's buttons: changes since an earlier published version. */
+  async function changesSince(version: number, label: string) {
+    try {
+      if (!(await showChangesSinceVersion(version, label))) {
+        await message(`This file isn't in version ${version} of its folder, so there is nothing to compare with.`, { title: 'Slate Viewer', kind: 'info' });
+      }
+    } catch (error) {
+      await showError(error);
+    }
+  }
+
+  /**
+   * The ± Changes toggle (and Ctrl+Shift+D): a draft shows its changes since the published
+   * version; a published text, its changes since the version before; any other file, its changes
+   * since it was last saved to the space (or, when it is that, since the save before).
+   */
+  async function showDefaultChanges() {
+    if (!editor || !path) return;
+    const file = path;
+    const request = ++changesRequest;
+    const stale = () => request !== changesRequest || path !== file;
+    try {
+      const found = currentPolicy;
+      if (found?.file) {
+        const { folder, file: published } = found;
+        if (publishedView?.path !== file && published.draft && published.publishedFile) {
+          const text = await invoke<string>('mtsync_show', { file: published.publishedFile, revision: folder.revision });
+          if (stale()) return;
+          await showChangesFrom(text, `version ${folder.version}`);
+          return;
+        }
+        if (folder.version > 1 && (await showChangesSinceVersion(folder.version - 1))) return;
+        if (stale()) return;
+      }
+      const page = await fileHistory(file, 0);
+      if (stale()) return;
+      const usable = page.entries.filter(entry => entry.operation !== 'delete' && entry.file);
+      const current = editor.getMarkdown();
+      for (const [index, entry] of usable.slice(0, 2).entries()) {
+        const text = await revisionText(entry, file);
+        if (stale()) return;
+        if (index === 0 && sameText(text, current) && usable.length > 1) continue;
+        await showChangesFrom(text, entryLabel(entry));
+        changesFrom = entry;
+        changesTo = null;
+        return;
+      }
+      await message('There is no earlier version of this file to compare with yet.', { title: 'Slate Viewer', kind: 'info' });
+    } catch (error) {
+      if (!stale()) await showError(error);
+    }
+  }
+
+  async function toggleChanges() {
+    if (!editor) return;
+    if (editor.isShowingChanges()) editor.hideChanges();
+    else if (historyFile) await showDefaultChanges();
+  }
+
+  function onChangesEnd(_detail: SlateChangesEndDetail) {
+    changesRequest += 1;
+    showingChanges = false;
+    changesFrom = null;
+    changesTo = null;
+  }
+
+  // Slate's ± Changes toggle, for files that have a history in the space.
+  $effect(() => {
+    const offered = historyFile !== null;
+    editor?.setChangesToggle(offered ? () => showDefaultChanges() : null);
+  });
+
   // ---- Published versions and read confirmations (Metatrash 0.48.0) ------------------
 
   /** The space's published folders and what this person still has to read, from mtsync. */
@@ -1299,6 +1436,7 @@
       return;
     }
     if (request !== publishedRequest || path !== target || dirty) return;
+    if (editor.isShowingChanges()) editor.hideChanges();
     publishedView = { path: target, version: found!.folder.version, revision: found!.folder.revision };
     await editor.setMarkdown(text);
     baseline = editor.getMarkdown();
@@ -1770,6 +1908,7 @@
           { text: '&Edit', keys: 'Ctrl+1', enabled: !readOnly, action: () => void setMode('edit') },
           { text: '&Preview', keys: 'Ctrl+2', action: () => void setMode('preview') },
           { text: '&Source', keys: 'Ctrl+3', enabled: !readOnly, action: () => void setMode('source') },
+          { text: 'Show Ch&anges', keys: 'Ctrl+Shift+D', checked: showingChanges, enabled: showingChanges || historyFile !== null, action: () => void toggleChanges() },
           separator,
           { text: 'Read Only (&Checklist Mode)', keys: 'Ctrl+Shift+R', checked: readOnly, action: () => void toggleReadOnly() },
           { text: '&Files', keys: 'Ctrl+Shift+E', checked: sections.files, action: () => toggleSection('files') },
@@ -2071,6 +2210,7 @@
     if (key === 'f' && !shift) { handle(() => findBar?.open()); return; }
     if (key === 'e' && shift) { handle(() => toggleSection('files')); return; }
     if (key === 'h' && shift) { handle(() => toggleSection('history')); return; }
+    if (key === 'd' && shift) { handle(toggleChanges); return; }
     // Inside the editor Slate handles Ctrl+Shift+O itself and tells us with slate:outline-toggle.
     if (key === 'o' && shift && !event.defaultPrevented) { handle(toggleOutline); return; }
 
@@ -2114,6 +2254,9 @@
     host.addEventListener('slate:compare-end', event => {
       void onCompareEnd((event as CustomEvent<SlateCompareEndDetail>).detail);
     });
+    host.addEventListener('slate:changes-end', event => {
+      onChangesEnd((event as CustomEvent<SlateChangesEndDetail>).detail);
+    });
     host.addEventListener('slate:outline-toggle', event => {
       setSection('outline', (event as CustomEvent<{ open: boolean }>).detail.open);
     });
@@ -2142,6 +2285,7 @@
         outlineOpen: sections.outline,
       });
       outline = editor.getOutline();
+      editor.setChangesToggle(historyFile ? () => showDefaultChanges() : null);
       applyTheme();
       showWindow();
       if (zoom !== 1) void getCurrentWebview().setZoom(zoom);
@@ -2260,7 +2404,11 @@
               file={historyFile}
               stamp={historyStamp}
               comparing={historyRevision}
-              onCompare={entry => void compareWithRevision(entry)}
+              from={changesFrom}
+              to={changesTo}
+              onPick={(entry, second) => void pickVersion(entry, second)}
+              onMerge={entry => void compareWithRevision(entry)}
+              onClear={() => editor?.hideChanges()}
             />
           {:else}
             <OutlineSection {outline} active={activeHeading} onReveal={revealHeading} onTogglePin={toggleOutlinePinned} />
@@ -2302,6 +2450,7 @@
         onShowDraft={() => void showDraft()}
         onShowPublished={() => void showPublished()}
         onConfirm={() => void confirmRead()}
+        onChangesSince={(version, label) => void changesSince(version, label)}
       />
     {:else if policyNotice}
       <p class="policy-notice">This folder publishes versions, but they can't be shown here: {policyNotice}</p>

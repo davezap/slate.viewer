@@ -69,6 +69,27 @@ export function versionLabel(timestamp: string): string {
   return `${day.format(date)} ${timeFormat.format(date)}`;
 }
 
+/** A version's name in Show Changes: "version 3" for a published text, else when it was saved. */
+export function entryLabel(entry: HistoryEntry): string {
+  return entry.published?.length ? `version ${Math.max(...entry.published)}` : versionLabel(entry.timestamp);
+}
+
+/**
+ * The file's history entry published as `version` of its folder, paging back through the
+ * history (newest first) until it is found or older versions show it isn't there.
+ */
+export async function findPublishedEntry(file: string, version: number): Promise<HistoryEntry | null> {
+  let offset: number | null = 0;
+  for (let pages = 0; offset !== null && pages < 25; pages += 1) {
+    const page = await fileHistory(file, offset);
+    const found = page.entries.find(entry => entry.published?.includes(version));
+    if (found) return found;
+    if (page.entries.some(entry => entry.published?.some(v => v < version))) return null;
+    offset = page.nextOffset;
+  }
+  return null;
+}
+
 /** "5 minutes ago", "yesterday", … */
 export function relativeWhen(timestamp: string, now = Date.now()): string {
   const then = new Date(timestamp).getTime();
