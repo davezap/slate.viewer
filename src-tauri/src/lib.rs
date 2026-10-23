@@ -190,6 +190,7 @@ pub fn run() {
             mtsync::mtsync_submit,
             mtsync::mtsync_whoami,
             mtsync::mtsync_submissions,
+            mtsync::mtsync_review,
             attention::set_attention_badge,
             mtsync::mtsync_login,
             mtsync::mtsync_cancel_login,

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.19.1 — 2026-10-23
+
+- Preview: a document that starts with front matter or a comment no longer has extra space above its first heading.
+
 ## 0.19.0 — 2026-10-23
 
 - Preview hides front matter (the `---` block at the top of a document), as it hides comments. Edit and Source still show it, and it stays out of the outline.

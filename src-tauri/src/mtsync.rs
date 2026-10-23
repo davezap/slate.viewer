@@ -391,18 +391,55 @@ pub struct SubmitOutcome {
 }
 
 /// Sends `answers` (a JSON object of field name to answer) to the form `file`: `mtsync -json
-/// submit FILE -` (mtsync 0.49.0). A refusal comes back as ok: false with the server's error.
+/// submit FILE -` (mtsync 0.49.0). With `version`, the answers are to the form as published in
+/// that version of its folder (`-published N`, mtsync 0.50.0). A refusal comes back as ok: false
+/// with the server's error.
 #[tauri::command]
-pub async fn mtsync_submit(file: String, answers: String) -> Result<SubmitOutcome, String> {
-    require_forms().await?;
+pub async fn mtsync_submit(file: String, answers: String, version: Option<u32>) -> Result<SubmitOutcome, String> {
+    if version.is_some() { require_reviews().await? } else { require_forms().await? }
     let out = tauri::async_runtime::spawn_blocking(move || {
-        run_with_input_blocking(&["-json", "submit", &file, "-"], answers.as_bytes())
+        let version = version.map(|v| v.to_string());
+        let mut args = vec!["-json"];
+        if let Some(v) = &version {
+            args.extend(["-published", v.as_str()]);
+        }
+        args.extend(["submit", file.as_str(), "-"]);
+        run_with_input_blocking(&args, answers.as_bytes())
     })
     .await
     .map_err(|e| e.to_string())??;
+    Ok(outcome(out))
+}
+
+fn outcome(out: Output) -> SubmitOutcome {
     let json = out.stdout.trim().to_string();
     let message = if out.ok { String::new() } else { out.message() };
-    Ok(SubmitOutcome { ok: out.ok, json: if json.starts_with('{') { json } else { String::new() }, message })
+    SubmitOutcome { ok: out.ok, json: if json.starts_with('{') { json } else { String::new() }, message }
+}
+
+/// Reviews and quizzes need mtsync 0.50.0 (`review`, `submit -published`).
+const REVIEWS_VERSION: (u32, u32, u32) = (0, 50, 0);
+
+async fn require_reviews() -> Result<(), String> {
+    let out = run(None, vec!["version".into()]).await?;
+    match parse_version(&out.stdout) {
+        Some(v) if out.ok && v >= REVIEWS_VERSION => Ok(()),
+        _ => Err("Published forms, quizzes and reviews need mtsync 0.50.0 or later. Update mtsync and try again.".into()),
+    }
+}
+
+/// Reviews the filed copy `file` (in a review space this person can write to): `review` is
+/// `{"status": "approved"|"declined", "note"}` for a form, or `{"marks": {...}, "note"}` for a
+/// quiz. `mtsync -json review FILE -` (mtsync 0.50.0); a refusal comes back as ok: false.
+#[tauri::command]
+pub async fn mtsync_review(file: String, review: String) -> Result<SubmitOutcome, String> {
+    require_reviews().await?;
+    let out = tauri::async_runtime::spawn_blocking(move || {
+        run_with_input_blocking(&["-json", "review", &file, "-"], review.as_bytes())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    Ok(outcome(out))
 }
 
 /// The forms this person sent from the space synced at `folder`, or with `id` one of them with

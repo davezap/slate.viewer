@@ -303,12 +303,23 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
   in Metatrash). In Preview the form is ready to fill in (Slate's `startFill({ inPreview: true })`); Edit and Source show
   the template, and the bar's **Fill In** (also File > **Fill In Form**) goes back to Preview. Answers are kept on this
   computer as a draft while you type (localStorage, per file), so leaving Preview or closing the app loses nothing; the bar
-  offers **Discard Draft**. Where the form can't be sent (not in a synced space, unsaved changes, the published version)
-  the fields show greyed out (`readOnly`). **Send** runs `mtsync submit`, which checks the template on disk is the one the
-  space has; Metatrash checks the answers (each problem shows under its field) and files a filled-in copy in the review
+  offers **Discard Draft**. Where the form can't be sent (not in a synced space, unsaved changes, a draft of a published
+  form) the fields show greyed out (`readOnly`). **Send** runs `mtsync submit`, which checks the template on disk is the one the
+  space has (in a published folder, `-published N` sends answers to the published text, mtsync 0.50.0); Metatrash checks the answers (each problem shows under its field) and files a filled-in copy in the review
   space the template names, which the person filling it in can't open; the form then comes back empty. **My Submissions**
   (bar or File menu) lists what you sent from the open space, with the answers and the filed copy (`mtsync submissions`).
-  Logic: `src/lib/forms.ts`, `FormBanner.svelte`, `SubmissionsDialog.svelte`. Preview hides front matter in every document.
+  Logic: `src/lib/forms.ts`, `FormBanner.svelte`, `SubmissionsDialog.svelte`. Preview hides front matter in every document. In a folder that asks people to read its files, sending a form also counts as reading it (Metatrash 0.49.4): the receipt's `acknowledged` makes Viewer reload the read status.
+- **Reviews and quizzes** (Metatrash 0.50.0, mtsync 0.50.0). Every filed copy is reviewed: it waits as submitted until it
+  is approved or declined, and My Submissions shows the review and its note. A quiz is a form in a published folder whose
+  front matter says `quiz: true` and `covers:` the file it tests; that file's bar offers **Take the Quiz** instead of
+  I Have Read This, and passing it is what clears its dot. Metatrash marks the answers with the quiz's answer key; the bar
+  and My Submissions show the score and which answers were right (never the right answers). After a fail the quiz is greyed
+  out until `retryAfter` passes, then offers **Fix My Answers** (the last answers, wrong ones marked) and **Start Again**.
+  Opening a filed copy in the review space (with read-write access) shows a review bar: **Approve** or **Decline** with a
+  note for a form, a tick or cross for each written answer of a quiz, then **Reviewed** (`mtsync review`). **Use This as
+  Answers** on a quiz copy saves it, without its submission, as `<space>-<form>-answers.md` beside it: the answer key.
+  Logic: `ReviewBanner.svelte`, `parseFiledCopy` and `answerKeyText` in `src/lib/forms.ts`, `quizFor` in
+  `src/lib/policies.ts`.
 - **Accounts.** mtsync signs a computer in as one Metatrash account, and every space syncs as it. Open Space names the
   account (`mtsync whoami`, mtsync and Metatrash 0.49.1) and offers **Switch Account…**, which runs `mtsync login` again
   for the browser to sign in as someone else.

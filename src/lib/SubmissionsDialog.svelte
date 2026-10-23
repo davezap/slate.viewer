@@ -1,9 +1,9 @@
 <script lang="ts">
   // My Submissions: the forms this person sent from the open space, newest first, and for the one
-  // picked, the answers and the copy Metatrash filed (Metatrash 0.49.0).
+  // picked, the answers and the copy Metatrash filed (Metatrash 0.49.0), with its review (0.50.0).
   import { onMount } from 'svelte';
   import { formatWhen } from './history';
-  import { copyAnswers, fetchReceipt, fetchReceipts, type Receipt } from './forms';
+  import { copyAnswers, fetchReceipt, fetchReceipts, reviewText, type Receipt } from './forms';
 
   interface Props {
     /** The synced folder of the open space. */
@@ -52,6 +52,8 @@
   });
 
   const answers = $derived(detail?.text ? copyAnswers(detail.text) : []);
+  /** A quiz's ticks by field: only right or not, never the right answer. */
+  const marks = $derived(detail?.quiz && detail.marks ? detail.marks : null);
 
   function onKeydown(event: KeyboardEvent) {
     if (event.key === 'Escape') {
@@ -86,7 +88,7 @@
           {#each receipts as r (r.id)}
             <button class:selected={r.id === selected} onclick={() => void show(r.id)}>
               <b>{r.title || r.form}</b>
-              <span>{formatWhen(r.submittedAt)}</span>
+              <span>{formatWhen(r.submittedAt)}{reviewText(r) ? ` · ${reviewText(r)}` : ''}</span>
             </button>
           {/each}
         </nav>
@@ -101,13 +103,22 @@
               <dt>Sent</dt><dd>{formatWhen(detail.submittedAt)}</dd>
               <dt>Form</dt><dd>{detail.template}</dd>
               <dt>Filed as</dt><dd>{detail.target}</dd>
+              {#if reviewText(detail)}
+                <dt>Review</dt><dd>{reviewText(detail)}{detail.quiz && detail.passMark !== undefined && detail.status !== 'submitted' ? `, pass mark ${detail.passMark}%` : ''}{detail.reviewedAt ? ` (${formatWhen(detail.reviewedAt)})` : ''}</dd>
+              {/if}
+              {#if detail.note}
+                <dt>Note</dt><dd class="note">{detail.note}</dd>
+              {/if}
             </dl>
             {#if answers.length}
               <table>
-                <thead><tr><th>Field</th><th>Answer</th></tr></thead>
+                <thead><tr><th>Field</th><th>Answer</th>{#if marks}<th></th>{/if}</tr></thead>
                 <tbody>
                   {#each answers as [name, value] (name)}
-                    <tr><td>{name}</td><td>{value || '(blank)'}</td></tr>
+                    <tr>
+                      <td>{name}</td><td>{value || '(blank)'}</td>
+                      {#if marks}<td class="mark" title={marks[name] === true ? 'Right' : marks[name] === false ? 'Not right' : marks[name] === null ? 'Waiting for a reviewer' : ''}>{marks[name] === true ? '✓' : marks[name] === false ? '✗' : marks[name] === null ? '…' : ''}</td>{/if}
+                    </tr>
                   {/each}
                 </tbody>
               </table>
@@ -166,7 +177,9 @@
   th, td { padding: 4px 8px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--side-border); }
   th { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--side-muted); }
   td:first-child { width: 30%; color: var(--side-muted); }
-  td:last-child { white-space: pre-wrap; overflow-wrap: anywhere; }
+  td:nth-child(2) { white-space: pre-wrap; overflow-wrap: anywhere; }
+  td.mark { width: 2em; text-align: center; font-weight: 700; color: var(--side-accent); }
+  dd.note { white-space: pre-wrap; font-style: italic; }
   summary { cursor: pointer; color: var(--side-muted); }
   pre {
     margin: 8px 0 0; padding: 10px; white-space: pre-wrap; overflow-wrap: anywhere;

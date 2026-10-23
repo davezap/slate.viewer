@@ -39,10 +39,13 @@
   import { entryLabel, fileHistory, findPublishedEntry, formatWhen, revisionText, versionLabel, type HistoryEntry } from './lib/history';
   import { lastSession, saveSession, placeView, savePlaceView, type PlaceView } from './lib/session';
   import PolicyBanner from './lib/PolicyBanner.svelte';
-  import { acknowledge, fetchPolicies, outstandingFiles, policyFor, setAttentionBadge, type Policies } from './lib/policies';
+  import { acknowledge, fetchPolicies, outstandingFiles, policyFor, quizFor, setAttentionBadge, type Policies } from './lib/policies';
   import FormBanner from './lib/FormBanner.svelte';
   import SubmissionsDialog from './lib/SubmissionsDialog.svelte';
-  import { clearDraft, loadDraft, saveDraft, submitForm, type FormDraft, type Receipt } from './lib/forms';
+  import {
+    answerKeyName, answerKeyText, clearDraft, fetchReceipt, fetchReceipts, loadDraft, parseFiledCopy, reviewCopy, saveDraft, submitForm,
+    type FiledCopy, type FormDraft, type Receipt, type Review } from './lib/forms';
+  import ReviewBanner from './lib/ReviewBanner.svelte';
   import { SETTINGS_FILE, folderChain, frozenKeys, publishText, toSavedVersion } from './lib/folderSettings';
 
   interface LoadedDocument { path: string; text: string; hasBom: boolean }
@@ -1515,7 +1518,7 @@
   /** Slate shows the form with its inputs (fill mode). */
   let filling = $state(false);
   /** Fill mode shows the fields greyed out: the form can't be sent from here just now. */
-  let fillReadOnly = false;
+  let fillReadOnly = $state(false);
   /** Edit, Preview or Source, as Slate last reported it. */
   let workspaceMode = $state<SlateWorkspaceMode>('preview');
   let formSync: Promise<void> = Promise.resolve();
@@ -1528,6 +1531,11 @@
   function checkForm() {
     clearTimeout(formTimer);
     currentForm = editor && path ? editor.getForm() : null;
+    const copy = editor && path && !currentForm ? parseFiledCopy(editor.getMarkdown()) : null;
+    if (copy?.submission !== filedCopy?.submission) reviewProblem = '';
+    // The copy synced back with the review this window saved.
+    if (reviewedText && (reviewedText.path !== path || (copy && copy.reviewedAt === parseFiledCopy(reviewedText.text)?.reviewedAt))) reviewedText = null;
+    filedCopy = copy;
     formDraft = currentForm && path ? loadDraft(path) : null;
     syncFormView();
   }
@@ -1548,9 +1556,26 @@
   function fillBlocked(): string | null {
     if (formUnavailable) return 'Open it from its Metatrash space to fill it in.';
     if (dirty) return 'Save your changes to the form to fill it in.';
-    if (publishedView?.path === path) return 'This is the published version. Choose Show Draft to fill it in.';
+    // In a published folder, the form people fill in is the published one (Metatrash 0.50.0).
+    if (currentPolicy?.file?.draft && publishedView?.path !== path) return 'This is a draft of the form. Choose Show Published Version to fill it in.';
+    const quiz = currentQuiz?.quiz;
+    if (quiz?.status === 'passed') return 'You have passed this quiz.';
+    if (quiz?.status === 'waiting') return 'Your answers are waiting for a reviewer to mark them.';
+    if (quiz?.status === 'failed' && quiz.retryAt && Date.parse(quiz.retryAt) > quizClock) return `Not passed. You can try again from ${formatWhen(quiz.retryAt)}.`;
     return null;
   }
+
+  /** The open quiz and the file it covers, with this person's state in it (Metatrash 0.50.0). */
+  const currentQuiz = $derived(currentPolicy && currentRelative !== null ? quizFor(currentPolicy.folder, currentRelative) : null);
+  /** Moves on when a failed quiz can be taken again. */
+  let quizClock = $state(Date.now());
+
+  $effect(() => {
+    const at = currentQuiz?.quiz.status === 'failed' && currentQuiz.quiz.retryAt ? Date.parse(currentQuiz.quiz.retryAt) : NaN;
+    if (!(at > Date.now())) return;
+    const timer = setTimeout(() => { quizClock = Date.now(); void loadPolicies(); }, Math.min(at - Date.now() + 1000, 2 ** 31 - 1));
+    return () => clearTimeout(timer);
+  });
 
   /** Shows the open form, in Preview, ready to fill in (or greyed out); one at a time. */
   function syncFormView() {
@@ -1597,7 +1622,7 @@
 
   // Saving, a lost space or the published text decide whether the form can be filled in.
   $effect(() => {
-    void [dirty, formUnavailable, publishedView];
+    void [dirty, formUnavailable, publishedView, currentQuiz?.quiz.status, currentQuiz?.quiz.retryAt, currentPolicy?.file?.draft, quizClock];
     untrack(() => { if (currentForm) syncFormView(); });
   });
 
@@ -1636,9 +1661,13 @@
     if (!editor || !fillingPath) return;
     const file = fillingPath;
     editor.setFormStatus('Sending…', { busy: true });
+    // A form in a published folder is sent as published, in this version of its folder.
+    const relative = spaceRelative(file);
+    const published = relative !== null ? policyFor(policies, relative) : null;
+    const version = published?.file && !(published.file.draft && publishedView?.path !== file) ? published.folder.version : undefined;
     let result;
     try {
-      result = await submitForm(file, detail.answers);
+      result = await submitForm(file, detail.answers, version);
     } catch (error) {
       editor.setFormStatus(String(error), { kind: 'error', busy: false });
       return;
@@ -1649,6 +1678,8 @@
       clearDraft(file);
       sentForm = { path: file, receipt: result.receipt };
       editor.endFill();
+      // Sending it counted as reading it, or a quiz was marked: the dot and the bars catch up.
+      if (result.receipt.acknowledged || result.receipt.quiz) void loadPolicies();
       return;
     }
     const { code, message: text, fields } = result.error;
@@ -1656,7 +1687,13 @@
       editor.setFormProblems(fields);
       editor.setFormStatus(fields.length === 1 ? '1 answer needs fixing.' : `${fields.length} answers need fixing.`, { kind: 'error', busy: false });
     } else if (code === 'template_changed') {
-      editor.setFormStatus('This form was changed in the space since it was opened. Wait for it to sync, check your answers and send again.', { kind: 'error', busy: false });
+      editor.setFormStatus(version !== undefined
+        ? 'A new version of this form was published since it was opened. Wait for it to sync, check your answers and send again.'
+        : 'This form was changed in the space since it was opened. Wait for it to sync, check your answers and send again.', { kind: 'error', busy: false });
+      void loadPolicies();
+    } else if (['quiz_passed', 'quiz_waiting', 'retry_later', 'not_published'].includes(code)) {
+      editor.setFormStatus(text, { kind: 'error', busy: false });
+      void loadPolicies();
     } else {
       editor.setFormStatus(text || 'The form could not be sent.', { kind: 'error', busy: false });
     }
@@ -1676,6 +1713,97 @@
     if (editor?.isFilling() && fillingPath === path && !fillReadOnly) {
       await editor.setFormAnswers({});
       editor.setFormStatus('Your answers are kept on this computer until you send them.');
+    }
+  }
+
+  /** After a failed quiz: the answers last sent, with the wrong ones marked (only which, never the right answer). */
+  async function fixAnswers() {
+    if (!editor || !path || !openedSpace || !currentRelative || !editor.isFilling() || fillReadOnly) return;
+    const target = path;
+    const relative = currentRelative;
+    let last: Receipt | null = null;
+    try {
+      const found = (await fetchReceipts(openedSpace.folder)).find(r => r.template === relative && r.quiz);
+      if (found) last = await fetchReceipt(openedSpace.folder, found.id);
+    } catch (error) {
+      editor.setFormStatus(String(error), { kind: 'error' });
+      return;
+    }
+    if (path !== target || !editor.isFilling()) return;
+    if (!last?.answers) {
+      editor.setFormStatus('Your last answers to this quiz could not be found.', { kind: 'error' });
+      return;
+    }
+    await editor.setFormAnswers(last.answers);
+    saveDraft(target, editor.getFormAnswers());
+    formDraft = loadDraft(target);
+    const wrong = Object.entries(last.marks ?? {}).filter(([, m]) => m === false).map(([name]) => ({ name, message: 'This answer was not right.' }));
+    editor.setFormProblems(wrong);
+    editor.setFormStatus(wrong.length === 1 ? 'Your last answers: 1 was not right.' : `Your last answers: ${wrong.length} were not right.`);
+  }
+
+  /** After a failed quiz: an empty form. */
+  async function startAgain() {
+    if (!editor || !path || !editor.isFilling() || fillReadOnly) return;
+    clearTimeout(draftTimer);
+    clearDraft(path);
+    formDraft = null;
+    await editor.setFormAnswers({});
+    editor.setFormProblems([]);
+    editor.setFormStatus('Your answers are kept on this computer until you send them.');
+  }
+
+  // ---- Reviews (Metatrash 0.50.0) ------------------------------------------------------
+  // A copy of a form filed in a review space names its submission in its front matter. Someone
+  // who can write to that space reviews it there: approve or decline a form, tick a quiz's
+  // written answers. A quiz copy with the right answers becomes the quiz's answer key.
+
+  /** The open document as a filed copy, or null. */
+  let filedCopy = $state<FiledCopy | null>(null);
+  let reviewing = $state(false);
+  let reviewProblem = $state('');
+  /** What the last review here said, until the copy syncs back. */
+  let reviewedText = $state<{ path: string; text: string } | null>(null);
+  const shownCopy = $derived(reviewedText && reviewedText.path === path ? parseFiledCopy(reviewedText.text) : filedCopy);
+  const canReview = $derived(shownCopy !== null && path !== null && openedSpace !== null && spaceRelative(path) !== null && canManageFiles);
+
+  async function sendReview(review: Review) {
+    if (!path || reviewing) return;
+    const target = path;
+    reviewing = true;
+    reviewProblem = '';
+    try {
+      const result = await reviewCopy(target, review);
+      if (result.ok) {
+        if (result.receipt.text) reviewedText = { path: target, text: result.receipt.text };
+      } else {
+        reviewProblem = result.error.message || 'The review could not be saved.';
+      }
+    } catch (error) {
+      reviewProblem = String(error);
+    } finally {
+      reviewing = false;
+    }
+  }
+
+  /** Use This as Answers: the copy, without its submission, becomes `<space>-<form>-answers.md` beside it. */
+  async function useAsAnswers() {
+    const copy = shownCopy;
+    if (!path || !copy || !copy.quiz) return;
+    const target = joinPath(dirname(path), answerKeyName(copy));
+    const exists = await invoke<LoadedDocument>('read_document', { path: target }).then(() => true, () => false);
+    const choice = await message(`${exists ? 'Replace the answer key for' : 'Use these answers as the answer key for'} ${copy.title || copy.form}?\n\nIt is saved as ${basename(target)} in this folder. Once it syncs, Metatrash marks everyone's answers to this text of the quiz with it; when the quiz is published again with changes, send it again with the right answers to make a new key.`, {
+      title: 'Slate Viewer',
+      kind: 'info',
+      buttons: { ok: exists ? 'Replace' : 'Use as Answers', cancel: 'Cancel' },
+    });
+    if (choice !== (exists ? 'Replace' : 'Use as Answers')) return;
+    try {
+      const doc = await invoke<LoadedDocument>('read_document', { path });
+      await invoke('write_document', { path: target, text: answerKeyText(doc.text), hasBom: false });
+      syncPendingSince = Date.now();
+    } catch (error) {
+      await showError(error);
     }
   }
 
@@ -2664,6 +2792,7 @@
         onShowDraft={() => void showDraft()}
         onShowPublished={() => void showPublished()}
         onConfirm={() => void confirmRead()}
+        onTakeQuiz={relative => void openFromFolder(relative)}
         onChangesSince={(version, label) => void changesSince(version, label)}
       />
     {:else if policyNotice}
@@ -2679,6 +2808,18 @@
         onFill={() => void fillInForm()}
         onDiscardDraft={() => void discardDraft()}
         onSubmissions={showSubmissions}
+        quiz={currentQuiz}
+        canRetry={currentQuiz?.quiz.status === 'failed' && filling && !fillReadOnly}
+        onFixAnswers={() => void fixAnswers()}
+        onStartAgain={() => void startAgain()}
+      />
+    {:else if shownCopy && canReview}
+      <ReviewBanner
+        copy={shownCopy}
+        busy={reviewing}
+        problem={reviewProblem}
+        onReview={review => void sendReview(review)}
+        onUseAsAnswers={() => void useAsAnswers()}
       />
     {/if}
     <div class="host" bind:this={host}></div>

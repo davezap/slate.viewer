@@ -32,6 +32,34 @@ export interface PolicyFile {
   file?: string;
   /** Where publishedPath is on this computer, for `mtsync show` with the folder's revision. */
   publishedFile?: string;
+  /** A quiz (Metatrash 0.50.0): the file it tests, relative to the quiz. It is never a file to read. */
+  covers?: string;
+  /** The quiz that covers this file: it counts as read once this person passes it. */
+  quiz?: PolicyQuiz;
+}
+
+export interface PolicyQuiz {
+  /** The quiz file, relative to the synced folder (with /). */
+  path: string;
+  publishedPath: string;
+  /** new, waiting (for a reviewer to tick free-text answers), failed or passed. */
+  status: 'new' | 'waiting' | 'failed' | 'passed' | string;
+  /** The last score, in percent. */
+  score?: number;
+  /** After a fail: when it can be taken again (UTC, RFC 3339). */
+  retryAt?: string;
+  /** This person passed an earlier text of the quiz. */
+  older?: boolean;
+  file?: string;
+  publishedFile?: string;
+}
+
+/** The quiz state for the quiz at `relative`, from the file it covers. */
+export function quizFor(folder: PolicyFolder, relative: string): { quiz: PolicyQuiz; covered: PolicyFile } | null {
+  for (const f of folder.files) {
+    if (f.quiz?.path === relative) return { quiz: f.quiz, covered: f };
+  }
+  return null;
 }
 
 export interface PolicyFolder {
@@ -57,7 +85,7 @@ export interface ReaderReport {
   space: string;
   files: { id: string; path: string; folder: string; version: number }[];
   /** Everyone in the space; each person's files line up with `files`. */
-  people: { name: string; outstanding: number; files: { status: 'read' | 'older' | 'unread' | string; acknowledged?: PolicyAck }[] }[];
+  people: { name: string; outstanding: number; files: { status: 'read' | 'older' | 'unread' | string; acknowledged?: PolicyAck; quiz?: { status: string; score?: number; retryAt?: string; older?: boolean } }[] }[];
 }
 
 /** The published folders of the space synced at `folder` (the space's local folder). */
