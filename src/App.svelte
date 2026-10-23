@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { invoke, convertFileSrc } from '@tauri-apps/api/core';
   import { getVersion } from '@tauri-apps/api/app';
   import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -7,7 +7,7 @@
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
   import { open as openDialog, save as saveDialog, message } from '@tauri-apps/plugin-dialog';
   import { openUrl, openPath, revealItemInDir } from '@tauri-apps/plugin-opener';
-  import type { SlateChangesEndDetail, SlateCompareEndDetail, SlateEditorApi, SlateFillEndDetail, SlateForm, SlateFormAnswers, SlateFormSubmitDetail, SlateOutline, SlateOutlineHeading, SlateUploadedAttachment, SlateWorkspaceMode } from '../public/slate/slate-editor';
+  import type { SlateChangesEndDetail, SlateCompareEndDetail, SlateEditorApi, SlateFillEndDetail, SlateForm, SlateFormAnswers, SlateFormSubmitDetail, SlateModeChangeDetail, SlateOutline, SlateOutlineHeading, SlateUploadedAttachment, SlateWorkspaceMode } from '../public/slate/slate-editor';
   import { basename, dirname, extname, joinPath, toLocalPath } from './lib/paths';
   import { detectFormat, toFileText, NEW_FILE_FORMAT, type FileFormat } from './lib/document';
   import { recentFileList, recentFolderList, byDate, type RecentEntry } from './lib/recent';
@@ -1184,6 +1184,7 @@
 
   async function onCompareEnd(detail: SlateCompareEndDetail) {
     if (!editor) return;
+    syncFormView();
     historyRevision = null;
     // Merged back to exactly what is on disk: nothing left to save.
     if (diskText !== null && toFileText(editor.getMarkdown(), format) === diskText) baseline = editor.getMarkdown();
@@ -1350,6 +1351,7 @@
   }
 
   function onChangesEnd(_detail: SlateChangesEndDetail) {
+    syncFormView();
     changesRequest += 1;
     showingChanges = false;
     changesFrom = null;
@@ -1498,7 +1500,9 @@
     }
   }
 
-  // ---- Forms (Metatrash 0.49.0, Slate 0.18.0) ------------------------------------------
+  // ---- Forms (Metatrash 0.49.0, Slate 0.19.0) ------------------------------------------
+  // A form's Preview is the form, ready to fill in (Slate's inPreview fill mode); Edit and
+  // Source show the template. Where it can't be sent from here, the fields show greyed out.
 
   /** The open document as a form template (front matter with a form key), or null. */
   let currentForm = $state<SlateForm | null>(null);
@@ -1508,8 +1512,13 @@
   let sentForm = $state<{ path: string; receipt: Receipt } | null>(null);
   /** The form being filled in: the file its draft belongs to (null when not filling). */
   let fillingPath: string | null = null;
-  /** Slate shows the form with its inputs (fill mode); the bar hides meanwhile. */
+  /** Slate shows the form with its inputs (fill mode). */
   let filling = $state(false);
+  /** Fill mode shows the fields greyed out: the form can't be sent from here just now. */
+  let fillReadOnly = false;
+  /** Edit, Preview or Source, as Slate last reported it. */
+  let workspaceMode = $state<SlateWorkspaceMode>('preview');
+  let formSync: Promise<void> = Promise.resolve();
   /** The answers were sent, so ending fill mode keeps no draft. */
   let fillSent = false;
   let submissionsDialog = $state<{ id?: string } | null>(null);
@@ -1520,6 +1529,7 @@
     clearTimeout(formTimer);
     currentForm = editor && path ? editor.getForm() : null;
     formDraft = currentForm && path ? loadDraft(path) : null;
+    syncFormView();
   }
 
   function scheduleFormCheck() {
@@ -1534,41 +1544,73 @@
     return null;
   });
 
-  async function fillInForm() {
-    if (!editor || !path || !currentForm) return;
-    if (formUnavailable) {
-      await message(`This form can only be sent from its space. ${formUnavailable}`, { title: 'Slate Viewer', kind: 'info' });
-      return;
+  /** Why the open form shows greyed out instead of ready to fill in, or null. */
+  function fillBlocked(): string | null {
+    if (formUnavailable) return 'Open it from its Metatrash space to fill it in.';
+    if (dirty) return 'Save your changes to the form to fill it in.';
+    if (publishedView?.path === path) return 'This is the published version. Choose Show Draft to fill it in.';
+    return null;
+  }
+
+  /** Shows the open form, in Preview, ready to fill in (or greyed out); one at a time. */
+  function syncFormView() {
+    formSync = formSync.then(applyFormView, applyFormView);
+  }
+
+  async function applyFormView() {
+    if (!editor) return;
+    const mode = editor.getWorkspaceMode();
+    workspaceMode = mode;
+    const wanted = currentForm !== null && !currentForm.error && path !== null && mode === 'preview'
+      && !editor.isShowingChanges() && !editor.isComparing();
+    if (!wanted || !path) return;
+    const blocked = fillBlocked();
+    const readOnly = blocked !== null;
+    if (filling && fillingPath === path && fillReadOnly === readOnly) return;
+    if (filling) {
+      // Another way of showing the same form: keep what was typed.
+      clearTimeout(draftTimer);
+      if (fillingPath && !fillReadOnly && !fillSent) saveDraft(fillingPath, editor.getFormAnswers());
     }
-    if (dirty) {
-      await message('Save your changes to the form first, then fill it in.', { title: 'Slate Viewer', kind: 'info' });
-      return;
-    }
-    if (publishedView?.path === path) {
-      await message('This shows the published version. Forms are sent from the file as it is now, so choose Show Draft first.', { title: 'Slate Viewer', kind: 'info' });
-      return;
-    }
-    if (editor.isShowingChanges()) editor.hideChanges();
-    const draft = loadDraft(path);
+    const draft = readOnly ? null : loadDraft(path);
+    const sent = sentForm?.path === path;
     fillingPath = path;
+    fillReadOnly = readOnly;
     fillSent = false;
-    sentForm = null;
     try {
       filling = true;
       await editor.startFill({
+        inPreview: true,
+        readOnly,
         answers: draft?.answers,
-        status: draft ? `Your draft from ${formatWhen(new Date(draft.savedAt).toISOString())}.` : 'Your answers are kept on this computer until you send them.',
+        status: blocked
+          ?? (draft ? `Your draft from ${formatWhen(new Date(draft.savedAt).toISOString())}.`
+            : sent ? 'Sent. You can fill it in again to send another.'
+              : 'Your answers are kept on this computer until you send them.'),
       });
     } catch (error) {
       fillingPath = null;
       filling = false;
-      await showError(error);
+      console.error(error);
     }
+  }
+
+  // Saving, a lost space or the published text decide whether the form can be filled in.
+  $effect(() => {
+    void [dirty, formUnavailable, publishedView];
+    untrack(() => { if (currentForm) syncFormView(); });
+  });
+
+  /** Fill In from Edit or Source: the form is filled in in Preview. */
+  async function fillInForm() {
+    if (!editor || !currentForm) return;
+    if (editor.getWorkspaceMode() !== 'preview') await setMode('preview');
+    syncFormView();
   }
 
   function onFormInput(answers: SlateFormAnswers) {
     const file = fillingPath;
-    if (!file) return;
+    if (!file || fillReadOnly) return;
     clearTimeout(draftTimer);
     draftTimer = setTimeout(() => {
       saveDraft(file, answers);
@@ -1581,9 +1623,12 @@
     const file = fillingPath;
     fillingPath = null;
     filling = false;
-    if (file && !fillSent) saveDraft(file, detail.answers);
+    if (file && !fillSent && !fillReadOnly) saveDraft(file, detail.answers);
+    fillReadOnly = false;
     fillSent = false;
     if (file === path) formDraft = file ? loadDraft(file) : null;
+    // After sending, the form comes back empty, ready for another.
+    if (detail.reason === 'host' && file === path) syncFormView();
   }
 
   /** Send: mtsync checks the template is the one on screen, and Metatrash files the copy. */
@@ -1625,8 +1670,13 @@
       buttons: { ok: 'Discard Draft', cancel: 'Keep' },
     });
     if (choice !== 'Discard Draft' || !path) return;
+    clearTimeout(draftTimer);
     clearDraft(path);
     formDraft = null;
+    if (editor?.isFilling() && fillingPath === path && !fillReadOnly) {
+      await editor.setFormAnswers({});
+      editor.setFormStatus('Your answers are kept on this computer until you send them.');
+    }
   }
 
   function showSubmissions(id?: string) {
@@ -2043,7 +2093,7 @@
           { text: '&Save', keys: 'Ctrl+S', action: () => void once('save', save) },
           { text: 'Save &As…', keys: 'Ctrl+Shift+S', action: () => void once('save', saveAs) },
           separator,
-          { text: 'Fill In For&m', enabled: currentForm !== null && !currentForm.error && !formUnavailable && !filling, action: () => void fillInForm() },
+          { text: 'Fill In For&m', enabled: currentForm !== null && !currentForm.error && workspaceMode !== 'preview', action: () => void fillInForm() },
           { text: 'My Su&bmissions…', enabled: openedSpace !== null, action: () => showSubmissions() },
           separator,
           { text: '&Print…', keys: 'Ctrl+P', action: () => void once('print', print) },
@@ -2417,6 +2467,10 @@
     host.addEventListener('slate:fill-end', event => {
       onFillEnd((event as CustomEvent<SlateFillEndDetail>).detail);
     });
+    host.addEventListener('slate:mode-change', event => {
+      workspaceMode = (event as CustomEvent<SlateModeChangeDetail>).detail.mode;
+      syncFormView();
+    });
     host.addEventListener('slate:outline-toggle', event => {
       setSection('outline', (event as CustomEvent<{ open: boolean }>).detail.open);
     });
@@ -2615,10 +2669,11 @@
     {:else if policyNotice}
       <p class="policy-notice">This folder publishes versions, but they can't be shown here: {policyNotice}</p>
     {/if}
-    {#if currentForm && !filling}
+    {#if currentForm}
       <FormBanner
         form={currentForm}
         unavailable={formUnavailable}
+        editing={workspaceMode !== 'preview'}
         draft={formDraft}
         sent={sentForm?.path === path ? sentForm.receipt : null}
         onFill={() => void fillInForm()}

@@ -1,6 +1,7 @@
 <script lang="ts">
-  // The bar above a form template (Metatrash 0.49.0): Fill In (or carry on with the draft kept on
-  // this computer), My Submissions, and what happened to the last answers sent.
+  // The bar above a form template (Metatrash 0.49.0): in Preview the form below is ready to fill
+  // in (Slate Viewer 0.16.0); in Edit and Source, Fill In goes to Preview. Also My Submissions,
+  // Discard Draft and what happened to the last answers sent.
   import { formatWhen } from './history';
   import type { FormDraft, Receipt } from './forms';
   import type { SlateForm } from '../../public/slate/slate-editor';
@@ -9,6 +10,8 @@
     form: SlateForm;
     /** Why it can't be sent from here (not in a space), or null. */
     unavailable: string | null;
+    /** Edit or Source: the template shows, not the form to fill in. */
+    editing: boolean;
     draft: FormDraft | null;
     /** What was sent from this window just now, for this form. */
     sent: Receipt | null;
@@ -17,7 +20,7 @@
     onSubmissions: (id?: string) => void;
   }
 
-  let { form, unavailable, draft, sent, onFill, onDiscardDraft, onSubmissions }: Props = $props();
+  let { form, unavailable, editing, draft, sent, onFill, onDiscardDraft, onSubmissions }: Props = $props();
 
   /** Where the copies go, without the person's own folder: owner/space. */
   const reviewSpace = $derived(form.submitTo.split('/').slice(0, 2).join('/'));
@@ -31,23 +34,25 @@
       <span class="error">This form has a mistake, so it can't be filled in yet: {form.error}</span>
     {:else if unavailable}
       <span>{unavailable}</span>
+    {:else if editing}
+      <span>You're changing the form itself. Fill In (or Preview) shows it ready to fill in.</span>
     {:else if sent}
       <span class="done">✓ Sent on {formatWhen(sent.submittedAt)}. A copy was filed in {sent.target.split('/').slice(0, 2).join('/')}.</span>
     {:else if draft}
-      <span>You have answers saved on this computer from {formatWhen(new Date(draft.savedAt).toISOString())}; they are not sent yet.</span>
+      <span>Your answers are saved on this computer as you type. They aren't sent until you choose Send.</span>
     {:else}
-      <span>A form. Fill it in and send it; your answers are filed in {reviewSpace}.</span>
+      <span>Fill in the form below and choose Send. Your answers are filed in {reviewSpace}.</span>
     {/if}
   </div>
   {#if !unavailable}
     <button onclick={() => onSubmissions(sent?.id)} title="The forms you sent from this space">My Submissions</button>
   {/if}
   {#if !form.error && !unavailable}
-    {#if draft && !sent}
+    {#if draft}
       <button onclick={onDiscardDraft} title="Forget the answers saved on this computer">Discard Draft</button>
-      <button class="primary" onclick={onFill}>Continue Draft</button>
-    {:else}
-      <button class:primary={!sent} onclick={onFill}>{sent ? 'Fill In Again' : 'Fill In'}</button>
+    {/if}
+    {#if editing}
+      <button class="primary" onclick={onFill}>Fill In</button>
     {/if}
   {/if}
 </div>

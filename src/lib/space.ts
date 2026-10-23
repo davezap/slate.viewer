@@ -170,6 +170,8 @@ export interface MtsyncInfo {
 }
 
 export interface SpaceRow { space: string; access: string; name: string }
+/** mtsync -json whoami: account is '' when the server is older than Metatrash 0.49.1. */
+export interface Whoami { server: string; signedIn: boolean; account: string }
 export interface Registration { folder: string; space: string; state: string; server: string | null }
 export interface MtsyncOutput { ok: boolean; stdout: string; stderr: string }
 
@@ -181,6 +183,12 @@ export const mtsync = {
   setup: () => invoke<string>('mtsync_setup'),
   spaces: (server = DEFAULT_SERVER) => invoke<SpaceRow[]>('mtsync_spaces', { server: serverArg(server) }),
   list: () => invoke<Registration[]>('mtsync_list'),
+  /** Who this computer signs in as, or null when mtsync (before 0.49.1) or the server can't say. */
+  whoami: async (server = DEFAULT_SERVER): Promise<Whoami | null> => {
+    const text = await invoke<string | null>('mtsync_whoami', { server: serverArg(server) });
+    if (!text) return null;
+    try { return JSON.parse(text) as Whoami; } catch { return null; }
+  },
   add: (space: string, folder: string, server = DEFAULT_SERVER) =>
     invoke<MtsyncOutput>('mtsync_add', { space, folder, server: serverArg(server) }),
   start: () => invoke<void>('mtsync_start'),

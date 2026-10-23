@@ -30,11 +30,16 @@
   let working = $state('');
   let field = $state<HTMLInputElement>();
   let settingUp = $state(false);
+  /** Who this computer signs in as ('' when mtsync or the server can't say), null until known. */
+  let account = $state<string | null>(null);
+  /** Connect was chosen to sign in as another account. */
+  let switching = $state(false);
 
   const missing = $derived(info !== null && (!info.path || !info.supported));
 
   async function loadSpaces(server = DEFAULT_SERVER) {
     signedOut = false;
+    void mtsync.whoami(server).then(who => { account = who?.signedIn ? who.account : who ? null : ''; }, () => { account = ''; });
     try {
       spaces = await mtsync.spaces(server);
     } catch (e) {
@@ -73,7 +78,8 @@
     }
   }
 
-  async function connect() {
+  async function connect(toSwitch = false) {
+    switching = toSwitch;
     error = '';
     loginUrl = '';
     const back = step;
@@ -85,7 +91,8 @@
       if (ref) await go();
     } catch (e) {
       step = back === 'signing-in' ? 'pick' : back;
-      error = String(e);
+      // Cancelling is not a mistake worth a red line.
+      error = String(e) === 'Sign-in was cancelled.' ? '' : String(e);
     }
   }
 
@@ -188,7 +195,7 @@
       {#if signedOut}
         <p class="note">This computer isn't signed in to Metatrash. Connect to sign in in your browser and choose which spaces this computer can use.</p>
       {:else if spaces && spaces.length}
-        <p class="label">Connected to this computer</p>
+        <p class="label">Connected to this computer{#if account} as {account}{/if}</p>
         <ul class="spaces">
           {#each spaces as row (row.space)}
             <li>
@@ -207,6 +214,9 @@
       {#if error}<p class="error">{error}</p>{/if}
       <div class="buttons">
         <button onclick={() => void connect()}>{signedOut ? 'Connect…' : 'Connect More Spaces…'}</button>
+        {#if !signedOut && spaces}
+          <button title="Sign this computer in as another Metatrash account" onclick={() => void connect(true)}>Switch Account…</button>
+        {/if}
         <span class="grow"></span>
         <button onclick={onClose}>Cancel</button>
         <button class="primary" disabled={!input.trim()} onclick={() => void go()}>Open</button>
@@ -224,6 +234,11 @@
     {:else if step === 'signing-in'}
       <p>Waiting for you to finish in the browser…</p>
       <p class="muted">Sign in, tick the spaces this computer may use, and approve. A new email address creates an account.</p>
+      {#if switching}
+        <p class="note">To switch, choose <b>Sign out</b> next to the account name on the page that opens, then sign in as the other account. This computer then syncs every space as that account; spaces only {account || 'the old account'} can reach stop syncing until you switch back, and their files stay.</p>
+      {:else}
+        <p class="muted">The browser uses the account signed in to metatrash.com there{account ? ` (this computer uses ${account})` : ''}. To connect a different account, use Switch Account instead.</p>
+      {/if}
       {#if loginUrl}
         <p class="muted">If the browser didn't open: <button class="link" onclick={() => void openUrl(loginUrl)}>open the sign-in page</button>.</p>
       {/if}

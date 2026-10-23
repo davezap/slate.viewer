@@ -238,6 +238,21 @@ pub async fn mtsync_spaces(server: Option<String>) -> Result<Vec<SpaceRow>, Stri
     Ok(parse_spaces(&out.stdout))
 }
 
+/// The account this computer signs in as: `mtsync -json whoami` (mtsync 0.49.1). Ok(None)
+/// when mtsync or the server is too old to say.
+#[tauri::command]
+pub async fn mtsync_whoami(server: Option<String>) -> Result<Option<String>, String> {
+    let out = run(server, vec!["-json".into(), "whoami".into()]).await?;
+    if !out.ok {
+        let all = format!("{}{}", out.stderr, out.stdout);
+        if all.contains("unknown command") || all.contains("Usage") {
+            return Ok(None);
+        }
+        return Err(out.message());
+    }
+    Ok(Some(out.stdout))
+}
+
 #[tauri::command]
 pub async fn mtsync_list() -> Result<Vec<Registration>, String> {
     let out = run(None, vec!["list".into()]).await?;
@@ -418,6 +433,10 @@ fn history_error(out: &Output) -> String {
 
 /// Runs `mtsync login` (a browser sign-in) until it finishes or is cancelled. The sign-in
 /// URL it prints is sent to the window as `mtsync-login-url`, as a fallback link.
+/// mtsync_login's error when the sign-in stopped without saying why (Cancel, or the browser
+/// never came back). Open Space shows no error for it.
+const LOGIN_CANCELLED: &str = "Sign-in was cancelled.";
+
 #[tauri::command]
 pub async fn mtsync_login(window: WebviewWindow, state: State<'_, Mtsync>, server: Option<String>) -> Result<(), String> {
     let binary = find_binary().ok_or("mtsync isn't installed on this computer.")?;
@@ -466,8 +485,11 @@ pub async fn mtsync_login(window: WebviewWindow, state: State<'_, Mtsync>, serve
     if status.success() {
         Ok(())
     } else {
+        // The sign-in link mtsync prints first is not a reason: without a later line, the
+        // sign-in was cancelled (or the browser never came back).
         let text = collected.lock().unwrap().clone();
-        Err(last_line(&text).unwrap_or_else(|| "Sign-in was cancelled.".into()))
+        let reason = text.lines().rev().map(str::trim).find(|l| !l.is_empty() && !l.contains("://") && !l.starts_with("Opening your browser"));
+        Err(reason.map(String::from).unwrap_or_else(|| LOGIN_CANCELLED.into()))
     }
 }
 

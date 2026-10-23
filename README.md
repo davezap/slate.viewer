@@ -298,16 +298,20 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
   version before) and, when you confirmed an older version, **Changes Since You Read It**. Properties > Publishing also shows who has read what
   (read-write access). The app reads this with `mtsync policies`, `mtsync ack` and `mtsync readers` (`src/lib/policies.ts`,
   `PolicyBanner.svelte`; the taskbar number is drawn in `src-tauri/src/attention.rs`).
-- **Forms** (Metatrash 0.49.0, mtsync 0.49.0, Slate 0.18.0). A Markdown file whose front matter has `form`, `title` and
+- **Forms** (Metatrash 0.49.0, mtsync 0.49.0, Slate 0.19.0). A Markdown file whose front matter has `form`, `title` and
   `submitTo` is a form template, with fields written as `{{text name=…}}`, `{{choice name=…}}` and so on (see `docs/forms.md`
-  in Metatrash). Opening one shows a bar with **Fill In** (also File > **Fill In Form**). Slate then shows the form with
-  inputs; answers are kept on this computer as a draft while you type (localStorage, per file), so closing the app or
-  choosing **Stop Filling In** loses nothing, and the bar offers **Continue Draft** or **Discard Draft** next time.
-  **Send** runs `mtsync submit`, which checks the template on disk is the one the space has; Metatrash checks the answers
-  (each problem shows under its field) and files a filled-in copy in the review space the template names, which the
-  person filling it in can't open. **My Submissions** (bar or File menu) lists what you sent from the open space, with the
-  answers and the filed copy (`mtsync submissions`). Fill In needs the file to be saved and in a synced space. Logic:
-  `src/lib/forms.ts`, `FormBanner.svelte`, `SubmissionsDialog.svelte`.
+  in Metatrash). In Preview the form is ready to fill in (Slate's `startFill({ inPreview: true })`); Edit and Source show
+  the template, and the bar's **Fill In** (also File > **Fill In Form**) goes back to Preview. Answers are kept on this
+  computer as a draft while you type (localStorage, per file), so leaving Preview or closing the app loses nothing; the bar
+  offers **Discard Draft**. Where the form can't be sent (not in a synced space, unsaved changes, the published version)
+  the fields show greyed out (`readOnly`). **Send** runs `mtsync submit`, which checks the template on disk is the one the
+  space has; Metatrash checks the answers (each problem shows under its field) and files a filled-in copy in the review
+  space the template names, which the person filling it in can't open; the form then comes back empty. **My Submissions**
+  (bar or File menu) lists what you sent from the open space, with the answers and the filed copy (`mtsync submissions`).
+  Logic: `src/lib/forms.ts`, `FormBanner.svelte`, `SubmissionsDialog.svelte`. Preview hides front matter in every document.
+- **Accounts.** mtsync signs a computer in as one Metatrash account, and every space syncs as it. Open Space names the
+  account (`mtsync whoami`, mtsync and Metatrash 0.49.1) and offers **Switch Account…**, which runs `mtsync login` again
+  for the browser to sign in as someone else.
 
 ### Documents
 
