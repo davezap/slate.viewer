@@ -187,6 +187,8 @@ pub fn run() {
             mtsync::mtsync_policies,
             mtsync::mtsync_ack,
             mtsync::mtsync_readers,
+            mtsync::mtsync_submit,
+            mtsync::mtsync_submissions,
             attention::set_attention_badge,
             mtsync::mtsync_login,
             mtsync::mtsync_cancel_login,

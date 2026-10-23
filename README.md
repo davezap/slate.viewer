@@ -298,6 +298,16 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
   version before) and, when you confirmed an older version, **Changes Since You Read It**. Properties > Publishing also shows who has read what
   (read-write access). The app reads this with `mtsync policies`, `mtsync ack` and `mtsync readers` (`src/lib/policies.ts`,
   `PolicyBanner.svelte`; the taskbar number is drawn in `src-tauri/src/attention.rs`).
+- **Forms** (Metatrash 0.49.0, mtsync 0.49.0, Slate 0.18.0). A Markdown file whose front matter has `form`, `title` and
+  `submitTo` is a form template, with fields written as `{{text name=…}}`, `{{choice name=…}}` and so on (see `docs/forms.md`
+  in Metatrash). Opening one shows a bar with **Fill In** (also File > **Fill In Form**). Slate then shows the form with
+  inputs; answers are kept on this computer as a draft while you type (localStorage, per file), so closing the app or
+  choosing **Stop Filling In** loses nothing, and the bar offers **Continue Draft** or **Discard Draft** next time.
+  **Send** runs `mtsync submit`, which checks the template on disk is the one the space has; Metatrash checks the answers
+  (each problem shows under its field) and files a filled-in copy in the review space the template names, which the
+  person filling it in can't open. **My Submissions** (bar or File menu) lists what you sent from the open space, with the
+  answers and the filed copy (`mtsync submissions`). Fill In needs the file to be saved and in a synced space. Logic:
+  `src/lib/forms.ts`, `FormBanner.svelte`, `SubmissionsDialog.svelte`.
 
 ### Documents
 
@@ -350,7 +360,7 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
 
 ```
 docs/change-notes/   changenotes_<version>.md per release, also published to the docs space (see Updates)
-public/slate/        Slate 0.16.0, vendored unchanged (slate.js, slate.css, mermaid/, themes, .d.ts)
+public/slate/        Slate 0.18.0, vendored unchanged (slate.js, slate.css, mermaid/, themes, .d.ts)
 src/App.svelte       menu, file handling, link handling, Slate mount
 src/lib/             icon bar and sidebar sections, folder Properties (FolderProperties.svelte, folderSettings.ts), Go to File, wiki-link resolving, paths, line endings, recent lists, preferences
 src-tauri/src/       Rust: windows, single instance, file read/write, attachments, file and folder

@@ -6,7 +6,7 @@
 //! The `spaces` and `list` output is text meant for people (gaps G4/G5), so it is parsed
 //! defensively here.
 
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -339,6 +339,73 @@ pub async fn mtsync_readers(folder: String) -> Result<String, String> {
     Ok(out.stdout)
 }
 
+/// Forms need mtsync 0.49.0 (`submit`, `submissions`, `submission`).
+const FORMS_VERSION: (u32, u32, u32) = (0, 49, 0);
+
+async fn require_forms() -> Result<(), String> {
+    let out = run(None, vec!["version".into()]).await?;
+    match parse_version(&out.stdout) {
+        Some(v) if out.ok && v >= FORMS_VERSION => Ok(()),
+        _ => Err("Forms need mtsync 0.49.0 or later. Update mtsync and try again.".into()),
+    }
+}
+
+/// Runs mtsync with `input` on its standard input.
+fn run_with_input_blocking(args: &[&str], input: &[u8]) -> Result<Output, String> {
+    let binary = find_binary().ok_or("mtsync isn't installed on this computer.")?;
+    let mut child = command(&binary, None, args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Could not run mtsync: {e}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(input).map_err(|e| format!("Could not send the answers to mtsync: {e}"))?;
+    }
+    let out = child.wait_with_output().map_err(|e| format!("Could not run mtsync: {e}"))?;
+    Ok(out.into())
+}
+
+#[derive(Serialize)]
+pub struct SubmitOutcome {
+    ok: bool,
+    /// The receipt (ok), or `{"error": {...}}` with each refused field when the server said no.
+    json: String,
+    /// mtsync's message when there is no JSON to show.
+    message: String,
+}
+
+/// Sends `answers` (a JSON object of field name to answer) to the form `file`: `mtsync -json
+/// submit FILE -` (mtsync 0.49.0). A refusal comes back as ok: false with the server's error.
+#[tauri::command]
+pub async fn mtsync_submit(file: String, answers: String) -> Result<SubmitOutcome, String> {
+    require_forms().await?;
+    let out = tauri::async_runtime::spawn_blocking(move || {
+        run_with_input_blocking(&["-json", "submit", &file, "-"], answers.as_bytes())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    let json = out.stdout.trim().to_string();
+    let message = if out.ok { String::new() } else { out.message() };
+    Ok(SubmitOutcome { ok: out.ok, json: if json.starts_with('{') { json } else { String::new() }, message })
+}
+
+/// The forms this person sent from the space synced at `folder`, or with `id` one of them with
+/// the copy that was filed: `mtsync -json submissions` / `submission` (mtsync 0.49.0).
+#[tauri::command]
+pub async fn mtsync_submissions(folder: String, id: Option<String>) -> Result<String, String> {
+    require_forms().await?;
+    let args = match id {
+        Some(id) => vec!["-json".into(), "submission".into(), folder, id],
+        None => vec!["-json".into(), "submissions".into(), folder],
+    };
+    let out = run(None, args).await?;
+    if !out.ok {
+        return Err(out.message());
+    }
+    Ok(out.stdout)
+}
+
 /// mtsync before 0.41.0 has no history or show; say so rather than echo its usage text.
 fn history_error(out: &Output) -> String {
     let all = format!("{}{}", out.stderr, out.stdout);
@@ -444,5 +511,7 @@ mod tests {
         assert!(parse_version("mtsync v0.37.2").unwrap() >= MIN_VERSION);
         assert!(parse_version("mtsync 0.47.3").unwrap() < POLICIES_VERSION);
         assert!(parse_version("mtsync 0.48.0").unwrap() >= POLICIES_VERSION);
+        assert!(parse_version("mtsync 0.48.0").unwrap() < FORMS_VERSION);
+        assert!(parse_version("mtsync 0.49.0").unwrap() >= FORMS_VERSION);
     }
 }

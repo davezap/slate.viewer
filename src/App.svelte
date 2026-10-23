@@ -7,7 +7,7 @@
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
   import { open as openDialog, save as saveDialog, message } from '@tauri-apps/plugin-dialog';
   import { openUrl, openPath, revealItemInDir } from '@tauri-apps/plugin-opener';
-  import type { SlateChangesEndDetail, SlateCompareEndDetail, SlateEditorApi, SlateOutline, SlateOutlineHeading, SlateUploadedAttachment, SlateWorkspaceMode } from '../public/slate/slate-editor';
+  import type { SlateChangesEndDetail, SlateCompareEndDetail, SlateEditorApi, SlateFillEndDetail, SlateForm, SlateFormAnswers, SlateFormSubmitDetail, SlateOutline, SlateOutlineHeading, SlateUploadedAttachment, SlateWorkspaceMode } from '../public/slate/slate-editor';
   import { basename, dirname, extname, joinPath, toLocalPath } from './lib/paths';
   import { detectFormat, toFileText, NEW_FILE_FORMAT, type FileFormat } from './lib/document';
   import { recentFileList, recentFolderList, byDate, type RecentEntry } from './lib/recent';
@@ -36,10 +36,13 @@
     DEFAULT_SERVER, fileLock, type SpaceRef, type FolderDescription } from './lib/space';
   import QuickOpen from './lib/QuickOpen.svelte';
   import HistoryPanel from './lib/HistoryPanel.svelte';
-  import { entryLabel, fileHistory, findPublishedEntry, revisionText, versionLabel, type HistoryEntry } from './lib/history';
+  import { entryLabel, fileHistory, findPublishedEntry, formatWhen, revisionText, versionLabel, type HistoryEntry } from './lib/history';
   import { lastSession, saveSession, placeView, savePlaceView, type PlaceView } from './lib/session';
   import PolicyBanner from './lib/PolicyBanner.svelte';
   import { acknowledge, fetchPolicies, outstandingFiles, policyFor, setAttentionBadge, type Policies } from './lib/policies';
+  import FormBanner from './lib/FormBanner.svelte';
+  import SubmissionsDialog from './lib/SubmissionsDialog.svelte';
+  import { clearDraft, loadDraft, saveDraft, submitForm, type FormDraft, type Receipt } from './lib/forms';
   import { SETTINGS_FILE, folderChain, frozenKeys, publishText, toSavedVersion } from './lib/folderSettings';
 
   interface LoadedDocument { path: string; text: string; hasBom: boolean }
@@ -164,6 +167,10 @@
   function setDocument(doc: LoadedDocument) {
     // The changes shown were for the text being replaced.
     if (editor?.isShowingChanges()) editor.hideChanges();
+    // Another file: stop filling in the form (its answers stay as a draft). The same file
+    // reloaded keeps the answers on screen.
+    if (editor?.isFilling() && doc.path !== path) editor.endFill();
+    if (doc.path !== path) sentForm = null;
     publishedView = null;
     path = doc.path;
     format = detectFormat(doc.text, doc.hasBom);
@@ -184,6 +191,7 @@
       await editor.setMarkdown(doc.text);
       baseline = editor.getMarkdown();
       dirty = false;
+      checkForm();
       recentFileList.remember(doc.path);
       recent = recentFileList.list();
       rememberSession();
@@ -807,6 +815,7 @@
     await editor.setMarkdown('');
     baseline = editor.getMarkdown();
     dirty = false;
+    checkForm();
     rememberSession();
   }
 
@@ -1213,6 +1222,7 @@
     await editor.setMarkdown(doc.text);
     baseline = editor.getMarkdown();
     dirty = false;
+    checkForm();
     historyStamp += 1;
     if (scroller) scroller.scrollTop = scrollTop;
   }
@@ -1441,6 +1451,7 @@
     await editor.setMarkdown(text);
     baseline = editor.getMarkdown();
     dirty = false;
+    checkForm();
   }
 
   /** Back from the published text to the file as it is now. */
@@ -1485,6 +1496,142 @@
     } finally {
       confirming = false;
     }
+  }
+
+  // ---- Forms (Metatrash 0.49.0, Slate 0.18.0) ------------------------------------------
+
+  /** The open document as a form template (front matter with a form key), or null. */
+  let currentForm = $state<SlateForm | null>(null);
+  /** The answers kept on this computer for the open form, until they are sent. */
+  let formDraft = $state<FormDraft | null>(null);
+  /** What this window sent for the open form, shown on its bar until another file opens. */
+  let sentForm = $state<{ path: string; receipt: Receipt } | null>(null);
+  /** The form being filled in: the file its draft belongs to (null when not filling). */
+  let fillingPath: string | null = null;
+  /** Slate shows the form with its inputs (fill mode); the bar hides meanwhile. */
+  let filling = $state(false);
+  /** The answers were sent, so ending fill mode keeps no draft. */
+  let fillSent = false;
+  let submissionsDialog = $state<{ id?: string } | null>(null);
+  let formTimer: ReturnType<typeof setTimeout> | undefined;
+  let draftTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function checkForm() {
+    clearTimeout(formTimer);
+    currentForm = editor && path ? editor.getForm() : null;
+    formDraft = currentForm && path ? loadDraft(path) : null;
+  }
+
+  function scheduleFormCheck() {
+    clearTimeout(formTimer);
+    formTimer = setTimeout(checkForm, 400);
+  }
+
+  /** Why the open form can't be sent from this window, or null. */
+  const formUnavailable = $derived.by(() => {
+    if (!currentForm || !path) return null;
+    if (!openedSpace || spaceRelative(path) === null) return 'Open it from its Metatrash space (File > Open Metatrash Space) to fill it in and send it.';
+    return null;
+  });
+
+  async function fillInForm() {
+    if (!editor || !path || !currentForm) return;
+    if (formUnavailable) {
+      await message(`This form can only be sent from its space. ${formUnavailable}`, { title: 'Slate Viewer', kind: 'info' });
+      return;
+    }
+    if (dirty) {
+      await message('Save your changes to the form first, then fill it in.', { title: 'Slate Viewer', kind: 'info' });
+      return;
+    }
+    if (publishedView?.path === path) {
+      await message('This shows the published version. Forms are sent from the file as it is now, so choose Show Draft first.', { title: 'Slate Viewer', kind: 'info' });
+      return;
+    }
+    if (editor.isShowingChanges()) editor.hideChanges();
+    const draft = loadDraft(path);
+    fillingPath = path;
+    fillSent = false;
+    sentForm = null;
+    try {
+      filling = true;
+      await editor.startFill({
+        answers: draft?.answers,
+        status: draft ? `Your draft from ${formatWhen(new Date(draft.savedAt).toISOString())}.` : 'Your answers are kept on this computer until you send them.',
+      });
+    } catch (error) {
+      fillingPath = null;
+      filling = false;
+      await showError(error);
+    }
+  }
+
+  function onFormInput(answers: SlateFormAnswers) {
+    const file = fillingPath;
+    if (!file) return;
+    clearTimeout(draftTimer);
+    draftTimer = setTimeout(() => {
+      saveDraft(file, answers);
+      if (file === path) formDraft = loadDraft(file);
+    }, 600);
+  }
+
+  function onFillEnd(detail: SlateFillEndDetail) {
+    clearTimeout(draftTimer);
+    const file = fillingPath;
+    fillingPath = null;
+    filling = false;
+    if (file && !fillSent) saveDraft(file, detail.answers);
+    fillSent = false;
+    if (file === path) formDraft = file ? loadDraft(file) : null;
+  }
+
+  /** Send: mtsync checks the template is the one on screen, and Metatrash files the copy. */
+  async function sendForm(detail: SlateFormSubmitDetail) {
+    if (!editor || !fillingPath) return;
+    const file = fillingPath;
+    editor.setFormStatus('Sending…', { busy: true });
+    let result;
+    try {
+      result = await submitForm(file, detail.answers);
+    } catch (error) {
+      editor.setFormStatus(String(error), { kind: 'error', busy: false });
+      return;
+    }
+    if (fillingPath !== file) return;
+    if (result.ok) {
+      fillSent = true;
+      clearDraft(file);
+      sentForm = { path: file, receipt: result.receipt };
+      editor.endFill();
+      return;
+    }
+    const { code, message: text, fields } = result.error;
+    if (code === 'invalid_answers' && fields?.length) {
+      editor.setFormProblems(fields);
+      editor.setFormStatus(fields.length === 1 ? '1 answer needs fixing.' : `${fields.length} answers need fixing.`, { kind: 'error', busy: false });
+    } else if (code === 'template_changed') {
+      editor.setFormStatus('This form was changed in the space since it was opened. Wait for it to sync, check your answers and send again.', { kind: 'error', busy: false });
+    } else {
+      editor.setFormStatus(text || 'The form could not be sent.', { kind: 'error', busy: false });
+    }
+  }
+
+  async function discardDraft() {
+    if (!path) return;
+    const choice = await message('Forget the answers saved on this computer for this form?', {
+      title: 'Slate Viewer',
+      kind: 'warning',
+      buttons: { ok: 'Discard Draft', cancel: 'Keep' },
+    });
+    if (choice !== 'Discard Draft' || !path) return;
+    clearDraft(path);
+    formDraft = null;
+  }
+
+  function showSubmissions(id?: string) {
+    if (!openedSpace) return;
+    submissionsDialog = { id };
   }
 
   /** Waits (up to about 40 s) for mtsync to send this window's saves to the space. */
@@ -1896,6 +2043,9 @@
           { text: '&Save', keys: 'Ctrl+S', action: () => void once('save', save) },
           { text: 'Save &As…', keys: 'Ctrl+Shift+S', action: () => void once('save', saveAs) },
           separator,
+          { text: 'Fill In For&m', enabled: currentForm !== null && !currentForm.error && !formUnavailable && !filling, action: () => void fillInForm() },
+          { text: 'My Su&bmissions…', enabled: openedSpace !== null, action: () => showSubmissions() },
+          separator,
           { text: '&Print…', keys: 'Ctrl+P', action: () => void once('print', print) },
           separator,
           ...(isWindows ? [{ text: 'Make Slate Viewer the &Default for .md Files…', action: () => void openDefaultApps() }, separator] : []),
@@ -2242,6 +2392,7 @@
     cleanups.push(() => window.removeEventListener('wheel', onZoomWheel));
     host.addEventListener('slate:change', () => {
       if (editor) dirty = missingOnDisk || editor.getMarkdown() !== baseline;
+      scheduleFormCheck();
       if (editor && openedSpace) docBytes = new TextEncoder().encode(editor.getMarkdown()).length;
       scheduleFindRefresh();
       schedulePlaceSave();
@@ -2256,6 +2407,15 @@
     });
     host.addEventListener('slate:changes-end', event => {
       onChangesEnd((event as CustomEvent<SlateChangesEndDetail>).detail);
+    });
+    host.addEventListener('slate:form-input', event => {
+      onFormInput((event as CustomEvent<{ name: string; answers: SlateFormAnswers }>).detail.answers);
+    });
+    host.addEventListener('slate:form-submit', event => {
+      void sendForm((event as CustomEvent<SlateFormSubmitDetail>).detail);
+    });
+    host.addEventListener('slate:fill-end', event => {
+      onFillEnd((event as CustomEvent<SlateFillEndDetail>).detail);
     });
     host.addEventListener('slate:outline-toggle', event => {
       setSection('outline', (event as CustomEvent<{ open: boolean }>).detail.open);
@@ -2455,6 +2615,17 @@
     {:else if policyNotice}
       <p class="policy-notice">This folder publishes versions, but they can't be shown here: {policyNotice}</p>
     {/if}
+    {#if currentForm && !filling}
+      <FormBanner
+        form={currentForm}
+        unavailable={formUnavailable}
+        draft={formDraft}
+        sent={sentForm?.path === path ? sentForm.receipt : null}
+        onFill={() => void fillInForm()}
+        onDiscardDraft={() => void discardDraft()}
+        onSubmissions={showSubmissions}
+      />
+    {/if}
     <div class="host" bind:this={host}></div>
     <FindBar bind:this={findBar} getHost={() => host} getEditor={() => editor} inEditor={() => editor?.getWorkspaceMode() !== 'preview'} />
   </div>
@@ -2475,6 +2646,10 @@
     onSaved={() => { syncPendingSince = Date.now(); void loadDescriptions(); }}
     onOpenFile={relative => void openFromFolder(relative)}
   />
+{/if}
+
+{#if submissionsDialog && openedSpace}
+  <SubmissionsDialog folder={openedSpace.folder} space={openedSpace.space} initialId={submissionsDialog.id} onClose={() => (submissionsDialog = null)} />
 {/if}
 
 {#if updateDialog}
