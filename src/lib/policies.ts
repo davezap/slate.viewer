@@ -32,16 +32,15 @@ export interface PolicyFile {
   file?: string;
   /** Where publishedPath is on this computer, for `mtsync show` with the folder's revision. */
   publishedFile?: string;
-  /** A quiz (Metatrash 0.50.0): the file it tests, relative to the quiz. It is never a file to read. */
-  covers?: string;
-  /** The quiz that covers this file: it counts as read once this person passes it. */
+  /** A quiz (Metatrash 0.50.0): passed, not read. This person's state in it. */
   quiz?: PolicyQuiz;
+  /** A quiz: the tracked files it covers, where they are now (Metatrash 0.51.0). */
+  covers?: string[];
+  /** The quizzes that cover this file; reading it is confirmed on its own. */
+  quizzes?: string[];
 }
 
 export interface PolicyQuiz {
-  /** The quiz file, relative to the synced folder (with /). */
-  path: string;
-  publishedPath: string;
   /** new, waiting (for a reviewer to tick free-text answers), failed or passed. */
   status: 'new' | 'waiting' | 'failed' | 'passed' | string;
   /** The last score, in percent. */
@@ -50,16 +49,27 @@ export interface PolicyQuiz {
   retryAt?: string;
   /** This person passed an earlier text of the quiz. */
   older?: boolean;
-  file?: string;
-  publishedFile?: string;
+  /** The files it covers must be read before it can be sent (the default). */
+  readFirst: boolean;
+  /** With readFirst: the files it covers that this person still has to read. */
+  toRead?: string[];
 }
 
-/** The quiz state for the quiz at `relative`, from the file it covers. */
-export function quizFor(folder: PolicyFolder, relative: string): { quiz: PolicyQuiz; covered: PolicyFile } | null {
-  for (const f of folder.files) {
-    if (f.quiz?.path === relative) return { quiz: f.quiz, covered: f };
-  }
-  return null;
+/** The quiz at `relative` and this person's state in it, or null when it isn't one. */
+export function quizFor(folder: PolicyFolder, relative: string): { quiz: PolicyQuiz; file: PolicyFile } | null {
+  const file = folder.files.find(f => f.path === relative && f.quiz);
+  return file?.quiz ? { quiz: file.quiz, file } : null;
+}
+
+/** The quizzes (path and state) that cover the file at `relative`, in any published folder. */
+export function quizzesCovering(policies: Policies | null, relative: string): { path: string; quiz: PolicyQuiz }[] {
+  if (!policies) return [];
+  const all = policies.folders.flatMap(f => f.files);
+  const file = all.find(f => f.path === relative);
+  return (file?.quizzes ?? []).flatMap(path => {
+    const quiz = all.find(f => f.path === path)?.quiz;
+    return quiz ? [{ path, quiz }] : [];
+  });
 }
 
 export interface PolicyFolder {
@@ -120,7 +130,7 @@ export function policyFor(policies: Policies | null, relative: string): { folder
   return { folder: best, file: best.files.find(f => f.path === relative) ?? null };
 }
 
-/** Files (relative) this person still has to read. */
+/** Files (relative) this person still has to read, and quizzes still to pass. */
 export function outstandingFiles(policies: Policies | null): string[] {
   return policies ? policies.folders.flatMap(f => f.files.filter(x => x.outstanding).map(x => x.path)) : [];
 }

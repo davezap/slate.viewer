@@ -309,16 +309,19 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
   space the template names, which the person filling it in can't open; the form then comes back empty. **My Submissions**
   (bar or File menu) lists what you sent from the open space, with the answers and the filed copy (`mtsync submissions`).
   Logic: `src/lib/forms.ts`, `FormBanner.svelte`, `SubmissionsDialog.svelte`. Preview hides front matter in every document. In a folder that asks people to read its files, sending a form also counts as reading it (Metatrash 0.49.4): the receipt's `acknowledged` makes Viewer reload the read status.
-- **Reviews and quizzes** (Metatrash 0.50.0, mtsync 0.50.0). Every filed copy is reviewed: it waits as submitted until it
-  is approved or declined, and My Submissions shows the review and its note. A quiz is a form in a published folder whose
-  front matter says `quiz: true` and `covers:` the file it tests; that file's bar offers **Take the Quiz** instead of
-  I Have Read This, and passing it is what clears its dot. Metatrash marks the answers with the quiz's answer key; the bar
-  and My Submissions show the score and which answers were right (never the right answers). After a fail the quiz is greyed
-  out until `retryAfter` passes, then offers **Fix My Answers** (the last answers, wrong ones marked) and **Start Again**.
-  Opening a filed copy in the review space (with read-write access) shows a review bar: **Approve** or **Decline** with a
-  note for a form, a tick or cross for each written answer of a quiz, then **Reviewed** (`mtsync review`). **Use This as
-  Answers** on a quiz copy saves it, without its submission, as `<space>-<form>-answers.md` beside it: the answer key.
-  Logic: `ReviewBanner.svelte`, `parseFiledCopy` and `answerKeyText` in `src/lib/forms.ts`, `quizFor` in
+- **Reviews and quizzes** (Metatrash 0.50.0, mtsync 0.50.0; quizzes changed in 0.51.0). Every filed copy is reviewed: it
+  waits as submitted until it is approved or declined, and My Submissions shows the review and its note. A quiz is a form
+  in a published folder whose front matter says `quiz: true`, and `covers:` the policies it tests (files, patterns such as
+  `TG-ISG-*.md`, or folders). It is its own item to do, with its own red dot until passed; the policies it covers are
+  still confirmed with I Have Read This, and their bar also offers **Take the Quiz**. With `readFirst` (the default) the
+  quiz is greyed out until they are read, and its bar lists them. Metatrash marks the answers with the quiz's answer key;
+  the bar and My Submissions show the score and which answers were right (never the right answers). After a fail the
+  quiz is greyed out until `retryAfter` passes, then offers **Fix My Answers** (the last answers, wrong ones marked) and
+  **Start Again**. Opening a filed copy in the review space (with read-write access) shows a review bar: **Approve** or
+  **Decline** with a note for a form, a tick or cross for each written answer of a quiz, then **Reviewed** (`mtsync
+  review`). **Use This as Answers** on a quiz copy saves it, without its submission, as `<space>-<form>-answers.md`
+  beside it: the answer key.
+  Logic: `ReviewBanner.svelte`, `parseFiledCopy` and `answerKeyText` in `src/lib/forms.ts`, `quizFor` and `quizzesCovering` in
   `src/lib/policies.ts`.
 - **Accounts.** mtsync signs a computer in as one Metatrash account, and every space syncs as it. Open Space names the
   account (`mtsync whoami`, mtsync and Metatrash 0.49.1) and offers **Switch Account…**, which runs `mtsync login` again

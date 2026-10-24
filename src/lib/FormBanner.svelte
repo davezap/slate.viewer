@@ -2,7 +2,8 @@
   // The bar above a form template (Metatrash 0.49.0): in Preview the form below is ready to fill
   // in (Slate Viewer 0.16.0); in Edit and Source, Fill In goes to Preview. Also My Submissions,
   // Discard Draft and what happened to the last answers sent. A quiz (Metatrash 0.50.0) also
-  // says where this person is with it, and after a fail offers Fix My Answers and Start Again.
+  // says where this person is with it, what to read first (0.51.0), and after a fail offers Fix My
+  // Answers and Start Again.
   import { formatWhen } from './history';
   import type { FormDraft, Receipt } from './forms';
   import type { PolicyFile, PolicyQuiz } from './policies';
@@ -20,8 +21,8 @@
     onFill: () => void;
     onDiscardDraft: () => void;
     onSubmissions: (id?: string) => void;
-    /** The form is a quiz: this person's state in it and the file it covers. */
-    quiz?: { quiz: PolicyQuiz; covered: PolicyFile } | null;
+    /** The form is a quiz: this person's state in it, and its entry (with the files it covers). */
+    quiz?: { quiz: PolicyQuiz; file: PolicyFile } | null;
     /** A failed quiz is open to fill in again. */
     canRetry?: boolean;
     onFixAnswers?: () => void;
@@ -33,7 +34,13 @@
   /** Where the copies go, without the person's own folder: owner/space. */
   const reviewSpace = $derived(form.submitTo.split('/').slice(0, 2).join('/'));
   const filedIn = $derived(sent ? sent.target.split('/').slice(0, 2).join('/') : '');
-  const covered = $derived(quiz ? quiz.covered.path.split('/').pop() : '');
+  const name = (p: string) => p.split('/').pop() ?? p;
+  /** What it covers, in a few words. */
+  const covered = $derived.by(() => {
+    const files = quiz?.file.covers ?? [];
+    return files.length === 1 ? name(files[0]) : files.length ? `${files.length} policies` : '';
+  });
+  const toRead = $derived(quiz?.quiz.readFirst ? quiz.quiz.toRead ?? [] : []);
   const state = $derived(quiz?.quiz.status ?? '');
   const passMark = $derived(sent?.passMark ?? 100);
 </script>
@@ -49,10 +56,10 @@
     {:else if editing}
       <span>You're changing the form itself. Fill In (or Preview) shows it ready to fill in.</span>
     {:else if sent?.quiz && sent.status === 'approved'}
-      <span class="done">✓ Passed{sent.score !== undefined ? ` with ${sent.score}%` : ''}. That confirms you read {covered || 'what it covers'}.</span>
+      <span class="done">✓ Passed{sent.score !== undefined ? ` with ${sent.score}%` : ''}.</span>
     {:else if sent?.quiz && sent.status === 'declined'}
       <span class="ask">Not passed: {sent.score ?? 0}%, and the pass mark is {passMark}%.</span>
-      <span>Read {covered || 'what it covers'} again{quiz?.quiz.retryAt ? `, then try again from ${formatWhen(quiz.quiz.retryAt)}` : ', then try again'}.</span>
+      <span>{covered ? `Read ${covered} again, then try` : 'Try'} again{quiz?.quiz.retryAt ? ` from ${formatWhen(quiz.quiz.retryAt)}` : ''}.</span>
     {:else if sent?.quiz && !sent.marks}
       <span>Sent, unmarked: this quiz has no answers yet. If yours are right, open the copy in {filedIn} and choose Use This as Answers.</span>
     {:else if sent?.quiz}
@@ -66,8 +73,11 @@
     {:else if state === 'failed'}
       <span class="ask">Not passed{quiz?.quiz.score !== undefined ? ` (${quiz.quiz.score}%)` : ''}.</span>
       <span>{canRetry ? 'Fix My Answers shows which were not right; Start Again clears them.' : quiz?.quiz.retryAt ? `You can try again from ${formatWhen(quiz.quiz.retryAt)}.` : ''}</span>
+    {:else if quiz && toRead.length}
+      <span class="ask">Read {toRead.length === 1 ? 'this' : 'these'} first:</span>
+      <span>{toRead.map(name).join(', ')}. Then the quiz opens.</span>
     {:else if quiz}
-      <span>{quiz.quiz.older ? 'The quiz changed since you passed it. ' : ''}Answer the questions and choose Send. Passing confirms you read {covered}.</span>
+      <span>{quiz.quiz.older ? 'The quiz changed since you passed it. ' : ''}Answer the questions and choose Send.{covered ? ` It covers ${covered}.` : ''}</span>
     {:else if draft}
       <span>Your answers are saved on this computer as you type. They aren't sent until you choose Send.</span>
     {:else}

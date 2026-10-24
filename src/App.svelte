@@ -39,7 +39,7 @@
   import { entryLabel, fileHistory, findPublishedEntry, formatWhen, revisionText, versionLabel, type HistoryEntry } from './lib/history';
   import { lastSession, saveSession, placeView, savePlaceView, type PlaceView } from './lib/session';
   import PolicyBanner from './lib/PolicyBanner.svelte';
-  import { acknowledge, fetchPolicies, outstandingFiles, policyFor, quizFor, setAttentionBadge, type Policies } from './lib/policies';
+  import { acknowledge, fetchPolicies, outstandingFiles, policyFor, quizFor, quizzesCovering, setAttentionBadge, type Policies } from './lib/policies';
   import FormBanner from './lib/FormBanner.svelte';
   import SubmissionsDialog from './lib/SubmissionsDialog.svelte';
   import {
@@ -1562,10 +1562,15 @@
     if (quiz?.status === 'passed') return 'You have passed this quiz.';
     if (quiz?.status === 'waiting') return 'Your answers are waiting for a reviewer to mark them.';
     if (quiz?.status === 'failed' && quiz.retryAt && Date.parse(quiz.retryAt) > quizClock) return `Not passed. You can try again from ${formatWhen(quiz.retryAt)}.`;
+    // Metatrash 0.51.0: the policies it covers are read first (readFirst, the default).
+    if (quiz?.readFirst && quiz.toRead?.length) return `Read ${quiz.toRead.length === 1 ? 'the policy' : `the ${quiz.toRead.length} policies`} it covers first: ${quiz.toRead.map(p => p.split('/').pop()).join(', ')}.`;
     return null;
   }
 
-  /** The open quiz and the file it covers, with this person's state in it (Metatrash 0.50.0). */
+  /** The quizzes that cover the open file, with this person's state in each (Metatrash 0.51.0). */
+  const coveringQuizzes = $derived(currentRelative !== null ? quizzesCovering(policies, currentRelative) : []);
+
+  /** The open quiz, with this person's state in it (Metatrash 0.50.0). */
   const currentQuiz = $derived(currentPolicy && currentRelative !== null ? quizFor(currentPolicy.folder, currentRelative) : null);
   /** Moves on when a failed quiz can be taken again. */
   let quizClock = $state(Date.now());
@@ -1622,7 +1627,7 @@
 
   // Saving, a lost space or the published text decide whether the form can be filled in.
   $effect(() => {
-    void [dirty, formUnavailable, publishedView, currentQuiz?.quiz.status, currentQuiz?.quiz.retryAt, currentPolicy?.file?.draft, quizClock];
+    void [dirty, formUnavailable, publishedView, currentQuiz?.quiz.status, currentQuiz?.quiz.retryAt, currentQuiz?.quiz.toRead?.length, currentPolicy?.file?.draft, quizClock];
     untrack(() => { if (currentForm) syncFormView(); });
   });
 
@@ -1691,7 +1696,7 @@
         ? 'A new version of this form was published since it was opened. Wait for it to sync, check your answers and send again.'
         : 'This form was changed in the space since it was opened. Wait for it to sync, check your answers and send again.', { kind: 'error', busy: false });
       void loadPolicies();
-    } else if (['quiz_passed', 'quiz_waiting', 'retry_later', 'not_published'].includes(code)) {
+    } else if (['quiz_passed', 'quiz_waiting', 'retry_later', 'not_published', 'read_first'].includes(code)) {
       editor.setFormStatus(text, { kind: 'error', busy: false });
       void loadPolicies();
     } else {
@@ -2792,6 +2797,7 @@
         onShowDraft={() => void showDraft()}
         onShowPublished={() => void showPublished()}
         onConfirm={() => void confirmRead()}
+        quizzes={coveringQuizzes}
         onTakeQuiz={relative => void openFromFolder(relative)}
         onChangesSince={(version, label) => void changesSince(version, label)}
       />

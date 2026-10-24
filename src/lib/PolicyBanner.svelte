@@ -1,9 +1,9 @@
 <script lang="ts">
   // The bar above a document in a folder that publishes versions: which version it is, whether a
-  // draft is shown instead, and (when people are asked to) I Have Read This, or Take the Quiz for a
-  // file that a quiz covers (Metatrash 0.50.0): passing the quiz is what confirms reading it.
+  // draft is shown instead, and (when people are asked to) I Have Read This. A file that quizzes
+  // cover also offers Take the Quiz (Metatrash 0.51.0); reading it and passing them are separate.
   import { describeAuthor, formatWhen } from './history';
-  import type { PolicyFile, PolicyFolder } from './policies';
+  import type { PolicyFile, PolicyFolder, PolicyQuiz } from './policies';
 
   interface Props {
     folder: PolicyFolder;
@@ -15,20 +15,25 @@
     onShowDraft: () => void;
     onShowPublished: () => void;
     onConfirm: () => void;
-    /** Opens the quiz (its path in the space) that covers this file. */
+    /** The quizzes that cover this file, with this person's state in each. */
+    quizzes?: { path: string; quiz: PolicyQuiz }[];
+    /** Opens a quiz (its path in the space). */
     onTakeQuiz: (relative: string) => void;
     /** Show Changes from the file as published in `version` to the text on screen. */
     onChangesSince: (version: number, label: string) => void;
   }
 
-  let { folder, file, viewing, busy, onShowDraft, onShowPublished, onConfirm, onTakeQuiz, onChangesSince }: Props = $props();
+  let { folder, file, viewing, busy, onShowDraft, onShowPublished, onConfirm, quizzes = [], onTakeQuiz, onChangesSince }: Props = $props();
 
   const where = $derived(folder.folder ? folder.folder.replace(/\/$/, '') : 'this space');
   const by = $derived(describeAuthor(folder.by));
   const published = $derived(`Published version ${folder.version} · ${formatWhen(folder.timestamp)}${by ? ` by ${by}` : ''}`);
-  const toRead = $derived(file?.tracked === true && file.outstanding);
-  const quiz = $derived(file?.tracked ? file.quiz ?? null : null);
-  const retryLater = $derived(quiz?.status === 'failed' && !!quiz.retryAt && Date.parse(quiz.retryAt) > Date.now());
+  /** A quiz is passed, not read: its own bar (FormBanner) says where this person is with it. */
+  const isQuiz = $derived(!!file?.quiz);
+  const toRead = $derived(file?.tracked === true && file.outstanding && !isQuiz);
+  /** The first quiz covering this file that this person hasn't passed. */
+  const nextQuiz = $derived(quizzes.find(q => q.quiz.status !== 'passed') ?? null);
+  const quizName = (p: string) => p.split('/').pop()?.replace(/\.md$/i, '') ?? p;
   /** The text on screen is the published one: shown from history, or the file has no draft. */
   const readingPublished = $derived(viewing === 'published' || (file !== null && !file.draft));
   /** The older version this person read, when this version changed it. */
@@ -51,20 +56,15 @@
     {:else}
       <b>{published}</b>
     {/if}
-    {#if toRead && quiz}
-      {#if quiz.status === 'waiting'}
-        <span class="ask">Your quiz answers are waiting for a reviewer.</span>
-      {:else if quiz.status === 'failed'}
-        <span class="ask">You didn't pass its quiz{quiz.score !== undefined ? ` (${quiz.score}%)` : ''}. Read it again, then {retryLater ? `try again from ${formatWhen(quiz.retryAt!)}` : 'try again'}.</span>
-      {:else}
-        <span class="ask">{quiz.older ? 'Its quiz changed since you passed it. ' : ''}Please read it, then pass its quiz to confirm.</span>
-      {/if}
-    {:else if file?.tracked && quiz?.status === 'passed'}
-      <span class="done">✓ You passed its quiz{quiz.score !== undefined ? ` with ${quiz.score}%` : ''}.</span>
-    {:else if toRead && readingPublished}
+    {#if toRead && readingPublished}
       <span class="ask">{file?.acknowledged ? `You read version ${file.acknowledged.version}; this version changed it. ` : ''}Please read it, then confirm.</span>
-    {:else if file?.tracked && file.acknowledged?.current}
+    {:else if file?.tracked && !isQuiz && file.acknowledged?.current}
       <span class="done">✓ You confirmed reading it on {formatWhen(file.acknowledged.timestamp)}.</span>
+    {/if}
+    {#if !toRead && nextQuiz}
+      <span class="ask">{nextQuiz.quiz.status === 'waiting' ? `Your answers to ${quizName(nextQuiz.path)} are waiting for a reviewer.` : `There's a quiz on it to pass: ${quizName(nextQuiz.path)}.`}</span>
+    {:else if !toRead && quizzes.length}
+      <span class="done">✓ You passed {quizzes.length === 1 ? 'its quiz' : 'its quizzes'}.</span>
     {/if}
   </div>
   {#if readBefore !== null}
@@ -78,11 +78,10 @@
   {:else if file?.draft}
     <button onclick={onShowPublished}>Show Published Version</button>
   {/if}
-  {#if toRead && quiz}
-    {#if quiz.status !== 'waiting'}
-      <button class="primary" onclick={() => onTakeQuiz(quiz.path)} title={retryLater ? `You can take it again from ${formatWhen(quiz.retryAt!)}` : 'Open the quiz'}>Take the Quiz</button>
-    {/if}
-  {:else if toRead && readingPublished}
+  {#if nextQuiz && nextQuiz.quiz.status !== 'waiting'}
+    <button class:primary={!toRead} onclick={() => onTakeQuiz(nextQuiz!.path)} title="Open {quizName(nextQuiz.path)}">Take the Quiz</button>
+  {/if}
+  {#if toRead && readingPublished}
     <button class="primary" disabled={busy} onclick={onConfirm}>{busy ? 'Confirming…' : 'I Have Read This'}</button>
   {/if}
 </div>
