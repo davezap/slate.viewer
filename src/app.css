@@ -38,6 +38,8 @@ body {
   .slate-editor-host .toast-region,
   .slate-editor-host .statusbar,
   .titlebar, .find, .activity, .side, .resizer, .pinned-nav, .nav-strip { display: none !important; }
+  /* Banners over the document print their words, not their buttons. */
+  [role="status"] button { display: none !important; }
   /* Not inside a diagram's SVG: there height is a shape's size, not the layout's. */
   .slate-editor-host,
   .slate-editor-host *:not(svg, svg *) { height: auto !important; max-height: none !important; overflow: visible !important; }
