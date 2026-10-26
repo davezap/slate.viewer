@@ -107,6 +107,4 @@
   button.primary:hover:not(:disabled) { background: var(--side-accent); filter: brightness(1.08); }
   :global([data-theme="dark"]) .bar button.primary { color: #1d1a22; }
   button:disabled { opacity: .6; cursor: default; }
-  /* On paper the asks ("Please read it, then confirm") mean nothing. */
-  @media print { .text .ask { display: none; } }
 </style>

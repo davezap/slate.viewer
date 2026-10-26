@@ -2178,6 +2178,16 @@
     window.print();
   }
 
+  let printTitle: HTMLStyleElement | null = null;
+
+  /** Puts the document's name in the print footer (app.css): its first # heading, or its file name. */
+  function setPrintTitle() {
+    const heading = host.querySelector<HTMLElement>('#previewPane h1')?.innerText.trim();
+    const title = (heading || name.replace(/\.[^.]+$/, '')).replace(/\s+/g, ' ');
+    printTitle ??= document.head.appendChild(document.createElement('style'));
+    printTitle.textContent = `@page { @bottom-left { content: ${JSON.stringify(title)}; } }`;
+  }
+
   /** Waits (up to 5 s) for Preview's diagrams to be drawn, so a print doesn't catch their source. */
   async function diagramsDrawn() {
     const pending = () => [...host.querySelectorAll<HTMLElement>('.slate-diagram')]
@@ -2584,6 +2594,8 @@
     // Not passive, so Ctrl+wheel can zoom the window instead of scrolling.
     window.addEventListener('wheel', onZoomWheel, { passive: false });
     cleanups.push(() => window.removeEventListener('wheel', onZoomWheel));
+    window.addEventListener('beforeprint', setPrintTitle);
+    cleanups.push(() => window.removeEventListener('beforeprint', setPrintTitle));
     host.addEventListener('slate:change', () => {
       if (editor) dirty = missingOnDisk || editor.getMarkdown() !== baseline;
       scheduleFormCheck();
