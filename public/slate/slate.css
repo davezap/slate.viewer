@@ -1218,5 +1218,7 @@
 .slate-editor-host .cm-slate-diagram{ cursor: pointer; }
 @media print{
   .slate-editor-host .slate-diagram{ overflow: visible; break-inside: avoid; }
+  /* A diagram taller than the page is scaled down to fit one page, not split. */
+  .slate-editor-host .slate-diagram-canvas > svg{ max-height: 85vh; }
   .slate-editor-host .slate-diagram .media-source-toggle{ display: none; }
 }

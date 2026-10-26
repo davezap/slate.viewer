@@ -378,7 +378,7 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
 
 ```
 docs/change-notes/   changenotes_<version>.md per release, also published to the docs space (see Updates)
-public/slate/        Slate 0.19.1, vendored unchanged (slate.js, slate.css, mermaid/, themes, .d.ts)
+public/slate/        Slate 0.19.2, vendored unchanged (slate.js, slate.css, mermaid/, themes, .d.ts)
 src/App.svelte       menu, file handling, link handling, Slate mount
 src/lib/             icon bar and sidebar sections, folder Properties (FolderProperties.svelte, folderSettings.ts), Go to File, wiki-link resolving, paths, line endings, recent lists, preferences
 src-tauri/src/       Rust: windows, single instance, file read/write, attachments, file and folder
