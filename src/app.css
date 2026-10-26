@@ -30,6 +30,10 @@ body {
 /* Print the rendered document only, at full length. */
 @page {
   margin: 16mm 15mm 18mm;
+  /* No header: these take the place of the browser's date and title. */
+  @top-left { content: ""; }
+  @top-center { content: ""; }
+  @top-right { content: ""; }
   /* The footer: the document's name (App.svelte sets it as each print starts) and the page. */
   @bottom-left { font: 9pt "Segoe UI", system-ui, sans-serif; color: #555; }
   @bottom-right { content: "Page " counter(page) " of " counter(pages); font: 9pt "Segoe UI", system-ui, sans-serif; color: #555; }

@@ -2179,6 +2179,17 @@
   }
 
   let printTitle: HTMLStyleElement | null = null;
+  let printLinks: Array<{ link: Element; attribute: string; value: string }> = [];
+
+  function beforePrint() {
+    setPrintTitle();
+    absoluteLinksForPrint();
+  }
+
+  function afterPrint() {
+    for (const { link, attribute, value } of printLinks) link.setAttribute(attribute, value);
+    printLinks = [];
+  }
 
   /** Puts the document's name in the print footer (app.css): its first # heading, or its file name. */
   function setPrintTitle() {
@@ -2186,6 +2197,30 @@
     const title = (heading || name.replace(/\.[^.]+$/, '')).replace(/\s+/g, ' ');
     printTitle ??= document.head.appendChild(document.createElement('style'));
     printTitle.textContent = `@page { @bottom-left { content: ${JSON.stringify(title)}; } }`;
+  }
+
+  /**
+   * In a Metatrash space, the printout's links to other files point at them on the website
+   * (server/spaces/owner/slug/path), so they work from a PDF wherever it's opened, for anyone
+   * who may read the space. Links put back after printing.
+   */
+  function absoluteLinksForPrint() {
+    const relative = path ? spaceRelative(path) : null;
+    if (!openedSpace || relative === null) return;
+    const page = `${openedSpace.server}/spaces/${openedSpace.space}/${relative.split('/').map(encodeURIComponent).join('/')}`;
+    // Diagrams' links are SVG <a> elements, whose link may be in xlink:href.
+    for (const link of host.querySelectorAll('#previewPane a')) {
+      const attribute = link.hasAttribute('href') ? 'href' : link.hasAttribute('xlink:href') ? 'xlink:href' : null;
+      if (!attribute) continue;
+      const value = link.getAttribute(attribute) ?? '';
+      const target = (link as HTMLElement).dataset?.mdUrl ?? value;
+      // Web addresses (and mailto: and the like) already work; #heading links stay in the document.
+      if (!target || target.startsWith('#') || /^[a-z][a-z0-9+.-]*:/i.test(target)) continue;
+      let absolute: string;
+      try { absolute = new URL(target, page).href; } catch { continue; }
+      printLinks.push({ link, attribute, value });
+      link.setAttribute(attribute, absolute);
+    }
   }
 
   /** Waits (up to 5 s) for Preview's diagrams to be drawn, so a print doesn't catch their source. */
@@ -2594,8 +2629,10 @@
     // Not passive, so Ctrl+wheel can zoom the window instead of scrolling.
     window.addEventListener('wheel', onZoomWheel, { passive: false });
     cleanups.push(() => window.removeEventListener('wheel', onZoomWheel));
-    window.addEventListener('beforeprint', setPrintTitle);
-    cleanups.push(() => window.removeEventListener('beforeprint', setPrintTitle));
+    window.addEventListener('beforeprint', beforePrint);
+    window.addEventListener('afterprint', afterPrint);
+    cleanups.push(() => window.removeEventListener('beforeprint', beforePrint));
+    cleanups.push(() => window.removeEventListener('afterprint', afterPrint));
     host.addEventListener('slate:change', () => {
       if (editor) dirty = missingOnDisk || editor.getMarkdown() !== baseline;
       scheduleFormCheck();
