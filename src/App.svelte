@@ -2174,7 +2174,18 @@
         if (!readOnly) void editor?.setWorkspaceMode(previous);
       }, { once: true });
     }
+    await diagramsDrawn();
     window.print();
+  }
+
+  /** Waits (up to 5 s) for Preview's diagrams to be drawn, so a print doesn't catch their source. */
+  async function diagramsDrawn() {
+    const pending = () => [...host.querySelectorAll<HTMLElement>('.slate-diagram')]
+      .some(diagram => !diagram.dataset.renderedTheme && !diagram.closest('.editor-pane'));
+    const until = Date.now() + 5000;
+    while (pending() && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 50));
+    // One frame for the drawn SVGs to lay out.
+    await new Promise(resolve => requestAnimationFrame(resolve));
   }
 
   const isWindows = /Windows/i.test(navigator.userAgent);
