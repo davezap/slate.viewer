@@ -298,6 +298,10 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
   version before) and, when you confirmed an older version, **Changes Since You Read It**. Properties > Publishing also shows who has read what
   (read-write access). The app reads this with `mtsync policies`, `mtsync ack` and `mtsync readers` (`src/lib/policies.ts`,
   `PolicyBanner.svelte`; the taskbar number is drawn in `src-tauri/src/attention.rs`).
+- **Printout image** (Metatrash 0.57.6). A folder's `"print": {"image": "https://…"}` (Properties > Publishing, Printed
+  copies; inherited like the summary) puts that image centred above the title on the first page of every document printed
+  from the folder. Print loads it (up to 5 s, otherwise it prints without it) and takes it away afterwards, so the file never
+  changes (`addPrintImage` in `src/App.svelte`, `.print-image` in `src/app.css`).
 - **Forms** (Metatrash 0.49.0, mtsync 0.49.0, Slate 0.19.0). A Markdown file whose front matter has `form`, `title` and
   `submitTo` is a form template, with fields written as `{{text name=…}}`, `{{choice name=…}}` and so on (see `docs/forms.md`
   in Metatrash). In Preview the form is ready to fill in (Slate's `startFill({ inPreview: true })`); Edit and Source show

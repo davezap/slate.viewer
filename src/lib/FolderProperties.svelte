@@ -135,6 +135,10 @@
   const inheritedPurpose = $derived(form?.inherit && !form.purpose.trim() ? inherited('purpose') : null);
   const inheritedChildren = $derived(form?.inherit && !form.children.some(c => c.name.trim()) ? inherited('children') : null);
   const inheritedLocks = $derived(inherited('locked'));
+  const inheritedPrintImage = $derived.by(() => {
+    const value = form?.inherit && !form.printImage.trim() ? inherited('print')?.value : null;
+    return value && typeof value === 'object' && typeof (value as { image?: unknown }).image === 'string' ? (value as { image: string }).image : null;
+  });
   const usesParentLocks = $derived(!!form && !isRoot && form.inherit && !form.ownLocks);
 
   /** What the folder will see once saved, with inherited settings filled in. */
@@ -558,6 +562,14 @@
               {#if lockNote('services')}<p class="lock-note">{lockNote('services')}</p>{/if}
             </section>
 
+            <section>
+              <h3>Printed copies</h3>
+              <p class="hint">An image, such as a logo, printed centred at the top of the first page, above the title, on every document printed from this folder{isRoot ? '' : ' (and from subfolders that use its settings)'}. It is never added to the files. Give the image's web address; it is loaded when you print.</p>
+              <input class="address" bind:value={form.printImage} placeholder={inheritedPrintImage ?? 'https://example.com/logo.png'} spellcheck="false" disabled={disabled('print')} />
+              {#if inheritedPrintImage}<p class="hint small-print">Empty uses the image from {folderLabel(inherited('print')!.from)}.</p>{/if}
+              {#if lockNote('print')}<p class="lock-note">{lockNote('print')}</p>{/if}
+            </section>
+
             {#if toSettings(original).acknowledge && savedVersion !== null}
               <section>
                 <h3>Who has read them</h3>
@@ -704,6 +716,7 @@
   .pair { display: flex; gap: 6px; margin-bottom: 6px; align-items: center; }
   .pair .name { width: 170px; }
   .pair .name.wide { flex: 1; }
+  .address { width: 100%; box-sizing: border-box; }
   .matches { margin: -3px 0 8px; font-size: 11px; color: var(--side-muted); }
   .check { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
   .check input { margin-top: 3px; }

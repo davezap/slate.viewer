@@ -46,7 +46,7 @@
     answerKeyName, answerKeyText, clearDraft, fetchReceipt, fetchReceipts, loadDraft, parseFiledCopy, reviewCopy, saveDraft, submitForm,
     type FiledCopy, type FormDraft, type Receipt, type Review } from './lib/forms';
   import ReviewBanner from './lib/ReviewBanner.svelte';
-  import { SETTINGS_FILE, folderChain, frozenKeys, publishText, toSavedVersion } from './lib/folderSettings';
+  import { SETTINGS_FILE, effectiveSettings, folderChain, frozenKeys, printImage, publishText, toSavedVersion } from './lib/folderSettings';
 
   interface LoadedDocument { path: string; text: string; hasBom: boolean }
   interface FolderListing { files: string[]; emptyFolders: string[]; truncated: boolean }
@@ -2175,10 +2175,12 @@
       }, { once: true });
     }
     await diagramsDrawn();
+    await addPrintImage();
     window.print();
   }
 
   let printTitle: HTMLStyleElement | null = null;
+  let printImageBox: HTMLElement | null = null;
   let printLinks: Array<{ link: Element; attribute: string; value: string }> = [];
 
   function beforePrint() {
@@ -2189,6 +2191,43 @@
   function afterPrint() {
     for (const { link, attribute, value } of printLinks) link.setAttribute(attribute, value);
     printLinks = [];
+    printImageBox?.remove();
+    printImageBox = null;
+  }
+
+  /**
+   * In a Metatrash space, the image the document's folder settings name (print.image) goes at the
+   * top of the printout, above the title, on the first page only; it is never put in the file.
+   * Waits (up to 5 s) for it to load, and prints without it if it can't.
+   */
+  async function addPrintImage() {
+    printImageBox?.remove();
+    printImageBox = null;
+    const relative = path ? spaceRelative(path) : null;
+    const pane = host.querySelector<HTMLElement>('#previewPane');
+    if (!openedSpace || relative === null || !pane) return;
+    const dir = openedSpace.folder;
+    const folder = relative.includes('/') ? relative.slice(0, relative.lastIndexOf('/') + 1) : '';
+    const readText = (rel: string) => invoke<LoadedDocument>('read_document', { path: joinPath(dir, rel) }).then(d => d.text, () => null);
+    const chain = folderChain(folder);
+    const texts = new Map(await Promise.all(chain.map(async f => [f, await readText(f + SETTINGS_FILE)] as const)));
+    const address = printImage(effectiveSettings(texts, folder));
+    if (!address) return;
+    const box = document.createElement('div');
+    box.className = 'print-image';
+    const image = box.appendChild(document.createElement('img'));
+    image.alt = '';
+    image.src = address;
+    pane.prepend(box);
+    printImageBox = box;
+    const loaded = await Promise.race([
+      image.decode().then(() => true, () => false),
+      new Promise<boolean>(resolve => setTimeout(() => resolve(false), 5000)),
+    ]);
+    if (!loaded && printImageBox === box) {
+      box.remove();
+      printImageBox = null;
+    }
   }
 
   /** Puts the document's name in the print footer (app.css): its first # heading, or its file name. */

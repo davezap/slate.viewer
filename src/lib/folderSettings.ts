@@ -2,13 +2,14 @@
 // dialog can edit and written back. The rules mirror Metatrash's own checks (folder_config.go and
 // locks.go, 0.46.0+), so a change Metatrash would refuse is caught here instead of failing quietly
 // in Metatrash Sync. Writes from Slate Viewer go through Sync, so Metatrash counts them as a person's.
-// Publishing (publishedVersion and the acknowledge service) follows Metatrash 0.48.0.
+// Publishing (publishedVersion and the acknowledge service) follows Metatrash 0.48.0, and the
+// printout image (print.image) Metatrash 0.57.6.
 
 export const SETTINGS_FILE = '.metatrash.json';
 
 export type LockLevel = '' | 'agents' | 'everyone';
-export type LockKey = 'purpose' | 'children' | 'services' | 'inherit' | 'readOnly' | 'publishedVersion' | 'locked';
-export const LOCK_KEYS: LockKey[] = ['purpose', 'children', 'readOnly', 'services', 'publishedVersion', 'inherit', 'locked'];
+export type LockKey = 'purpose' | 'children' | 'services' | 'inherit' | 'readOnly' | 'publishedVersion' | 'print' | 'locked';
+export const LOCK_KEYS: LockKey[] = ['purpose', 'children', 'readOnly', 'services', 'publishedVersion', 'print', 'inherit', 'locked'];
 export type PushMode = 'agent' | 'auto' | 'review';
 
 /** What each lockable key is, in the dialog's words. */
@@ -18,6 +19,7 @@ export const LOCK_KEY_LABELS: Record<LockKey, { title: string; about: string }> 
   readOnly: { title: 'Read-only files', about: 'Which files are locked (the list above).' },
   services: { title: 'Connections and read tracking', about: 'The GitHub repository, and asking people to confirm they read the published files.' },
   publishedVersion: { title: 'Published version', about: 'Who can publish a new version of this folder.' },
+  print: { title: 'Printout image', about: 'The image at the top of printed documents.' },
   inherit: { title: 'Use the parent folder\'s settings', about: 'Whether this folder takes its parent\'s settings.' },
   locked: { title: 'This list of locked settings', about: 'Agents can never change it; people always can, so every lock can be lifted.' },
 };
@@ -26,9 +28,10 @@ const MAX_PURPOSE = 2000;
 const MAX_CHILDREN = 200;
 const MAX_CHILD_TEXT = 1000;
 const MAX_LOCKS = 200;
-const KNOWN_KEYS = ['inherit', 'purpose', 'children', 'locked', 'readOnly', 'publishedVersion', 'services', 'actions'];
+const KNOWN_KEYS = ['inherit', 'purpose', 'children', 'locked', 'readOnly', 'publishedVersion', 'print', 'services', 'actions'];
 export const MAX_PUBLISHED_VERSION = 1_000_000;
 const MAX_ACKNOWLEDGE_FILES = 50;
+const MAX_PRINT_IMAGE = 2000;
 
 const CHILD_NAME = /^[A-Za-z0-9._][A-Za-z0-9._-]*\/?$/;
 const GITHUB_REPO = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
@@ -51,6 +54,8 @@ export interface FolderSettings {
   /** The published version, or null when the folder doesn't publish. Publishing raises it. */
   publishedVersion: number | null;
   acknowledge: AcknowledgeService | null;
+  /** An https address of an image printed centred above the first page's title, or "" for none. */
+  printImage: string;
 }
 
 /** One folder's settings file: `folder` is "" for the root or "notes/" style. */
@@ -107,7 +112,7 @@ export function lockMap(value: unknown): Record<string, string> {
   return {};
 }
 
-const emptyLocks = (): Record<LockKey, LockLevel> => ({ purpose: '', children: '', services: '', inherit: '', readOnly: '', publishedVersion: '', locked: '' });
+const emptyLocks = (): Record<LockKey, LockLevel> => ({ purpose: '', children: '', services: '', inherit: '', readOnly: '', publishedVersion: '', print: '', locked: '' });
 
 /** The form for a settings object. */
 export function toSettings(raw: Record<string, unknown>): FolderSettings {
@@ -135,6 +140,7 @@ export function toSettings(raw: Record<string, unknown>): FolderSettings {
       : null,
     publishedVersion: typeof raw.publishedVersion === 'number' ? raw.publishedVersion : null,
     acknowledge: ack ? { files: Array.isArray(ack.files) ? (ack.files as unknown[]).map(String) : [] } : null,
+    printImage: raw.print && typeof raw.print === 'object' && typeof (raw.print as Record<string, unknown>).image === 'string' ? (raw.print as Record<string, string>).image : '',
   };
 }
 
@@ -165,6 +171,7 @@ function keyValues(s: FolderSettings, isRoot: boolean): Record<string, unknown> 
   }
   if (services.length) out.services = services;
   if (s.publishedVersion !== null) out.publishedVersion = s.publishedVersion;
+  if (s.printImage.trim()) out.print = { image: s.printImage.trim() };
   return out;
 }
 
@@ -186,7 +193,7 @@ export function toObject(s: FolderSettings, original: Record<string, unknown>, i
     if (!(key in values)) continue;
     out[key] = comparable(key, values[key]) === comparable(key, original[key]) ? original[key] : values[key];
   }
-  for (const key of ['inherit', 'purpose', 'children', 'locked', 'readOnly', 'publishedVersion', 'services']) {
+  for (const key of ['inherit', 'purpose', 'children', 'locked', 'readOnly', 'publishedVersion', 'print', 'services']) {
     if (key in values && !(key in out)) out[key] = values[key];
   }
   return out;
@@ -382,6 +389,10 @@ export function check(s: FolderSettings, text: string, folder: string, ctx: Spac
     }
   }
 
+  const image = s.printImage.trim();
+  if (image && !isPrintImageAddress(image)) problems.push({ page: 'publishing', text: 'The printout image should be a web address starting with https://, such as https://example.com/logo.png.' });
+  else if (image.length > MAX_PRINT_IMAGE) problems.push({ page: 'publishing', text: `The printout image's address is ${image.length} characters; ${MAX_PRINT_IMAGE} is the most.` });
+
   // Locks for everyone guard the values the folder sees, inherited ones included.
   const after = new Map(ctx.texts);
   after.set(folder, text);
@@ -391,7 +402,7 @@ export function check(s: FolderSettings, text: string, folder: string, ctx: Spac
     if (before.keys[key] === now.keys[key]) continue;
     const label = key in LOCK_KEY_LABELS ? LOCK_KEY_LABELS[key as LockKey].title : key;
     problems.push({
-      page: key === 'services' ? 'connections' : key === 'publishedVersion' ? 'publishing' : key === 'readOnly' || key === 'inherit' ? 'security' : 'general',
+      page: key === 'services' ? 'connections' : key === 'publishedVersion' || key === 'print' ? 'publishing' : key === 'readOnly' || key === 'inherit' ? 'security' : 'general',
       text: where === folder
         ? `"${label}" is locked for everyone, so it can't change. Set its lock to Unlocked or Agents on the Security page, save, and change it once that has synced.`
         : `"${label}" is locked for everyone by ${where || 'the top of the space'}, so this folder can't change it. Lift the lock in that folder's properties first.`,
@@ -422,4 +433,25 @@ export function publishText(text: string | null, folder: string, askToRead: bool
     out.services = services;
   }
   return toText(out);
+}
+
+/** Whether `address` is an image address Metatrash takes for print.image: https, with a host. */
+function isPrintImageAddress(address: string): boolean {
+  try {
+    const url = new URL(address);
+    return url.protocol === 'https:' && url.hostname !== '' && !url.username && !url.password && !/\s/.test(address);
+  } catch {
+    return false;
+  }
+}
+
+/** The image a folder's settings, inherited ones included, put at the top of printouts, or null. */
+export function printImage(eff: Effective): string | null {
+  if (!eff.keys.print) return null;
+  try {
+    const image = (JSON.parse(eff.keys.print) as { image?: unknown }).image;
+    return typeof image === 'string' && isPrintImageAddress(image) ? image : null;
+  } catch {
+    return null;
+  }
 }

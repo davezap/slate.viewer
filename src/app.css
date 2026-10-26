@@ -55,4 +55,9 @@ body {
   .slate-editor-host *:not(svg, svg *) { height: auto !important; max-height: none !important; overflow: visible !important; }
   .slate-editor-host .workspace-body,
   .slate-editor-host .editor-grid { display: block !important; }
+  /* A folder's printout image (App.svelte), centred above the title on the first page. */
+  .slate-editor-host .print-image { text-align: center; margin: 0 0 6mm; break-after: avoid; }
+  .slate-editor-host .print-image img { max-width: 100%; max-height: 35mm !important; }
 }
+/* Only ever on paper, but hidden on screen in case printing ends without afterprint. */
+@media screen { .print-image { display: none; } }
