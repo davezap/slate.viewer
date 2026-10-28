@@ -104,6 +104,7 @@ pub fn watch_folder(window: WebviewWindow, root: Option<String>) -> Result<(), S
     let Some(root) = root.map(PathBuf::from) else { return Ok(()) };
     let app = window.app_handle().clone();
     let watched = root.clone();
+    let sync_state = root.join(".mtsync").join("state.json");
     let mut watcher = notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
         let Ok(event) = result else { return };
         let structural = matches!(
@@ -116,6 +117,11 @@ pub fn watch_folder(window: WebviewWindow, root: Option<String>) -> Result<(), S
         let relevant = event.paths.iter().any(|p| !crate::workspace::in_skipped_folder(&watched, p));
         if structural && relevant {
             let _ = app.emit_to(EventTarget::webview_window(&label), "folder-changed", ());
+        }
+        // mtsync saves .mtsync/state.json after each pass, and an upload changes nothing else
+        // here, so this is how the window hears that a file became a virtual file.
+        if event.paths.iter().any(|p| p == &sync_state) {
+            let _ = app.emit_to(EventTarget::webview_window(&label), "sync-state-changed", ());
         }
     })
     .map_err(|e| e.to_string())?;

@@ -456,6 +456,13 @@
     rememberSession();
   }
 
+  /** mtsync finished a pass (it saved its state): a file may have become a virtual file. */
+  let syncStateTimer: ReturnType<typeof setTimeout> | undefined;
+  function onSyncStateChange() {
+    clearTimeout(syncStateTimer);
+    syncStateTimer = setTimeout(() => { if (openedSpace) void loadVirtualFiles(); }, 500);
+  }
+
   let folderRefreshTimer: ReturnType<typeof setTimeout> | undefined;
   function onFolderChange() {
     clearTimeout(folderRefreshTimer);
@@ -2821,6 +2828,7 @@
 
       cleanups.push(await getCurrentWebviewWindow().listen('document-changed', onDiskChange));
       cleanups.push(await getCurrentWebviewWindow().listen('folder-changed', onFolderChange));
+      cleanups.push(await getCurrentWebviewWindow().listen('sync-state-changed', onSyncStateChange));
       cleanups.push(await getCurrentWebviewWindow().listen<UpdateCheck>('update-available', event => {
         if (!updateDialog) updateDialog = { initial: event.payload };
       }));
