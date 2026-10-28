@@ -1122,6 +1122,12 @@
     if (!pair || offeredConflicts.has(pair.copy)) return;
     offeredConflicts.add(pair.copy);
     const original = basename(pair.original);
+    const locked = spaceLock(pair.original);
+    if (locked) {
+      // Nothing can be merged into a file that can't be changed: say where the edit went.
+      await message(`${locked}\n\nYour edit is kept in ${basename(pair.copy)}.`, { title: 'Slate Viewer', kind: 'info' });
+      return;
+    }
     const choice = await message(`${basename(pair.copy)} holds your version of ${original}: sync kept it because ${original} also changed in the space.\n\nCompare the two and merge them into ${original}?`, {
       title: 'Slate Viewer',
       kind: 'warning',
@@ -1940,12 +1946,18 @@
     const rel = currentRelative;
     if (rel === null) return null;
     if (publishedView?.path === path) return 'You are reading the published version. Choose Show Draft above the document to see the file as it is now, and edit it.';
+    return spaceLock(rel);
+  });
+
+  /** Why the space file at `rel` (relative to the open space) can't be changed here, or null. */
+  function spaceLock(rel: string): string | null {
+    if (!openedSpace) return null;
     if (openedSpace.access === 'read only') return `${openedSpace.space} is a read-only space.`;
     if (lockedForEveryone(rel)) return `${rel} ${everyoneReason}.`;
     const source = virtualFiles[rel]?.source;
     if (source) return `${rel} comes from ${source}, so it can't be changed here: Metatrash Sync puts the space's version back.`;
     return null;
-  });
+  }
 
   // Lock (and unlock) the editor as documents in and out of a locked space open.
   let lockedByUs = false;
