@@ -2,7 +2,7 @@
   import { tick, untrack } from 'svelte';
   import { revealItemInDir } from '@tauri-apps/plugin-opener';
   import { basename, joinPath } from './paths';
-  import { conflictOriginal, type FolderDescription } from './space';
+  import { canConvert, conflictOriginal, sizeLabel, type FolderDescription, type VirtualFile } from './space';
   import Section from './Section.svelte';
   import KindIcon from './KindIcon.svelte';
   import ContextMenu from './ContextMenu.svelte';
@@ -50,12 +50,17 @@
     unread?: string[];
     /** Publishes the next version of a folder ("" for the top of the space). Spaces only. */
     onPublish?: (folder: string) => void;
+    /** The space's virtual files (content kept outside Git), by relative path. */
+    virtualFiles?: Record<string, VirtualFile>;
+    /** Saves a virtual PDF, Word or HTML file's Markdown beside it. Spaces only. */
+    onConvert?: (path: string) => void;
   }
 
   let {
     root, files, truncated, current, recentFolders, rootKind = 'folder', onOpen, onCreate, onCloseFolder, onChooseFolder, onOpenFolder,
     descriptions = [], reveal = null, onOpenSpace, emptyFolders = [], editable = true, locked = [],
     onCreateFolder, onRename, onMove, onDuplicate, onDelete, onProperties, unread = [], onPublish,
+    virtualFiles = {}, onConvert,
   }: Props = $props();
 
   // ---- Space descriptions ------------------------------------------------------
@@ -155,7 +160,14 @@
         + `Compare it with ${original}, copy across what you need, then delete this file.`;
     }
     const about = describe(node.path, false);
-    return about ? `${node.path}\n${about}` : node.path;
+    const v = virtualFiles[node.path];
+    const lines = [node.path];
+    if (about) lines.push(about);
+    if (v) {
+      lines.push(`Virtual file (${v.type}, ${sizeLabel(v.size)}): the space keeps it outside Git. It opens in its own app.`);
+      if (v.source) lines.push(`From ${v.source}${v.refresh ? `, fetched again every ${v.refresh}` : ''}; changes made here are put back.`);
+    }
+    return lines.join('\n');
   }
 
   // ---- New file ------------------------------------------------------------------
@@ -352,6 +364,8 @@
       separate();
       items.push({ text: '&Open', action: () => onOpen(node.path, { newWindow: false }) });
       items.push({ text: 'Open in New &Window', action: () => onOpen(node.path, { newWindow: true }) });
+      const v = virtualFiles[node.path];
+      if (v && canConvert(v) && onConvert && editable) items.push({ text: 'Convert to &Markdown', action: () => onConvert(node.path) });
     }
     if (node && canChange(node)) {
       separate();
@@ -490,7 +504,7 @@
                   class:current={node.path === current}
                   style:padding-left="{22 + depth * 14}px"
                   class:conflict={conflictOriginal(node.name) !== null}
-                  class:hidden-file={isHiddenFile(node.path)}
+                  class:hidden-file={isHiddenFile(node.path) && !virtualFiles[node.path]}
                   class:dragged={dragging?.path === node.path}
                   class:to-read={unreadSet.has(node.path)}
                   title={unreadSet.has(node.path) ? `${fileTitle(node)}\nPublished, and you haven't confirmed reading it yet.` : fileTitle(node)}
@@ -503,7 +517,7 @@
                   ondragend={onDragEnd}
                   ondragover={event => onDragOver(event, parentOf(node.path))}
                   ondrop={event => void onDrop(event)}
-                >{#if unreadSet.has(node.path)}<span class="unread before" aria-label="To read">●</span>{/if}{#if conflictOriginal(node.name) !== null}<span class="warn">⚠</span>{/if}{isHiddenFile(node.path) ? node.name : displayName(node.name)}</button>
+                >{#if unreadSet.has(node.path)}<span class="unread before" aria-label="To read">●</span>{/if}{#if conflictOriginal(node.name) !== null}<span class="warn">⚠</span>{/if}{isHiddenFile(node.path) ? node.name : displayName(node.name)}{#if virtualFiles[node.path]}<span class="badge virtual" aria-label="Virtual file">{virtualFiles[node.path].source ? 'linked' : 'virtual'}</span>{/if}</button>
               {/if}
             </li>
           {/each}
@@ -549,6 +563,7 @@
     color: var(--side-muted); border: 1px solid var(--side-border);
   }
   .badge.published { color: var(--side-accent); border-color: var(--side-accent); }
+  .badge.virtual { font-size: 9px; }
   /* A published file still to read, and the folders holding one. */
   .unread { margin-left: 6px; font-size: 9px; vertical-align: 1px; color: #d93025; }
   .unread.before { margin: 0 5px 0 -12px; }

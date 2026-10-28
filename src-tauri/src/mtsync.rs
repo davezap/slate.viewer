@@ -311,6 +311,44 @@ pub async fn mtsync_show(file: String, revision: String) -> Result<String, Strin
     Ok(out.stdout)
 }
 
+/// Virtual files (PDFs, pictures and other content a space keeps outside Git) need mtsync 0.61.0,
+/// which syncs the files themselves; an older one reads `virtual FOLDER` as a space name.
+const VIRTUAL_VERSION: (u32, u32, u32) = (0, 61, 0);
+
+async fn require_virtual() -> Result<(), String> {
+    let out = run(None, vec!["version".into()]).await?;
+    match parse_version(&out.stdout) {
+        Some(v) if out.ok && v >= VIRTUAL_VERSION => Ok(()),
+        _ => Err("Virtual files need mtsync 0.61.0 or later. Update mtsync and try again.".into()),
+    }
+}
+
+/// The virtual files of the space synced at `folder` (or under it): `mtsync -json virtual` as
+/// mtsync prints it (mtsync 0.61.0). An older mtsync gives an empty list, not an error, since
+/// it syncs no virtual files.
+#[tauri::command]
+pub async fn mtsync_virtual(folder: String) -> Result<String, String> {
+    if require_virtual().await.is_err() {
+        return Ok("[]".into());
+    }
+    let out = run(None, vec!["-json".into(), "virtual".into(), folder]).await?;
+    if !out.ok {
+        return Err(out.message());
+    }
+    Ok(out.stdout)
+}
+
+/// The space's text for a synced file, such as a PDF or Word file's Markdown (mtsync 0.61.0).
+#[tauri::command]
+pub async fn mtsync_text(file: String) -> Result<String, String> {
+    require_virtual().await?;
+    let out = run(None, vec!["text".into(), file]).await?;
+    if !out.ok {
+        return Err(out.message());
+    }
+    Ok(out.stdout)
+}
+
 /// Published versions and read confirmations need mtsync 0.48.0. An older mtsync reads
 /// `policies FOLDER` as "sync space policies into FOLDER", so the version is checked first.
 const POLICIES_VERSION: (u32, u32, u32) = (0, 48, 0);

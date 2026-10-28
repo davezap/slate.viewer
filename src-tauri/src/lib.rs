@@ -184,6 +184,8 @@ pub fn run() {
             mtsync::mtsync_log,
             mtsync::mtsync_history,
             mtsync::mtsync_show,
+            mtsync::mtsync_virtual,
+            mtsync::mtsync_text,
             mtsync::mtsync_policies,
             mtsync::mtsync_ack,
             mtsync::mtsync_readers,

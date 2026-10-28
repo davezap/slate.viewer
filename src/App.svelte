@@ -33,7 +33,7 @@
   import FolderProperties from './lib/FolderProperties.svelte';
   import {
     mtsync, sameFolder, describeState, lastSyncTime, spacePathProblem, spaceSafeName, conflictOriginal, isSignedOut, SPACE_FILE_LIMIT,
-    DEFAULT_SERVER, fileLock, type SpaceRef, type FolderDescription } from './lib/space';
+    DEFAULT_SERVER, fileLock, canConvert, type SpaceRef, type FolderDescription, type VirtualFile } from './lib/space';
   import QuickOpen from './lib/QuickOpen.svelte';
   import HistoryPanel from './lib/HistoryPanel.svelte';
   import { entryLabel, fileHistory, findPublishedEntry, formatWhen, revisionText, versionLabel, type HistoryEntry } from './lib/history';
@@ -90,6 +90,8 @@
   /** The update dialog: `initial` is what the timer's check found, null while Help's check runs. */
   let updateDialog = $state<{ initial: UpdateCheck | null } | null>(null);
   let descriptions = $state<FolderDescription[]>([]);
+  /** The space's virtual files (PDFs, pictures…; mtsync 0.61.0), by path relative to root. */
+  let virtualFiles = $state<Record<string, VirtualFile>>({});
   /** The folder whose Properties are open (relative, "" for the top of the space), or null. */
   let propertiesFor = $state<string | null>(null);
   let revealFolder = $state<string | null>(null);
@@ -446,6 +448,7 @@
     emptyFolders = [];
     openedSpace = null;
     descriptions = [];
+    virtualFiles = {};
     policies = null;
     propertiesFor = null;
     quickOpen = false;
@@ -488,7 +491,7 @@
       emptyFolders = listing.emptyFolders;
       folderTruncated = listing.truncated;
       // Settings can change with any sync (or a save from Properties).
-      if (openedSpace) { void loadDescriptions(); schedulePolicies(); }
+      if (openedSpace) { void loadDescriptions(); void loadVirtualFiles(); schedulePolicies(); }
       void offerConflictResolve();
     } catch {
       // The folder itself went away.
@@ -1939,6 +1942,8 @@
     if (publishedView?.path === path) return 'You are reading the published version. Choose Show Draft above the document to see the file as it is now, and edit it.';
     if (openedSpace.access === 'read only') return `${openedSpace.space} is a read-only space.`;
     if (lockedForEveryone(rel)) return `${rel} ${everyoneReason}.`;
+    const source = virtualFiles[rel]?.source;
+    if (source) return `${rel} comes from ${source}, so it can't be changed here: Metatrash Sync puts the space's version back.`;
     return null;
   });
 
@@ -1995,6 +2000,7 @@
     openedSpace = null;
     syncPendingSince = null;
     descriptions = [];
+    virtualFiles = {};
     policies = null;
     try {
       const info = await mtsync.info();
@@ -2009,6 +2015,7 @@
       if (dir !== root) return;
       openedSpace = { space: registration.space, server, access, folder: registration.folder, state: registration.state };
       void loadDescriptions();
+      void loadVirtualFiles();
       void loadPolicies();
     } catch {
       // mtsync missing or failing: an ordinary folder.
@@ -2027,6 +2034,52 @@
     } catch {
       // mtsync missing or failing: keep what was remembered.
     }
+  }
+
+  /** Asks mtsync which of the space's files are virtual: they show in Files without Show Hidden Files. */
+  async function loadVirtualFiles() {
+    if (!root) return;
+    const dir = root;
+    const found = await mtsync.virtual(dir).catch(() => [] as VirtualFile[]);
+    if (dir !== root) return;
+    const next: Record<string, VirtualFile> = {};
+    for (const v of found) {
+      const rel = relativeIn(dir, v.file);
+      if (rel !== null) next[rel] = v;
+    }
+    virtualFiles = next;
+  }
+
+  /** The listing plus the space's virtual files, which a listing of notes alone would hide. */
+  const sidebarFiles = $derived.by(() => {
+    const extra = Object.keys(virtualFiles).filter(f => !folderFiles.includes(f));
+    return extra.length ? [...folderFiles, ...extra] : folderFiles;
+  });
+
+  /** Saves the space's Markdown for a PDF, Word or HTML file as `<name>.md` beside it, then opens it. */
+  async function convertToMarkdown(relative: string) {
+    if (!root) return;
+    const v = virtualFiles[relative];
+    if (!v) return;
+    const target = joinPath(root, relative.replace(/\.[^./]+$/, '') + '.md');
+    const exists = await invoke('read_document', { path: target }).then(() => true, () => false);
+    if (exists) {
+      const choice = await message(`${basename(target)} already exists. Replace it with the Markdown of ${basename(relative)}?`, {
+        title: 'Slate Viewer',
+        kind: 'warning',
+        buttons: { ok: 'Replace', cancel: 'Cancel' },
+      });
+      if (choice !== 'Replace') return;
+    }
+    try {
+      const text = await mtsync.text(v.file);
+      await invoke('write_document', { path: target, text, hasBom: false });
+    } catch (error) {
+      await showError(error);
+      return;
+    }
+    await refreshFolder();
+    await openDocument(target);
   }
 
   async function loadDescriptions() {
@@ -2812,7 +2865,9 @@
             <FilesSection
               bind:this={filesSection}
               {root}
-              files={folderFiles}
+              files={sidebarFiles}
+              {virtualFiles}
+              onConvert={openedSpace ? (relative => void convertToMarkdown(relative)) : undefined}
               {emptyFolders}
               truncated={folderTruncated}
               current={currentRelative}

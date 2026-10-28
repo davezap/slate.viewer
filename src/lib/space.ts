@@ -161,6 +161,38 @@ export function fileLock(descriptions: FolderDescription[], relative: string): '
   return level;
 }
 
+/** One line of `mtsync -json virtual` (mtsync 0.61.0): a file the space keeps outside Git. */
+export interface VirtualFile {
+  /** Path in the space folder, with /. */
+  path: string;
+  /** The file on this computer. */
+  file: string;
+  type: string;
+  size: number;
+  sha256: string;
+  /** The space has text for it (a PDF or Word file's Markdown), which Convert to Markdown saves. */
+  text: boolean;
+  /** Where it is fetched from: such a file can't be changed here. */
+  source?: string;
+  refresh?: string;
+}
+
+/** Virtual files whose text is Markdown made from them, which Convert to Markdown can save. */
+const CONVERTIBLE = new Set([
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'text/html',
+  'application/xhtml+xml',
+]);
+export const canConvert = (v: VirtualFile) => v.text && CONVERTIBLE.has(v.type);
+
+/** "2.4 MB", for a virtual file's tooltip. */
+export function sizeLabel(bytes: number): string {
+  if (bytes >= 1 << 20) return `${(bytes / (1 << 20)).toFixed(1)} MB`;
+  if (bytes >= 1 << 10) return `${(bytes / (1 << 10)).toFixed(1)} KB`;
+  return `${bytes} bytes`;
+}
+
 export interface MtsyncInfo {
   path: string | null;
   version: string | null;
@@ -193,6 +225,10 @@ export const mtsync = {
     invoke<MtsyncOutput>('mtsync_add', { space, folder, server: serverArg(server) }),
   start: () => invoke<void>('mtsync_start'),
   log: (lines = 100) => invoke<string>('mtsync_log', { lines }),
+  /** The virtual files in a synced folder; empty with an mtsync before 0.61.0. */
+  virtual: async (folder: string): Promise<VirtualFile[]> => JSON.parse(await invoke<string>('mtsync_virtual', { folder })) as VirtualFile[],
+  /** The space's text for a synced file (a PDF's Markdown). */
+  text: (file: string) => invoke<string>('mtsync_text', { file }),
   login: (server = DEFAULT_SERVER) => invoke<void>('mtsync_login', { server: serverArg(server) }),
   cancelLogin: () => invoke<void>('mtsync_cancel_login'),
 };

@@ -276,6 +276,12 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
   Opening the copy or its original offers to compare them: the original opens with your copy shown
   inline (Slate's Compare), you take or keep each difference, and **Done** asks to save the original
   and delete the copy (it is never deleted without asking).
+- **Virtual files** (0.20.0, with mtsync 0.61.0 and Metatrash 0.60.0): PDFs, pictures, Word files and other files a
+  space keeps outside Git show in Files without Show Hidden Files, with a **virtual** badge (**linked** for one fetched
+  from a web address, which the tooltip names with its refresh schedule). They open in their own app. A linked file
+  that is text opens read-only, since Metatrash Sync puts the space's version back after a local change. Right-click a
+  virtual PDF, Word or HTML file and choose **Convert to Markdown** to save the space's Markdown of it as `<name>.md`
+  beside it (asking before it replaces one), which then opens.
 - `.metatrash.json` descriptions show as tooltips on folders and files; folders that mirror GitHub show a badge.
 - **Properties** (right-click a folder, or Alt+Enter on it; right-click empty space in Files for the top of the space)
   edits the folder's `.metatrash.json` as a guided dialog instead of raw JSON: **General** (use the parent folder's
