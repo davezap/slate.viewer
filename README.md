@@ -14,8 +14,8 @@ These three projects are parts of one whole, kept in sibling folders:
   is a handy Markdown editor that can also open Metatrash spaces (through `mtsync`). Over time it
   becomes the desktop companion for managing Metatrash spaces, and those features come later.
 
-Metatrash's website still bundles an older Slate (0.9.2) for read-only viewing. It isn't
-upgraded yet.
+Metatrash's website embeds Slate too, read-only (Slate 0.19.5 since Metatrash 0.57.5), in
+`internal/service/web/`; copy `slate.js`, `slate.css` and `mermaid/` there to update it.
 
 ## Download
 
@@ -246,7 +246,7 @@ back at the scroll position it was left at. A folder opens where it was left, as
 
 Slate Viewer edits a space's local copy and leaves the syncing to **mtsync** (Metatrash Sync), which has to
 be installed already (`%LOCALAPPDATA%\Programs\mtsync\mtsync.exe` on Windows, `~/.local/bin/mtsync` on macOS
-and Linux, or anywhere on PATH; version 0.37.2 or later). The mtsync installers put it there.
+and Linux, or anywhere on PATH; version 0.37.2 or later, 0.61.0 or later for virtual files). The mtsync installers put it there.
 The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in or `.mtsync` folder.
 
 - **File > Open Metatrash Space** (Ctrl+Alt+M), or **Open Space** in the empty Files section. Paste a space's
@@ -262,7 +262,7 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
   yellow when it needs a look (conflicts, a note near the size limit), red when sync isn't running or failed.
   Click it to start the service when it isn't running, sign in again when signed out, or see the recent sync log.
 - Space rules are checked when saving: names with letters, digits, `.`, `-`, `_` only (a fixed name is offered),
-  at most 8 folder levels, 64 KB per file, UTF-8 without BOM. New notes get a space-safe name (`My Idea` → `my-idea.md`)
+  at most 8 folder levels, 64 KB per text file (larger files and binaries sync as virtual files, below), UTF-8 without BOM. New notes get a space-safe name (`My Idea` → `my-idea.md`)
   and `[[My Idea]]` finds `my-idea.md`. Read-only spaces open locked. `README.md` is an ordinary note; each folder's
   `AGENTS.md` (instructions for agents) and `.metatrash.json` (settings) can be edited but not renamed or deleted.
 - Files a folder's `.metatrash.json` locks for everyone (`"readOnly": {"spec.md": "everyone"}`) open locked and
@@ -281,14 +281,19 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
   from a web address, which the tooltip names with its refresh schedule). They open in their own app. A linked file
   that is text opens read-only, since Metatrash Sync puts the space's version back after a local change. Right-click a
   virtual PDF, Word or HTML file and choose **Convert to Markdown** to save the space's Markdown of it as `<name>.md`
-  beside it (asking before it replaces one), which then opens.
-- `.metatrash.json` descriptions show as tooltips on folders and files; folders that mirror GitHub show a badge.
+  beside it (asking before it replaces one), which then opens. A file put in a synced folder shows dimmed until Sync
+  has uploaded it, then turns virtual (0.20.2: the Viewer re-reads the space's virtual files after each Sync pass).
+  Opening a conflict copy of a linked file, or of one locked for everyone, says the original can't be changed here and
+  that the edit is kept in the copy (0.20.1); there is no merge. Clicking a picture opens the system's viewer; showing it in
+  Slate Viewer is planned.
+- `.metatrash.json` descriptions show as tooltips on folders and files; folders that mirror GitHub show a badge. Pulling
+  and pushing them is still done by an agent: the Viewer has no Pull or Push button yet.
 - **Properties** (right-click a folder, or Alt+Enter on it; right-click empty space in Files for the top of the space)
   edits the folder's `.metatrash.json` as a guided dialog instead of raw JSON: **General** (use the parent folder's
   settings, the folder's AGENTS.md, a summary and descriptions of what's inside), **Security** (read-only files and
   patterns with a preview of the files they lock, and which settings are locked for agents or for everyone),
-  **Connections** (the GitHub repository the folder mirrors, branch and push mode), **Automation** (triggers and actions,
-  reserved until Metatrash has them) and **Settings File** (the exact JSON Save writes, and the settings the folder sees
+  **Connections** (the GitHub repository the folder mirrors, branch and push mode), **Automation** (reserved: Metatrash has
+  folder actions since 0.54.0, but the Viewer doesn't edit them yet) and **Settings File** (the exact JSON Save writes, and the settings the folder sees
   with inherited ones). It checks the same rules Metatrash does (lengths, names, patterns, no nested GitHub folders, locks
   for everyone, inherited ones included) before saving, so a change is never quietly refused by Sync. Keys left alone keep
   how they were written. Read-only spaces show the settings without Save. Logic: `src/lib/folderSettings.ts`.
