@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { invoke } from '@tauri-apps/api/core';
-  import { openUrl } from '@tauri-apps/plugin-opener';
+  import { backend } from './backend';
   import { joinPath } from './paths';
   import type { FolderDescription } from './space';
   import {
@@ -28,8 +27,6 @@
 
   let { root, folder, space, descriptions, onClose, onSaved, onOpenFile }: Props = $props();
 
-  interface LoadedDocument { path: string; text: string; hasBom: boolean }
-  interface FolderListing { files: string[]; emptyFolders: string[]; truncated: boolean }
   type Page = 'general' | 'security' | 'connections' | 'publishing' | 'automation' | 'file';
 
   const PAGES: { id: Page; title: string; about: string }[] = [
@@ -75,7 +72,7 @@
 
   const ownPath = $derived(folder + SETTINGS_FILE);
   const readText = (relative: string) =>
-    invoke<LoadedDocument>('read_document', { path: joinPath(root, relative) }).then(doc => doc.text, () => null);
+    backend.files.read(joinPath(root, relative)).then(doc => doc.text, () => null);
 
   onMount(() => {
     void (async () => {
@@ -83,7 +80,7 @@
         const chain = folderChain(folder);
         const read = await Promise.all(chain.map(f => readText(f + SETTINGS_FILE)));
         texts = new Map(chain.map((f, i) => [f, read[i]]));
-        const listing = await invoke<FolderListing>('list_folder', { root, hidden: true }).catch(() => null);
+        const listing = await backend.files.list(root, true).catch(() => null);
         files = listing?.files ?? [];
         const parsed = parseObject(read[0] ?? defaultSettingsText(folder));
         if (typeof parsed === 'string') {
@@ -266,7 +263,7 @@
         saveError = `${ownPath} changed while this was open (perhaps a sync). Close and open Properties again to see the new settings.`;
         return;
       }
-      await invoke('write_document', { path: joinPath(root, ownPath), text: outputText, hasBom: false });
+      await backend.files.write(joinPath(root, ownPath), outputText, false);
       onSaved();
       onClose();
     } catch (e) {
@@ -496,7 +493,7 @@
                 <h4>Bring changes from GitHub</h4>
                 <p class="hint">Agents pull at the start of their work. Files changed on GitHub come in; files changed here and not yet pushed stay as they are. A file changed on both sides stops the pull until it is sorted out.</p>
                 <div class="card">
-                  <p class="hint"><b>Before the first pull:</b> connect GitHub on <button class="link" onclick={() => void openUrl(`${space.server}/account`)}>your Metatrash account</button> for the repository's owner. The folder should be empty, or hold only files identical to the repository's. Files in <code>.github/workflows/</code> are changed on GitHub directly. Names starting with a dot are allowed only inside GitHub folders.</p>
+                  <p class="hint"><b>Before the first pull:</b> connect GitHub on <button class="link" onclick={() => void backend.opener.url(`${space.server}/account`)}>your Metatrash account</button> for the repository's owner. The folder should be empty, or hold only files identical to the repository's. Files in <code>.github/workflows/</code> are changed on GitHub directly. Names starting with a dot are allowed only inside GitHub folders.</p>
                 </div>
               {/if}
               {#if lockNote('services')}<p class="lock-note">{lockNote('services')}</p>{/if}

@@ -1,7 +1,7 @@
 // Metatrash spaces: what the user typed into Open Space…, and the rules for files in a space.
 // See "Integrating a desktop editor with Metatrash spaces through mtsync" (sections 5 and 7).
 
-import { invoke } from '@tauri-apps/api/core';
+import { backend } from './backend';
 
 export const DEFAULT_SERVER = 'https://metatrash.com';
 
@@ -210,27 +210,29 @@ export interface MtsyncOutput { ok: boolean; stdout: string; stderr: string }
 const serverArg = (server: string) => (server === DEFAULT_SERVER ? null : server);
 
 export const mtsync = {
-  info: () => invoke<MtsyncInfo>('mtsync_info'),
+  info: () => backend.sync.info(),
   /** Downloads mtsync from the latest Metatrash release (checksum checked), installs it and starts its service. */
-  setup: () => invoke<string>('mtsync_setup'),
-  spaces: (server = DEFAULT_SERVER) => invoke<SpaceRow[]>('mtsync_spaces', { server: serverArg(server) }),
-  list: () => invoke<Registration[]>('mtsync_list'),
+  setup: () => backend.sync.setup(),
+  spaces: (server = DEFAULT_SERVER) => backend.sync.spaces(serverArg(server)),
+  list: () => backend.sync.list(),
   /** Who this computer signs in as, or null when mtsync (before 0.49.1) or the server can't say. */
   whoami: async (server = DEFAULT_SERVER): Promise<Whoami | null> => {
-    const text = await invoke<string | null>('mtsync_whoami', { server: serverArg(server) });
+    const text = await backend.sync.whoami(serverArg(server));
     if (!text) return null;
     try { return JSON.parse(text) as Whoami; } catch { return null; }
   },
   add: (space: string, folder: string, server = DEFAULT_SERVER) =>
-    invoke<MtsyncOutput>('mtsync_add', { space, folder, server: serverArg(server) }),
-  start: () => invoke<void>('mtsync_start'),
-  log: (lines = 100) => invoke<string>('mtsync_log', { lines }),
+    backend.sync.add(space, folder, serverArg(server)),
+  start: () => backend.sync.start(),
+  log: (lines = 100) => backend.sync.log(lines),
+  /** Asks the running service to sync `folder` now (mtsync 0.70.0). */
+  syncNow: (folder: string) => backend.sync.syncNow(folder),
   /** The virtual files in a synced folder; empty with an mtsync before 0.61.0. */
-  virtual: async (folder: string): Promise<VirtualFile[]> => JSON.parse(await invoke<string>('mtsync_virtual', { folder })) as VirtualFile[],
+  virtual: (folder: string) => backend.sync.virtual(folder),
   /** The space's text for a synced file (a PDF's Markdown). */
-  text: (file: string) => invoke<string>('mtsync_text', { file }),
-  login: (server = DEFAULT_SERVER) => invoke<void>('mtsync_login', { server: serverArg(server) }),
-  cancelLogin: () => invoke<void>('mtsync_cancel_login'),
+  text: (file: string) => backend.sync.text(file),
+  login: (server = DEFAULT_SERVER) => backend.sync.login(serverArg(server)),
+  cancelLogin: () => backend.sync.cancelLogin(),
 };
 
 export const isSignedOut = (message: string) => /signed out|mtsync login/i.test(message);
@@ -268,4 +270,44 @@ export function describeState(state: string): { label: string; tone: 'ok' | 'bus
   if (state.startsWith('service not running')) return { label: 'Sync not running', tone: 'error' };
   if (state.startsWith('error')) return { label: isSignedOut(state) ? 'Signed out' : 'Sync error', tone: 'error' };
   return { label: state || 'Unknown', tone: 'warn' };
+}
+
+/** mtsync 0.70.0 has `mtsync sync`, for Sync now. */
+export const SYNC_NOW_VERSION = '0.70.0';
+
+/** "mtsync 0.70.0" (as `mtsync version` prints it) is at least `min`. */
+export function versionAtLeast(version: string | null, min: string): boolean {
+  const parts = (text: string) => /(\d+)\.(\d+)\.(\d+)/.exec(text)?.slice(1).map(Number);
+  const have = version ? parts(version) : undefined;
+  const want = parts(min)!;
+  if (!have) return false;
+  for (let i = 0; i < 3; i++) if (have[i] !== want[i]) return have[i] > want[i];
+  return true;
+}
+
+/** One line of the mtsync service log. */
+export interface SyncLogLine {
+  /** "09:45:12", or "Oct 29 09:45" for an earlier day. */
+  when: string;
+  /** The space the line is about, or null for the service itself. */
+  space: string | null;
+  text: string;
+}
+
+/**
+ * The service log's lines ("2026/10/30 09:45:12 [owner/slug] uploaded notes.md") about `space`
+ * or the service itself, oldest first. Lines without a time (the header) are left out.
+ */
+export function parseSyncLog(log: string, space: string, now = new Date()): SyncLogLine[] {
+  const out: SyncLogLine[] = [];
+  for (const raw of log.split(/\r?\n/)) {
+    const m = /^(\d{4})\/(\d{2})\/(\d{2}) (\d{2}:\d{2}:\d{2}) (?:\[([^\]]+)\] )?(.*)$/.exec(raw);
+    if (!m) continue;
+    const lineSpace = m[5] ?? null;
+    if (lineSpace !== null && lineSpace !== space) continue;
+    const today = +m[1] === now.getFullYear() && +m[2] === now.getMonth() + 1 && +m[3] === now.getDate();
+    const when = today ? m[4] : `${MONTHS[+m[2] - 1] ?? m[2]} ${+m[3]} ${m[4].slice(0, 5)}`;
+    out.push({ when, space: lineSpace, text: m[6] });
+  }
+  return out;
 }

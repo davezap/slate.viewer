@@ -4,7 +4,7 @@
 // and confirm; Metatrash keeps who confirmed what. Slate Viewer shows the published text by default,
 // a dot on files still to read, and the count on its taskbar button.
 
-import { invoke } from '@tauri-apps/api/core';
+import { backend } from './backend';
 import type { ChangeAuthor } from './history';
 
 export interface PolicyAck {
@@ -100,23 +100,23 @@ export interface ReaderReport {
 
 /** The published folders of the space synced at `folder` (the space's local folder). */
 export async function fetchPolicies(folder: string): Promise<Policies> {
-  const out = JSON.parse(await invoke<string>('mtsync_policies', { folder })) as Policies;
+  const out = await backend.sync.policies(folder);
   return { ...out, folders: out.folders ?? [] };
 }
 
 /** Confirms that this person read `file` (a full path) as published in `version`. */
 export function acknowledge(file: string, version: number): Promise<void> {
-  return invoke<void>('mtsync_ack', { file, version });
+  return backend.sync.acknowledge(file, version);
 }
 
 /** Who has read what in the space synced at `folder`. Needs read-write access to the space. */
 export async function fetchReaders(folder: string): Promise<ReaderReport> {
-  return JSON.parse(await invoke<string>('mtsync_readers', { folder })) as ReaderReport;
+  return backend.sync.readers(folder);
 }
 
 /** Puts `count` on the taskbar button (a red number), or clears it at 0. */
 export function setAttentionBadge(count: number): Promise<void> {
-  return invoke<void>('set_attention_badge', { count: Math.max(0, Math.min(count, 100_000)) });
+  return backend.app.setAttentionBadge(Math.max(0, Math.min(count, 100_000)));
 }
 
 /** The published folder a file belongs to (the nearest one holding it), and its entry if it was published. */

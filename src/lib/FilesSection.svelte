@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick, untrack } from 'svelte';
-  import { revealItemInDir } from '@tauri-apps/plugin-opener';
+  import { backend } from './backend';
   import { basename, joinPath } from './paths';
   import { canConvert, conflictOriginal, sizeLabel, type FolderDescription, type VirtualFile } from './space';
   import Section from './Section.svelte';
@@ -389,7 +389,7 @@
     if (node) {
       const target = joinPath(root, node.path);
       separate();
-      items.push({ text: revealLabel, action: () => void revealItemInDir(target).catch(console.error) });
+      items.push({ text: revealLabel, action: () => void backend.opener.reveal(target).catch(console.error) });
       items.push({ text: 'Copy &Path', action: () => void navigator.clipboard.writeText(target).catch(console.error) });
     }
     if (editable && onPublish && (!node || node.folder)) {

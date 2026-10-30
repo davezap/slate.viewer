@@ -1,12 +1,6 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
-  import { invoke, convertFileSrc } from '@tauri-apps/api/core';
-  import { getVersion } from '@tauri-apps/api/app';
-  import { getCurrentWindow } from '@tauri-apps/api/window';
-  import { getCurrentWebview } from '@tauri-apps/api/webview';
-  import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
-  import { open as openDialog, save as saveDialog, message } from '@tauri-apps/plugin-dialog';
-  import { openUrl, openPath, revealItemInDir } from '@tauri-apps/plugin-opener';
+  import { backend, type FolderListing, type LoadedDocument } from './lib/backend';
   import type { SlateChangesEndDetail, SlateCompareEndDetail, SlateEditorApi, SlateFillEndDetail, SlateForm, SlateFormAnswers, SlateFormSubmitDetail, SlateModeChangeDetail, SlateOutline, SlateOutlineHeading, SlateUploadedAttachment, SlateWorkspaceMode } from '../public/slate/slate-editor';
   import { basename, dirname, extname, joinPath, toLocalPath } from './lib/paths';
   import { detectFormat, toFileText, NEW_FILE_FORMAT, type FileFormat } from './lib/document';
@@ -18,15 +12,16 @@
     SECTION_IDS, type ThemePref, type SectionId,
   } from './lib/prefs';
   import { resolveWikiLink, noteFileName } from './lib/wiki';
-  import { firstNote, isHiddenFile, isSpaceFolderFile, type SearchMatch } from './lib/types';
+  import { firstNote, isHiddenFile, isSpaceFolderFile } from './lib/types';
   import ActivityBar from './lib/ActivityBar.svelte';
   import SidePanel from './lib/SidePanel.svelte';
   import FilesSection from './lib/FilesSection.svelte';
   import SearchSection from './lib/SearchSection.svelte';
   import OutlineSection from './lib/OutlineSection.svelte';
   import TitleBar from './lib/TitleBar.svelte';
-  import { customTitleBar, setNativeMenu, type MenuEntry, type MenuItem } from './lib/menu';
+  import { customTitleBar, type MenuEntry, type MenuItem } from './lib/menu';
   import ContextMenu from './lib/ContextMenu.svelte';
+  import SyncMenu from './lib/SyncMenu.svelte';
   import FindBar from './lib/FindBar.svelte';
   import OpenSpace from './lib/OpenSpace.svelte';
   import UpdateDialog, { type UpdateCheck } from './lib/UpdateDialog.svelte';
@@ -48,15 +43,14 @@
   import ReviewBanner from './lib/ReviewBanner.svelte';
   import { SETTINGS_FILE, effectiveSettings, folderChain, frozenKeys, printImage, publishText, toSavedVersion } from './lib/folderSettings';
 
-  interface LoadedDocument { path: string; text: string; hasBom: boolean }
-  interface FolderListing { files: string[]; emptyFolders: string[]; truncated: boolean }
   /** The open folder is a Metatrash space that mtsync keeps in sync. */
   interface OpenedSpace { space: string; server: string; access: string; folder: string; state: string }
   const MARKDOWN_EXTENSIONS = ['md', 'markdown', 'mdown', 'mkd'];
   const MARKDOWN_FILTERS = [{ name: 'Markdown', extensions: MARKDOWN_EXTENSIONS }, { name: 'All files', extensions: ['*'] }];
   const ATTACHMENT_FOLDER = 'assets';
 
-  const appWindow = getCurrentWindow();
+  const appWindow = backend.window;
+  const { message } = backend.dialogs;
   const systemDark = matchMedia('(prefers-color-scheme: dark)');
 
   let host: HTMLDivElement;
@@ -87,6 +81,8 @@
   /** When this window last saved into the space: the status shows Syncing… until mtsync finishes a pass after it. */
   let syncPendingSince = $state<number | null>(null);
   let spaceDialog = $state(false);
+  /** The sync menu is open under the status chip (its box). */
+  let syncMenu = $state<DOMRect | null>(null);
   /** The update dialog: `initial` is what the timer's check found, null while Help's check runs. */
   let updateDialog = $state<{ initial: UpdateCheck | null } | null>(null);
   let descriptions = $state<FolderDescription[]>([]);
@@ -155,7 +151,7 @@
 
   /** Adds a line to the fault log (Help > Open Log Folder). */
   function logFault(kind: string, text: string) {
-    invoke('log_fault', { kind, message: text }).catch(() => {});
+    backend.app.logFault(kind, text).catch(() => {});
   }
 
   async function showError(error: unknown) {
@@ -166,7 +162,7 @@
   // ---- Loading and saving -------------------------------------------------
 
   function watch(target: string | null) {
-    invoke('watch_document', { path: target }).catch(console.error);
+    backend.files.watchDocument(target).catch(console.error);
   }
 
   function setDocument(doc: LoadedDocument) {
@@ -189,7 +185,7 @@
   async function loadHere(target: string, { pushHistory = true, quiet = false } = {}) {
     if (!editor) return;
     try {
-      const doc = await invoke<LoadedDocument>('read_document', { path: target });
+      const doc = await backend.files.read(target);
       rememberPlace();
       if (pushHistory && path) { history = [...history, path]; forward = []; }
       setDocument(doc);
@@ -211,7 +207,7 @@
 
   /** Opens a new window, keeping this window's folder in its sidebar. */
   function openWindow(target: string | null) {
-    return invoke('open_window', { path: target, folder: root });
+    return backend.app.openWindow(target, root);
   }
 
   /**
@@ -240,7 +236,7 @@
     // Saving the same text gives mtsync nothing to upload, so there's no pass to wait for.
     const sameAsDisk = target === path && diskText === text;
     try {
-      await invoke('write_document', { path: target, text, hasBom });
+      await backend.files.write(target, text, hasBom);
     } catch (error) {
       await showError(error);
       return false;
@@ -268,7 +264,7 @@
     if (!path || diskText === null) return true;
     let current: LoadedDocument;
     try {
-      current = await invoke<LoadedDocument>('read_document', { path });
+      current = await backend.files.read(path);
     } catch {
       return true; // deleted: saving recreates it, so the user's edit wins
     }
@@ -289,7 +285,7 @@
   }
 
   async function saveAs(): Promise<boolean> {
-    const target = await saveDialog({ defaultPath: path ?? 'Untitled.md', filters: MARKDOWN_FILTERS });
+    const target = await backend.dialogs.saveFile({ defaultPath: path ?? 'Untitled.md', filters: MARKDOWN_FILTERS });
     return target ? writeTo(target) : false;
   }
 
@@ -304,8 +300,7 @@
   }
 
   async function chooseAndOpen() {
-    const picked = await pick(() => openDialog({ multiple: true, directory: false, filters: MARKDOWN_FILTERS }));
-    const files = Array.isArray(picked) ? picked : picked ? [picked] : [];
+    const files = (await pick(() => backend.dialogs.openFiles(MARKDOWN_FILTERS))) ?? [];
     for (const [i, file] of files.entries()) {
       if (i === 0) await openDocument(file);
       else await openWindow(file);
@@ -407,7 +402,7 @@
     const started = performance.now();
     let listing: FolderListing;
     try {
-      listing = await invoke<FolderListing>('list_folder', { root: dir, hidden: showHidden });
+      listing = await backend.files.list(dir, showHidden);
     } catch (error) {
       if (request !== folderRequest) return;
       recentFolderList.forget(dir);
@@ -427,7 +422,7 @@
     if (showFiles) setSection('files', true);
     recentFolderList.remember(dir);
     recentFolders = recentFolderList.list();
-    invoke('watch_folder', { root: dir }).catch(console.error);
+    backend.files.watchFolder(dir).catch(console.error);
     void detectSpace(dir);
     if (restore && !reopened) await enterFolder(dir);
     rememberSession();
@@ -436,7 +431,7 @@
   let folderRequest = 0;
 
   async function chooseFolder() {
-    const picked = await pick(() => openDialog({ directory: true, multiple: false }));
+    const picked = await pick(() => backend.dialogs.openFolder());
     if (typeof picked === 'string') await openFolder(picked);
   }
 
@@ -452,7 +447,7 @@
     policies = null;
     propertiesFor = null;
     quickOpen = false;
-    invoke('watch_folder', { root: null }).catch(console.error);
+    backend.files.watchFolder(null).catch(console.error);
     rememberSession();
   }
 
@@ -492,7 +487,7 @@
     const listed = root;
     const request = folderRequest;
     try {
-      const listing = await invoke<FolderListing>('list_folder', { root: listed, hidden: showHidden });
+      const listing = await backend.files.list(listed, showHidden);
       if (listed !== root || request !== folderRequest) return;
       folderFiles = listing.files;
       emptyFolders = listing.emptyFolders;
@@ -511,8 +506,8 @@
     if (!root) return;
     const target = joinPath(root, relative);
     // A hidden file that isn't text (an image, a PDF) opens in its own app, as a link to it does.
-    if (!MARKDOWN_EXTENSIONS.includes(extname(target).toLowerCase()) && !(await invoke('read_document', { path: target }).then(() => true, () => false))) {
-      await openPath(target).catch(() => revealItemInDir(target).catch(showError));
+    if (!MARKDOWN_EXTENSIONS.includes(extname(target).toLowerCase()) && !(await backend.files.read(target).then(() => true, () => false))) {
+      await backend.opener.path(target).catch(() => backend.opener.reveal(target).catch(showError));
       return;
     }
     if (newWindow) { await openWindow(target); return; }
@@ -538,7 +533,7 @@
     }
     const fileName = inSpace ? spaceSafeName(noteName) : noteName;
     try {
-      const created = await invoke<string>('create_note', { folder: inFolder, name: fileName, title: noteName });
+      const created = await backend.files.createNote(inFolder, fileName, noteName);
       await refreshFolder();
       return created;
     } catch (error) {
@@ -579,7 +574,7 @@
       return;
     }
     const docFolder = folder();
-    const target = await pick(() => saveDialog({
+    const target = await pick(() => backend.dialogs.saveFile({
       title: 'New File',
       defaultPath: docFolder ? joinPath(docFolder, 'Untitled.md') : 'Untitled.md',
       filters: MARKDOWN_FILTERS,
@@ -659,7 +654,7 @@
   /** Stops watching the open document while its folder is renamed or deleted (Windows refuses otherwise). */
   async function releaseDocument(target: string): Promise<boolean> {
     if (!path || !within(path, target)) return false;
-    await invoke('watch_document', { path: null }).catch(() => {});
+    await backend.files.watchDocument(null).catch(() => {});
     return true;
   }
 
@@ -675,7 +670,7 @@
       return null;
     }
     try {
-      await invoke<string>('create_folder', { parent: relativeFolder ? joinPath(root, relativeFolder) : root, name: folderName });
+      await backend.files.createFolder(relativeFolder ? joinPath(root, relativeFolder) : root, folderName);
     } catch (error) {
       await showError(error);
       return null;
@@ -731,7 +726,7 @@
     const to = joinPath(root, target);
     const released = await releaseDocument(from);
     try {
-      await invoke('rename_path', { from, to });
+      await backend.files.rename(from, to);
     } catch (error) {
       if (released && path) watch(path);
       await showError(error);
@@ -761,7 +756,7 @@
     if (!root) return;
     if (!canManageFiles) { await refuseReadOnly(); return; }
     try {
-      await invoke<string>('duplicate_file', { path: joinPath(root, relative), spaceNames: rootInSpace() });
+      await backend.files.duplicate(joinPath(root, relative), rootInSpace());
     } catch (error) {
       await showError(error);
       return;
@@ -796,7 +791,7 @@
     if (choice !== 'Delete') return;
     const released = await releaseDocument(target);
     try {
-      await invoke('trash_path', { path: target });
+      await backend.files.trash(target);
     } catch (error) {
       if (released && path) watch(path);
       await showError(error);
@@ -833,7 +828,7 @@
   }
 
   function searchFolder(query: string) {
-    return invoke<{ matches: SearchMatch[]; truncated: boolean }>('search_folder', { root, query, hidden: showHidden });
+    return backend.files.search(root!, query, showHidden);
   }
 
   async function showSearch() {
@@ -968,7 +963,7 @@
       found = resolveWikiLink(target, folderFiles, root, path);
     } else if (docFolder) {
       const candidate = joinPath(docFolder, `${noteFileName(target)}.md`);
-      found = await invoke('read_document', { path: candidate }).then(() => candidate, () => null);
+      found = await backend.files.read(candidate).then(() => candidate, () => null);
     }
 
     if (!found) {
@@ -1033,7 +1028,7 @@
     const watched = path;
     let doc: LoadedDocument;
     try {
-      doc = await invoke<LoadedDocument>('read_document', { path: watched });
+      doc = await backend.files.read(watched);
     } catch {
       // Deleted or renamed away. Keep the text and treat it as unsaved, so closing asks first.
       missingOnDisk = true;
@@ -1148,7 +1143,7 @@
     if (!editor) return;
     let copy: LoadedDocument;
     try {
-      copy = await invoke<LoadedDocument>('read_document', { path: copyPath });
+      copy = await backend.files.read(copyPath);
     } catch (error) {
       await showError(error);
       return;
@@ -1227,7 +1222,7 @@
     if (dirty && !(await save())) return;
     if (choice === 'Save Only') return;
     try {
-      await invoke('delete_conflict_copy', { path: job.copy });
+      await backend.files.deleteConflictCopy(job.copy);
     } catch (error) {
       await showError(error);
     }
@@ -1336,7 +1331,7 @@
       if (found?.file) {
         const { folder, file: published } = found;
         if (publishedView?.path !== file && published.draft && published.publishedFile) {
-          const text = await invoke<string>('mtsync_show', { file: published.publishedFile, revision: folder.revision });
+          const text = await backend.sync.show(published.publishedFile, folder.revision);
           if (stale()) return;
           await showChangesFrom(text, `version ${folder.version}`);
           return;
@@ -1461,7 +1456,7 @@
     const request = ++publishedRequest;
     let text: string;
     try {
-      text = await invoke<string>('mtsync_show', { file: file!.publishedFile, revision: found!.folder.revision });
+      text = await backend.sync.show(file!.publishedFile!, found!.folder.revision);
     } catch (error) {
       logFault('published', String(error));
       return;
@@ -1480,7 +1475,7 @@
     if (!path) return;
     const target = path;
     try {
-      const doc = await invoke<LoadedDocument>('read_document', { path: target });
+      const doc = await backend.files.read(target);
       if (path === target) await reloadFrom(doc);
     } catch (error) {
       await showError(error);
@@ -1812,7 +1807,7 @@
     const copy = shownCopy;
     if (!path || !copy || !copy.quiz) return;
     const target = joinPath(dirname(path), answerKeyName(copy));
-    const exists = await invoke<LoadedDocument>('read_document', { path: target }).then(() => true, () => false);
+    const exists = await backend.files.read(target).then(() => true, () => false);
     const choice = await message(`${exists ? 'Replace the answer key for' : 'Use these answers as the answer key for'} ${copy.title || copy.form}?\n\nIt is saved as ${basename(target)} in this folder. Once it syncs, Metatrash marks everyone's answers to this text of the quiz with it; when the quiz is published again with changes, send it again with the right answers to make a new key.`, {
       title: 'Slate Viewer',
       kind: 'info',
@@ -1820,8 +1815,8 @@
     });
     if (choice !== (exists ? 'Replace' : 'Use as Answers')) return;
     try {
-      const doc = await invoke<LoadedDocument>('read_document', { path });
-      await invoke('write_document', { path: target, text: answerKeyText(doc.text), hasBom: false });
+      const doc = await backend.files.read(path);
+      await backend.files.write(target, answerKeyText(doc.text), false);
       syncPendingSince = Date.now();
     } catch (error) {
       await showError(error);
@@ -1850,7 +1845,7 @@
     const dir = root;
     const prefix = relative ? relative + '/' : '';
     const label = relative || openedSpace.space;
-    const readText = (rel: string) => invoke<LoadedDocument>('read_document', { path: joinPath(dir, rel) }).then(d => d.text, () => null);
+    const readText = (rel: string) => backend.files.read(joinPath(dir, rel)).then(d => d.text, () => null);
     const chain = folderChain(prefix);
     const texts = new Map(await Promise.all(chain.map(async f => [f, await readText(f + SETTINGS_FILE)] as const)));
     const frozen = frozenKeys(texts, prefix);
@@ -1884,7 +1879,7 @@
     await waitForSync();
     try {
       const now = await readText(prefix + SETTINGS_FILE);
-      await invoke('write_document', { path: joinPath(dir, prefix + SETTINGS_FILE), text: publishText(now, prefix, askToRead), hasBom: false });
+      await backend.files.write(joinPath(dir, prefix + SETTINGS_FILE), publishText(now, prefix, askToRead), false);
     } catch (error) {
       await showError(error);
       return;
@@ -1909,7 +1904,7 @@
     if (windowShown) return;
     windowShown = true;
     // Shows it in front: a window opened from Explorer while the app runs would otherwise stay behind.
-    invoke('show_window').catch(() => appWindow.show().catch(() => {}));
+    appWindow.show().catch(() => {});
   }
 
   function chooseTheme(next: ThemePref) {
@@ -2081,7 +2076,7 @@
     const v = virtualFiles[relative];
     if (!v) return;
     const target = joinPath(root, relative.replace(/\.[^./]+$/, '') + '.md');
-    const exists = await invoke('read_document', { path: target }).then(() => true, () => false);
+    const exists = await backend.files.read(target).then(() => true, () => false);
     if (exists) {
       const choice = await message(`${basename(target)} already exists. Replace it with the Markdown of ${basename(relative)}?`, {
         title: 'Slate Viewer',
@@ -2092,7 +2087,7 @@
     }
     try {
       const text = await mtsync.text(v.file);
-      await invoke('write_document', { path: target, text, hasBom: false });
+      await backend.files.write(target, text, false);
     } catch (error) {
       await showError(error);
       return;
@@ -2104,7 +2099,7 @@
   async function loadDescriptions() {
     if (!root) return;
     const dir = root;
-    const found = await invoke<FolderDescription[]>('folder_descriptions', { root: dir }).catch(() => []);
+    const found = await backend.files.folderDescriptions(dir).catch(() => []);
     if (dir === root) descriptions = found;
   }
 
@@ -2124,8 +2119,9 @@
 
   /**
    * True until mtsync reports a pass that ended after `since` (in a later second, as the state has
-   * no milliseconds). mtsync checks the folder every 5 s and waits for a file to settle, so a pass
-   * normally lands within about 15 s; it gives up after 30 s, so a save mtsync skips can't leave it stuck.
+   * no milliseconds). mtsync checks the folder every 2 s (5 s before 0.70.0) and waits for a file
+   * to settle, so a pass normally lands within about 10 s; it gives up after 30 s, so a save mtsync
+   * skips can't leave it stuck.
    */
   function syncStillPending(state: string, since: number): boolean {
     if (!state.startsWith('in sync') || Date.now() - since > 30_000) return false;
@@ -2133,10 +2129,11 @@
     return last === null || last < Math.floor(since / 1000) * 1000 + 1000;
   }
 
-  // Check often while a save is on its way up, otherwise every few seconds.
+  // Check often while a save is on its way up, otherwise every few seconds (the service writes
+  // its status every 3 s).
   $effect(() => {
     if (!openedSpace?.folder) return;
-    const timer = setInterval(() => void refreshSpaceState(), syncPendingSince !== null ? 1500 : 7000);
+    const timer = setInterval(() => void refreshSpaceState(), syncPendingSince !== null ? 1000 : 3000);
     return () => clearInterval(timer);
   });
 
@@ -2151,7 +2148,6 @@
 
   const syncStatus = $derived.by(() => {
     if (!openedSpace) return null;
-    const syncing = syncPendingSince !== null && syncStillPending(openedSpace.state, syncPendingSince);
     const { label, tone } = syncing ? { label: 'Syncing…', tone: 'busy' as const } : describeState(openedSpace.state);
     const parts = [label];
     if (conflictCount) parts.push(`${conflictCount} conflict${conflictCount === 1 ? '' : 's'}`);
@@ -2164,20 +2160,29 @@
     };
   });
 
-  /** The status chip: starts the service, signs in again, or shows the sync log. */
-  async function onSyncClick() {
+  /** The status chip opens (or closes) the sync menu: recent activity, Sync now, mtsync's version. */
+  function onSyncClick(chip: DOMRect) {
+    syncMenu = syncMenu ? null : chip;
+  }
+
+  const syncing = $derived(!!openedSpace && syncPendingSince !== null && syncStillPending(openedSpace.state, syncPendingSince));
+
+  /** Sync now: mtsync checks the folder and the space at once; the chip shows Syncing… until it has. */
+  async function syncNow() {
     if (!openedSpace) return;
-    const state = openedSpace.state;
     try {
-      if (state.startsWith('service not running')) {
-        await mtsync.start();
-        await refreshSpaceState();
-      } else if (isSignedOut(state)) {
-        spaceDialog = true;
-      } else {
-        const log = await mtsync.log(30);
-        await message(`${openedSpace.space}: ${state}\n\n${log.trim().split('\n').slice(-30).join('\n') || 'The sync log is empty.'}`, { title: 'Metatrash Sync', kind: 'info' });
-      }
+      await mtsync.syncNow(openedSpace.folder);
+      syncPendingSince = Date.now();
+      await refreshSpaceState();
+    } catch (error) {
+      await showError(error);
+    }
+  }
+
+  async function startSyncService() {
+    try {
+      await mtsync.start();
+      await refreshSpaceState();
     } catch (error) {
       await showError(error);
     }
@@ -2218,7 +2223,7 @@
   function setZoom(next: number) {
     zoom = Math.round(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, next)) * 10) / 10;
     setZoomPref(zoom);
-    void getCurrentWebview().setZoom(zoom);
+    void appWindow.setZoom(zoom);
   }
 
   const resetZoomText = $derived(`&Reset Zoom${zoom === 1 ? '' : ` (${Math.round(zoom * 100)}%)`}`);
@@ -2280,7 +2285,7 @@
     if (!openedSpace || relative === null || !pane) return;
     const dir = openedSpace.folder;
     const folder = relative.includes('/') ? relative.slice(0, relative.lastIndexOf('/') + 1) : '';
-    const readText = (rel: string) => invoke<LoadedDocument>('read_document', { path: joinPath(dir, rel) }).then(d => d.text, () => null);
+    const readText = (rel: string) => backend.files.read(joinPath(dir, rel)).then(d => d.text, () => null);
     const chain = folderChain(folder);
     const texts = new Map(await Promise.all(chain.map(async f => [f, await readText(f + SETTINGS_FILE)] as const)));
     const address = printImage(effectiveSettings(texts, folder));
@@ -2348,11 +2353,11 @@
 
   /** Windows doesn't let apps make themselves the default, so this opens Settings at Slate Viewer's page. */
   async function openDefaultApps() {
-    await invoke('open_default_apps_settings').catch(showError);
+    await backend.app.openDefaultAppsSettings().catch(showError);
   }
 
   async function showAbout() {
-    const version = await getVersion().catch(() => '?');
+    const version = await backend.app.version().catch(() => '?');
     await message(`Slate Viewer ${version}\nSlate editor ${editor?.version ?? '?'}`, { title: 'About Slate Viewer', kind: 'info' });
   }
 
@@ -2450,8 +2455,8 @@
         items: [
           { text: 'Check for &Updates…', action: () => { updateDialog = { initial: null }; } },
           { separator: true },
-          { text: 'Open &Log Folder', action: () => void invoke('open_log_folder').catch(showError) },
-          { text: '&Developer Tools', action: () => void invoke('toggle_devtools').catch(showError) },
+          { text: 'Open &Log Folder', action: () => void backend.app.openLogFolder().catch(showError) },
+          { text: '&Developer Tools', action: () => void backend.app.toggleDevtools().catch(showError) },
           { separator: true },
           { text: '&About Slate Viewer', action: () => void showAbout() },
         ],
@@ -2459,7 +2464,7 @@
   ]);
 
   $effect(() => {
-    if (!customTitleBar) void setNativeMenu(menu, appWindow).catch(console.error);
+    if (!customTitleBar) void appWindow.setMenu(menu).catch(console.error);
   });
 
   function newWindow() {
@@ -2471,7 +2476,7 @@
   function resolveUrl(url: string, { kind }: { kind: 'image' | 'link' }) {
     if (kind !== 'image') return null;
     const local = toLocalPath(url, folder());
-    return local ? convertFileSrc(local) : null;
+    return local ? backend.files.url(local) : null;
   }
 
   async function handleAttachments(files: File[]): Promise<SlateUploadedAttachment[] | null> {
@@ -2485,9 +2490,7 @@
         ? `pasted-${new Date().toISOString().replace(/[:.]/g, '-')}.${file.type.split('/')[1] || 'png'}`
         : file.name;
       const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
-      const relative = await invoke<string>('save_attachment', {
-        documentPath: path, folder: ATTACHMENT_FOLDER, name: fileName, bytes,
-      });
+      const relative = await backend.files.saveAttachment(path, ATTACHMENT_FOLDER, fileName, bytes);
       results.push({ file, url: encodeURI(relative), label: fileName.replace(/\.[^.]+$/, '') });
     }
     return results;
@@ -2503,7 +2506,7 @@
       return;
     }
     if (/^(https?|mailto):/i.test(url)) {
-      await openUrl(url).catch(error => showError(`Couldn't open ${url} in the browser.\n\n${error}`));
+      await backend.opener.url(url).catch(error => showError(`Couldn't open ${url} in the browser.\n\n${error}`));
       return;
     }
     const local = toLocalPath(url, folder());
@@ -2518,10 +2521,10 @@
       return;
     }
     try {
-      await openPath(local);
+      await backend.opener.path(local);
     } catch {
       // Not a file type we hand to other apps (or it is missing): show it in Explorer instead.
-      await revealItemInDir(local).catch(showError);
+      await backend.opener.reveal(local).catch(showError);
     }
   }
 
@@ -2806,7 +2809,7 @@
       editor.setChangesToggle(historyFile ? () => showDefaultChanges() : null);
       applyTheme();
       showWindow();
-      if (zoom !== 1) void getCurrentWebview().setZoom(zoom);
+      if (zoom !== 1) void appWindow.setZoom(zoom);
       baseline = editor.getMarkdown();
       const initialFolder = window.__SLATE_VIEWER_INITIAL_FOLDER__;
       const initial = window.__SLATE_VIEWER_INITIAL_FILE__;
@@ -2826,11 +2829,11 @@
         await resumeLastSession();
       }
 
-      cleanups.push(await getCurrentWebviewWindow().listen('document-changed', onDiskChange));
-      cleanups.push(await getCurrentWebviewWindow().listen('folder-changed', onFolderChange));
-      cleanups.push(await getCurrentWebviewWindow().listen('sync-state-changed', onSyncStateChange));
-      cleanups.push(await getCurrentWebviewWindow().listen<UpdateCheck>('update-available', event => {
-        if (!updateDialog) updateDialog = { initial: event.payload };
+      cleanups.push(await backend.on('document-changed', onDiskChange));
+      cleanups.push(await backend.on('folder-changed', onFolderChange));
+      cleanups.push(await backend.on('sync-state-changed', onSyncStateChange));
+      cleanups.push(await backend.on('update-available', check => {
+        if (!updateDialog) updateDialog = { initial: check };
       }));
       cleanups.push(await appWindow.onCloseRequested(async event => {
         rememberPlace();
@@ -2869,7 +2872,8 @@
   onForward={() => void once('nav', goForward)}
   onFind={() => void findBar?.open()}
   sync={syncStatus}
-  onSync={() => void onSyncClick()}
+  onSync={onSyncClick}
+  syncOpen={!!syncMenu}
 />
 <div class="layout">
   <ActivityBar {sections} expanded={activityLabels} onToggle={toggleSection} onToggleExpanded={toggleActivityLabels} />
@@ -3030,6 +3034,21 @@
 
 {#if updateDialog}
   <UpdateDialog initial={updateDialog.initial} onClose={() => (updateDialog = null)} />
+{/if}
+
+{#if syncMenu && openedSpace && syncStatus}
+  <SyncMenu
+    anchor={syncMenu}
+    space={openedSpace.space}
+    readOnly={openedSpace.access === 'read only'}
+    syncState={openedSpace.state}
+    tone={syncStatus.tone}
+    {syncing}
+    onSyncNow={() => void syncNow()}
+    onStart={() => void startSyncService()}
+    onSignIn={() => { syncMenu = null; spaceDialog = true; }}
+    onClose={() => (syncMenu = null)}
+  />
 {/if}
 
 {#if contextMenu}

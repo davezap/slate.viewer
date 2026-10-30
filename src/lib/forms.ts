@@ -3,7 +3,7 @@
 // the inputs; Slate Viewer keeps the answers as a draft on this computer while they are filled in
 // and sends them with mtsync, and Metatrash files the filled-in copy in a review folder.
 
-import { invoke } from '@tauri-apps/api/core';
+import { backend } from './backend';
 import type { SlateFormAnswers, SlateFormProblem } from '../../public/slate/slate-editor';
 
 export interface Receipt {
@@ -63,7 +63,7 @@ export type SubmitResult = { ok: true; receipt: Receipt } | { ok: false; error: 
  * answers to the form as published in that version of its folder (Metatrash 0.50.0).
  */
 export async function submitForm(file: string, answers: SlateFormAnswers, version?: number): Promise<SubmitResult> {
-  return outcome(await invoke<Outcome>('mtsync_submit', { file, answers: JSON.stringify(answers), version: version ?? null }));
+  return backend.sync.submit(file, answers, version ?? null);
 }
 
 /** A review of a filed copy: a form's status, or a quiz's marks for the answers still to tick. */
@@ -75,28 +75,17 @@ export interface Review {
 
 /** Records a review of the filed copy `file` (a full path in the synced review space). */
 export async function reviewCopy(file: string, review: Review): Promise<SubmitResult> {
-  return outcome(await invoke<Outcome>('mtsync_review', { file, review: JSON.stringify(review) }));
-}
-
-type Outcome = { ok: boolean; json: string; message: string };
-
-function outcome(out: Outcome): SubmitResult {
-  let parsed: unknown = null;
-  try { parsed = out.json ? JSON.parse(out.json) : null; } catch { /* not JSON */ }
-  if (out.ok && parsed) return { ok: true, receipt: parsed as Receipt };
-  const error = (parsed as { error?: SubmitRefusal } | null)?.error;
-  return { ok: false, error: error ?? { code: '', message: out.message || 'The form could not be sent.' } };
+  return backend.sync.review(file, review);
 }
 
 /** The forms this person sent from the space synced at `folder`, newest first. */
 export async function fetchReceipts(folder: string): Promise<Receipt[]> {
-  const out = JSON.parse(await invoke<string>('mtsync_submissions', { folder })) as { submissions?: Receipt[] };
-  return out.submissions ?? [];
+  return backend.sync.submissions(folder);
 }
 
 /** One receipt with the filed copy. */
 export async function fetchReceipt(folder: string, id: string): Promise<Receipt> {
-  return JSON.parse(await invoke<string>('mtsync_submissions', { folder, id })) as Receipt;
+  return backend.sync.submission(folder, id);
 }
 
 /** The answers in a filed copy's front matter, in order: [name, answer]. */

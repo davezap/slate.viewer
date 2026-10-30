@@ -1,9 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { homeDir } from '@tauri-apps/api/path';
-  import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
-  import { open as openDialog } from '@tauri-apps/plugin-dialog';
-  import { openUrl } from '@tauri-apps/plugin-opener';
+  import { backend } from './backend';
   import {
     DEFAULT_SERVER, defaultSpaceFolder, findRegistration, isCloudSyncedFolder, isSignedOut, mtsync, parseSpaceRef,
     type MtsyncInfo, type SpaceRef, type SpaceRow,
@@ -51,7 +48,7 @@
 
   onMount(() => {
     let unlisten: (() => void) | undefined;
-    void getCurrentWebviewWindow().listen<string>('mtsync-login-url', event => { loginUrl = event.payload; }).then(fn => (unlisten = fn));
+    void backend.on('mtsync-login-url', url => { loginUrl = url; }).then(fn => (unlisten = fn));
     void (async () => {
       info = await mtsync.info();
       if (!missing) await loadSpaces();
@@ -114,7 +111,7 @@
         onOpened(existing.folder, parsed);
         return;
       }
-      folder = defaultSpaceFolder(await homeDir(), parsed.space);
+      folder = defaultSpaceFolder(await backend.files.homeDir(), parsed.space);
       step = 'folder';
     } catch (e) {
       step = 'pick';
@@ -124,8 +121,8 @@
   }
 
   async function browse() {
-    const picked = await openDialog({ directory: true, multiple: false, defaultPath: folder });
-    if (typeof picked === 'string') folder = picked;
+    const picked = await backend.dialogs.openFolder(folder);
+    if (picked) folder = picked;
   }
 
   async function register() {
@@ -228,7 +225,7 @@
       <div class="buttons">
         <button onclick={() => { step = 'pick'; }}>Back</button>
         <span class="grow"></span>
-        <button onclick={() => void openUrl(`${ref?.server ?? DEFAULT_SERVER}/account`)}>Open My Account</button>
+        <button onclick={() => void backend.opener.url(`${ref?.server ?? DEFAULT_SERVER}/account`)}>Open My Account</button>
         <button class="primary" onclick={() => void connect()}>Connect…</button>
       </div>
     {:else if step === 'signing-in'}
@@ -240,7 +237,7 @@
         <p class="muted">The browser uses the account signed in to metatrash.com there{account ? ` (this computer uses ${account})` : ''}. To connect a different account, use Switch Account instead.</p>
       {/if}
       {#if loginUrl}
-        <p class="muted">If the browser didn't open: <button class="link" onclick={() => void openUrl(loginUrl)}>open the sign-in page</button>.</p>
+        <p class="muted">If the browser didn't open: <button class="link" onclick={() => void backend.opener.url(loginUrl)}>open the sign-in page</button>.</p>
       {/if}
       <div class="buttons"><span class="grow"></span><button onclick={() => void mtsync.cancelLogin()}>Cancel</button></div>
     {:else if step === 'folder'}

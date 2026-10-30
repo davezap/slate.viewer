@@ -12,8 +12,7 @@
 
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { invoke } from '@tauri-apps/api/core';
-  import { openUrl } from '@tauri-apps/plugin-opener';
+  import { backend } from './backend';
 
   interface Props {
     /** What the timer's check found; null for Help > Check for Updates, which checks first. */
@@ -55,7 +54,7 @@
     markdown = cache.get(version) ?? null;
     if (markdown !== null) return;
     try {
-      const text = await invoke<string>('change_note', { version });
+      const text = await backend.app.changeNote(version);
       cache.set(version, text);
       if (selected === version) markdown = text;
     } catch (e) {
@@ -71,9 +70,9 @@
   });
 
   onMount(() => {
-    const listing = invoke<string[]>('change_notes');
+    const listing = backend.app.changeNotes();
     void (async () => {
-      if (!result) result = await invoke<UpdateCheck>('check_for_updates');
+      if (!result) result = await backend.app.checkForUpdates();
       let found: string[] = [];
       try {
         found = await listing;
@@ -87,7 +86,7 @@
     })();
     const onMessage = (event: MessageEvent) => {
       if (event.source !== frame?.contentWindow) return;
-      if (event.data?.type === 'slate-notes-link') void openUrl(event.data.url).catch(() => {});
+      if (event.data?.type === 'slate-notes-link') void backend.opener.url(event.data.url).catch(() => {});
       if (event.data?.type === 'slate-notes-escape') close();
     };
     addEventListener('message', onMessage);
@@ -97,7 +96,7 @@
   function close() {
     if (installing) return;
     // Closing an offer means "not this version": the timer won't ask about it again.
-    if (result?.available && !result.required && result.latest) void invoke('skip_update', { version: result.latest });
+    if (result?.available && !result.required && result.latest) void backend.app.skipUpdate(result.latest);
     onClose();
   }
 
@@ -106,7 +105,7 @@
     installError = '';
     try {
       // Windows: the setup runs and this app quits. Elsewhere the download opens in the browser.
-      await invoke('install_update');
+      await backend.app.installUpdate();
       installing = false;
       onClose();
     } catch (e) {

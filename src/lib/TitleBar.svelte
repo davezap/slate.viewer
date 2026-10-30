@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { getCurrentWindow } from '@tauri-apps/api/window';
+  import { backend } from './backend';
   import MenuBar from './MenuBar.svelte';
   import { customTitleBar, type MenuItem } from './menu';
 
@@ -18,12 +18,15 @@
     onFind: () => void;
     /** Metatrash Sync status for an open space, or null outside one. */
     sync?: { label: string; tone: 'ok' | 'busy' | 'warn' | 'error'; title: string } | null;
-    onSync?: () => void;
+    /** The status chip was clicked: `chip` is its box, to open the sync menu under it. */
+    onSync?: (chip: DOMRect) => void;
+    /** The sync menu is open (the chip shows pressed). */
+    syncOpen?: boolean;
   }
 
-  let { menu, title, detail, dirty, backTo, forwardTo, onBack, onForward, onFind, sync = null, onSync }: Props = $props();
+  let { menu, title, detail, dirty, backTo, forwardTo, onBack, onForward, onFind, sync = null, onSync, syncOpen = false }: Props = $props();
 
-  const appWindow = getCurrentWindow();
+  const appWindow = backend.window;
   let maximized = $state(false);
   let menuBar = $state<ReturnType<typeof MenuBar>>();
 
@@ -66,7 +69,15 @@
 
   <div class="tools">
     {#if sync}
-      <button class="sync {sync.tone}" title="{sync.title}\nClick for details" onclick={() => onSync?.()}>
+      <button
+        class="sync {sync.tone}"
+        class:open={syncOpen}
+        data-sync-chip
+        title={syncOpen ? sync.title : `${sync.title}\nClick for recent activity and Sync now`}
+        aria-haspopup="dialog"
+        aria-expanded={syncOpen}
+        onclick={event => onSync?.(event.currentTarget.getBoundingClientRect())}
+      >
         <span class="dot"></span>{sync.label}
       </button>
     {/if}
@@ -122,6 +133,7 @@
     display: flex; gap: 7px; width: auto; height: 28px; padding: 0 10px; margin-right: 4px;
     font: inherit; font-size: 12px; white-space: nowrap; border: 1px solid var(--side-border); border-radius: 14px;
   }
+  .sync.open { background: var(--side-hover); color: var(--side-fg); }
   /* Green when synced, orange (pulsing) while syncing, yellow when it needs a look, red on errors. */
   .dot { width: 8px; height: 8px; border-radius: 50%; background: #2e9d5b; }
   .sync.busy .dot { background: #f08a24; animation: pulse 1.2s ease-in-out infinite; }

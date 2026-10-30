@@ -260,7 +260,11 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
 - The **status chip** in the title bar shows the sync state (and conflicts, and size when near the limit):
   green when synced, orange while a save is on its way to Metatrash (until mtsync finishes a pass after it),
   yellow when it needs a look (conflicts, a note near the size limit), red when sync isn't running or failed.
-  Click it to start the service when it isn't running, sign in again when signed out, or see the recent sync log.
+  The time is when mtsync last checked the folder and the space (with mtsync 0.70.0 it stays within a few seconds
+  of now; the app asks every 3 s). Click it for the **sync menu**: the state in full, **Sync now** (mtsync 0.70.0,
+  `mtsync sync FOLDER`), **Start syncing** when the service isn't running or **Sign in again…** when signed out,
+  the space's recent activity from the mtsync log (updated while the menu is open), and the mtsync version.
+  Escape or a click elsewhere closes it.
 - Space rules are checked when saving: names with letters, digits, `.`, `-`, `_` only (a fixed name is offered),
   at most 8 folder levels, 64 KB per text file (larger files and binaries sync as virtual files, below), UTF-8 without BOM. New notes get a space-safe name (`My Idea` → `my-idea.md`)
   and `[[My Idea]]` finds `my-idea.md`. Read-only spaces open locked. `README.md` is an ordinary note; each folder's
@@ -395,6 +399,9 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
 docs/change-notes/   changenotes_<version>.md per release, also published to the docs space (see Updates)
 public/slate/        Slate 0.20.0, vendored unchanged (slate.js, slate.css, mermaid/, themes, .d.ts)
 src/App.svelte       menu, file handling, link handling, Slate mount
+src/lib/backend/     everything the UI asks of the outside world, as one Backend interface (types.ts) with
+                     a capabilities flag; desktop.ts answers it with Tauri. Only this folder imports @tauri-apps,
+                     so the metatrash.com build can swap in a fetch-based web.ts (Metatrash roadmap)
 src/lib/             icon bar and sidebar sections, folder Properties (FolderProperties.svelte, folderSettings.ts), Go to File, wiki-link resolving, paths, line endings, recent lists, preferences
 src-tauri/src/       Rust: windows, single instance, file read/write, attachments, file and folder
                      watching, folder listing and search, rename/move/delete/new folder (files.rs),

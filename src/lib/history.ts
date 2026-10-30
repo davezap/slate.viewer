@@ -1,6 +1,6 @@
 // A space file's version history, through `mtsync history -json` and `mtsync show` (mtsync 0.41.0).
 
-import { invoke } from '@tauri-apps/api/core';
+import { backend } from './backend';
 
 export interface HistoryEntry {
   /** The Git commit (40 hex characters) to pass to `mtsync show`. */
@@ -41,13 +41,12 @@ export interface HistoryPage {
 export const HISTORY_PAGE = 20;
 
 export async function fileHistory(file: string, offset = 0): Promise<HistoryPage> {
-  const json = await invoke<string>('mtsync_history', { file, limit: HISTORY_PAGE, offset });
-  return JSON.parse(json) as HistoryPage;
+  return backend.sync.history(file, HISTORY_PAGE, offset);
 }
 
 /** The file's text at `entry`, as stored in the space. */
 export function revisionText(entry: HistoryEntry, fallbackFile: string): Promise<string> {
-  return invoke<string>('mtsync_show', { file: entry.file ?? fallbackFile, revision: entry.revision });
+  return backend.sync.show(entry.file ?? fallbackFile, entry.revision);
 }
 
 const dateFormat = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
