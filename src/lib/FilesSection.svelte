@@ -186,6 +186,19 @@
   const rootName = $derived(root ? basename(root) || root : '');
   const folderLabel = (folder: string) => (folder ? `${folder}/` : `${rootName} (top)`);
 
+  /** Whether the tree has a folder at `path` (relative). */
+  function inTree(path: string): boolean {
+    let nodes = tree;
+    for (const part of path.split('/')) {
+      const next = nodes.find(n => n.folder && n.name === part);
+      if (!next) return false;
+      nodes = next.children;
+    }
+    return true;
+  }
+  /** Where the name box shows, in the tree like a rename: the new entry's folder, or the top when that folder isn't listed. */
+  const createAt = $derived(createIn && inTree(createIn) ? createIn : '');
+
   /** Expands `folder` (relative) and the folders above it. */
   function expandTo(folder: string) {
     if (!folder) return;
@@ -440,24 +453,29 @@
         {/each}
       {/if}
     {:else}
-      {#if creating}
-        <input
-          class="field"
-          bind:this={newInput}
-          bind:value={newName}
-          placeholder="New {createKind === 'folder' ? 'folder' : 'file'} in {folderLabel(createIn)}: name, Enter"
-          title={createKind === 'folder'
-            ? 'A name for the new folder. Escape cancels.'
-            : 'A name for the new Markdown file (.md is added). Escape cancels.'}
-          onkeydown={finishCreate}
-          onblur={() => (creating = false)}
-        />
-      {/if}
       {#if files.length === 0 && emptyFolders.length === 0}
         <p class="empty">No Markdown files in this folder yet.</p>
       {/if}
       <ul class="tree">
-        {#snippet branch(nodes: Node[], depth: number)}
+        {#snippet newEntry(depth: number)}
+          <li>
+            <input
+              class="field rename"
+              style:margin-left="{(createKind === 'folder' ? 8 : 22) + depth * 14}px"
+              style:width="calc(100% - {(createKind === 'folder' ? 18 : 32) + depth * 14}px)"
+              bind:this={newInput}
+              bind:value={newName}
+              placeholder={createKind === 'folder' ? 'New folder name' : 'New file name'}
+              title={createKind === 'folder'
+                ? `A name for the new folder in ${folderLabel(createIn)}. Enter makes it, Escape cancels.`
+                : `A name for the new Markdown file in ${folderLabel(createIn)} (.md is added). Enter makes it, Escape cancels.`}
+              onkeydown={finishCreate}
+              onblur={() => (creating = false)}
+            />
+          </li>
+        {/snippet}
+        {#snippet branch(nodes: Node[], depth: number, parent: string)}
+          {#if creating && createAt === parent}{@render newEntry(depth)}{/if}
           {#each nodes as node (keyOf(node))}
             <li>
               {#if renaming === keyOf(node)}
@@ -471,7 +489,7 @@
                   onblur={() => (renaming = null)}
                 />
                 {#if node.folder && expanded.has(node.path)}
-                  <ul>{@render branch(node.children, depth + 1)}</ul>
+                  <ul>{@render branch(node.children, depth + 1, node.path)}</ul>
                 {/if}
               {:else if node.folder}
                 <button
@@ -496,7 +514,7 @@
                   {#if unreadIn(node.path)}<span class="unread" title="{unreadIn(node.path)} published {unreadIn(node.path) === 1 ? 'file' : 'files'} to read in here">●</span>{/if}
                 </button>
                 {#if expanded.has(node.path)}
-                  <ul>{@render branch(node.children, depth + 1)}</ul>
+                  <ul>{@render branch(node.children, depth + 1, node.path)}</ul>
                 {/if}
               {:else}
                 <button
@@ -522,7 +540,7 @@
             </li>
           {/each}
         {/snippet}
-        {@render branch(tree, 0)}
+        {@render branch(tree, 0, '')}
       </ul>
       {#if truncated}
         <p class="empty">Showing the first {files.length} files.</p>
