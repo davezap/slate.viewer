@@ -14,7 +14,7 @@ These three projects are parts of one whole, kept in sibling folders:
   is a handy Markdown editor that can also open Metatrash spaces (through `mtsync`). Over time it
   becomes the desktop companion for managing Metatrash spaces, and those features come later.
 
-Metatrash's website embeds Slate too, read-only (Slate 0.19.5 since Metatrash 0.57.5), in
+Metatrash's website embeds Slate too, read-only (Slate 0.20.0 since Metatrash 0.64.1), in
 `internal/service/web/`; copy `slate.js`, `slate.css` and `mermaid/` there to update it.
 
 ## Download
@@ -393,7 +393,7 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
 
 ```
 docs/change-notes/   changenotes_<version>.md per release, also published to the docs space (see Updates)
-public/slate/        Slate 0.19.5, vendored unchanged (slate.js, slate.css, mermaid/, themes, .d.ts)
+public/slate/        Slate 0.20.0, vendored unchanged (slate.js, slate.css, mermaid/, themes, .d.ts)
 src/App.svelte       menu, file handling, link handling, Slate mount
 src/lib/             icon bar and sidebar sections, folder Properties (FolderProperties.svelte, folderSettings.ts), Go to File, wiki-link resolving, paths, line endings, recent lists, preferences
 src-tauri/src/       Rust: windows, single instance, file read/write, attachments, file and folder
