@@ -12,7 +12,9 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager};
 
 const MARKDOWN_EXTENSIONS: [&str; 4] = ["md", "markdown", "mdown", "mkd"];
-/// Folders that never hold notes but can be huge.
+/// Folders that never hold notes but can be huge. Not skipped in a space folder (one Metatrash
+/// Sync keeps, with `.mtsync`): a space holds no build output, and `build/` there is a folder
+/// like any other.
 const SKIPPED_FOLDERS: [&str; 6] = ["node_modules", "target", "dist", "build", "bin", "obj"];
 const MAX_FILES: usize = 5000;
 const MAX_DEPTH: usize = 12;
@@ -62,8 +64,15 @@ pub fn is_hidden_file(path: &Path) -> bool {
     !is_markdown(path) || name.eq_ignore_ascii_case("AGENTS.md") || name.starts_with('.')
 }
 
-fn skip_folder(name: &str) -> bool {
-    name.starts_with('.') || SKIPPED_FOLDERS.iter().any(|s| s.eq_ignore_ascii_case(name))
+/// True when `root` is a folder Metatrash Sync keeps in step with a space.
+fn is_space_folder(root: &Path) -> bool {
+    root.join(".mtsync").is_dir()
+}
+
+/// True when a listing of a folder skips its subfolder `name`: hidden folders always, and the
+/// usual build and package folders outside a space.
+fn skip_folder(name: &str, in_space: bool) -> bool {
+    name.starts_with('.') || (!in_space && SKIPPED_FOLDERS.iter().any(|s| s.eq_ignore_ascii_case(name)))
 }
 
 /// True when `path` is inside a folder the listing skips (.git, node_modules, target…) below `root`.
@@ -71,7 +80,8 @@ pub(crate) fn in_skipped_folder(root: &Path, path: &Path) -> bool {
     let Ok(inside) = path.strip_prefix(root) else { return false };
     let mut parts: Vec<_> = inside.components().collect();
     parts.pop(); // the file or folder itself
-    parts.iter().any(|part| skip_folder(&part.as_os_str().to_string_lossy()))
+    let in_space = is_space_folder(root);
+    parts.iter().any(|part| skip_folder(&part.as_os_str().to_string_lossy(), in_space))
 }
 
 fn relative(root: &Path, path: &Path) -> String {
@@ -95,6 +105,7 @@ fn markdown_files(root: &Path, hidden: bool) -> Walk {
     let mut found = Vec::new();
     let mut empty_folders = Vec::new();
     let mut folders = 0usize;
+    let in_space = is_space_folder(root);
     let mut stack = vec![(root.to_path_buf(), 0usize)];
     while let Some((dir, depth)) = stack.pop() {
         folders += 1;
@@ -120,7 +131,7 @@ fn markdown_files(root: &Path, hidden: bool) -> Walk {
             let Ok(kind) = entry.file_type() else { continue };
             let path = entry.path();
             if kind.is_dir() {
-                if depth < MAX_DEPTH && !skip_folder(&entry.file_name().to_string_lossy()) {
+                if depth < MAX_DEPTH && !skip_folder(&entry.file_name().to_string_lossy(), in_space) {
                     subfolders.push((path, depth + 1));
                 }
             } else if kind.is_file() && (hidden || !is_hidden_file(&path)) {
@@ -247,6 +258,7 @@ pub async fn folder_descriptions(root: String) -> Result<Vec<FolderDescription>,
     tauri::async_runtime::spawn_blocking(move || {
         let root = PathBuf::from(root);
         let mut found = Vec::new();
+        let in_space = is_space_folder(&root);
         let mut stack = vec![(root.clone(), 0usize)];
         while let Some((dir, depth)) = stack.pop() {
             if let Ok(text) = fs::read_to_string(dir.join(".metatrash.json")) {
@@ -291,7 +303,7 @@ pub async fn folder_descriptions(root: String) -> Result<Vec<FolderDescription>,
             let Ok(entries) = fs::read_dir(&dir) else { continue };
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().into_owned();
-                if entry.file_type().is_ok_and(|t| t.is_dir()) && !skip_folder(&name) {
+                if entry.file_type().is_ok_and(|t| t.is_dir()) && !skip_folder(&name, in_space) {
                     stack.push((entry.path(), depth + 1));
                 }
             }
@@ -349,6 +361,14 @@ mod tests {
         assert!(in_skipped_folder(&root, &root.join("notes").join("node_modules").join("x")));
         assert!(!in_skipped_folder(&root, &root.join(".git")));
         assert!(!in_skipped_folder(&root, &root.join("notes").join("a.md")));
+        assert!(in_skipped_folder(&root, &root.join("build").join("plan.md")));
+        // In a space folder only hidden folders are skipped: build/ is an ordinary folder there.
+        fs::create_dir_all(root.join(".mtsync")).unwrap();
+        fs::create_dir_all(root.join("build")).unwrap();
+        fs::write(root.join("build").join("plan.md"), "# Plan\n").unwrap();
+        assert!(!in_skipped_folder(&root, &root.join("build").join("plan.md")));
+        assert!(in_skipped_folder(&root, &root.join(".mtsync").join("state.json")));
+        assert!(markdown_files(&root, false).files.iter().any(|f| f.ends_with("build/plan.md") || f.ends_with("build\\plan.md")));
         fs::remove_dir_all(&root).unwrap();
     }
 }

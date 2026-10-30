@@ -212,7 +212,7 @@ back at the scroll position it was left at. A folder opens where it was left, as
 ### Folder mode
 
 - **File > Open Folder** (Ctrl+Alt+O), the Files section's **Open Folder** button, or a folder on the
-  command line fills the Files section with every Markdown file in it (hidden folders, `node_modules`, `target`, `build` and similar are skipped).
+  command line fills the Files section with every Markdown file in it (hidden folders are skipped, and outside a synced space `node_modules`, `target`, `build` and similar too).
   The tree updates as files are added, removed or renamed.
 - **New File** (File > New File, Ctrl+Alt+N, or the first button in the Files header) asks for a name in the
   Files section and creates the note next to the open document (or at the top of the folder); **New File in Root**
