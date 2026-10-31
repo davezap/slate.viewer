@@ -279,6 +279,21 @@ pub async fn mtsync_start() -> Result<(), String> {
     if out.ok { Ok(()) } else { Err(out.message()) }
 }
 
+/// `mtsync sync FOLDER` (mtsync 0.70.0) asks the running service for a pass now; an older
+/// mtsync would read `sync FOLDER` as a one-off sync of a space called "sync".
+const SYNC_NOW_VERSION: (u32, u32, u32) = (0, 70, 0);
+
+#[tauri::command]
+pub async fn mtsync_sync(folder: String) -> Result<(), String> {
+    let version = run(None, vec!["version".into()]).await?;
+    match parse_version(&version.stdout) {
+        Some(v) if version.ok && v >= SYNC_NOW_VERSION => {}
+        _ => return Err("Sync now needs mtsync 0.70.0 or later. Update mtsync and try again.".into()),
+    }
+    let out = run(None, vec!["sync".into(), folder]).await?;
+    if out.ok { Ok(()) } else { Err(out.message()) }
+}
+
 #[tauri::command]
 pub async fn mtsync_log(lines: u32) -> Result<String, String> {
     let out = run(None, vec!["log".into(), lines.to_string()]).await?;

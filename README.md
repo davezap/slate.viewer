@@ -49,6 +49,19 @@ npm run tauri dev          # run with hot reload
 npm run release            # installer in src-tauri\target\release\bundle\nsis\
 ```
 
+### The website build
+
+The same UI runs on metatrash.com at `/app/{owner}/{slug}/` (Metatrash 0.73.0), with `src/lib/backend/web.ts`
+in place of the Tauri backend: it reads and saves through the site API with the person's own access.
+
+```powershell
+npm run build:web          # dist-web\assets\ and dist-web\.vite\manifest.json
+```
+
+Copy everything in `dist-web` into Metatrash's `internal/service/web/app/` (replacing the old `assets` and `.vite`,
+keeping its README), and Metatrash embeds it. The page uses the site's own Slate (`/assets/slate.js`), so keep
+Metatrash's `web/slate.*` on the same Slate version as `public/slate/`.
+
 ## Making a release
 
 GitHub Actions builds and publishes the installers (`.github/workflows/release.yml`):
@@ -400,8 +413,9 @@ docs/change-notes/   changenotes_<version>.md per release, also published to the
 public/slate/        Slate 0.20.0, vendored unchanged (slate.js, slate.css, mermaid/, themes, .d.ts)
 src/App.svelte       menu, file handling, link handling, Slate mount
 src/lib/backend/     everything the UI asks of the outside world, as one Backend interface (types.ts) with
-                     a capabilities flag; desktop.ts answers it with Tauri. Only this folder imports @tauri-apps,
-                     so the metatrash.com build can swap in a fetch-based web.ts (Metatrash roadmap)
+                     a capabilities flag; desktop.ts answers it with Tauri, web.ts with the Metatrash site API.
+                     Only this folder imports @tauri-apps; vite.config.ts picks the backend by build mode ($backend)
+src/lib/site.ts      on metatrash.com: the space and file to open, from the page's <meta name="metatrash-app">
 src/lib/             icon bar and sidebar sections, folder Properties (FolderProperties.svelte, folderSettings.ts), Go to File, wiki-link resolving, paths, line endings, recent lists, preferences
 src-tauri/src/       Rust: windows, single instance, file read/write, attachments, file and folder
                      watching, folder listing and search, rename/move/delete/new folder (files.rs),

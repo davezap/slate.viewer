@@ -1,5 +1,6 @@
 import { mount } from 'svelte';
 import { backend } from './lib/backend';
+import { applySiteConfig } from './lib/site';
 import App from './App.svelte';
 import './app.css';
 
@@ -12,5 +13,7 @@ window.addEventListener('unhandledrejection', event => {
   const reason = event.reason;
   logFault('promise', reason instanceof Error ? reason.stack ?? reason.message : String(reason));
 });
+
+if (backend.capabilities.kind === 'web') applySiteConfig();
 
 export default mount(App, { target: document.getElementById('app')! });

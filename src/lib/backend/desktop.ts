@@ -43,7 +43,7 @@ function toNative(entries: MenuEntry[]): MenuOptions['items'] {
 
 let menuGeneration = 0;
 
-export const desktop: Backend = {
+export const backend: Backend = {
   capabilities: { kind: 'desktop', windows: true, menuBar: true, updates: true, syncService: true, fileManager: true },
 
   files: {

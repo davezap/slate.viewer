@@ -61,3 +61,17 @@ body {
 }
 /* Only ever on paper, but hidden on screen in case printing ends without afterprint. */
 @media screen { .print-image { display: none; } }
+
+/* In-page dialogs on metatrash.com (src/lib/backend/web.ts), where there are no native ones. */
+.web-dialog-backdrop { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; background: rgb(0 0 0 / .35); }
+.web-dialog {
+  width: min(440px, calc(100vw - 32px)); box-sizing: border-box; padding: 18px 20px 14px; border-radius: 10px;
+  background: var(--side-input); color: var(--side-fg); border: 1px solid var(--side-border); box-shadow: 0 12px 40px rgb(0 0 0 / .25);
+  font: 14px/1.45 "Segoe UI", system-ui, sans-serif;
+}
+.web-dialog h2 { margin: 0 0 8px; font-size: 15px; }
+.web-dialog p { margin: 0 0 10px; white-space: pre-wrap; }
+.web-dialog input { width: 100%; box-sizing: border-box; margin: 2px 0 12px; padding: 6px 8px; font: inherit; color: inherit; background: var(--side-bg); border: 1px solid var(--side-border); border-radius: 6px; }
+.web-dialog .buttons { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.web-dialog button { padding: 6px 14px; font: inherit; color: inherit; background: var(--side-bg); border: 1px solid var(--side-border); border-radius: 6px; }
+.web-dialog button.primary { background: var(--side-accent); border-color: var(--side-accent); color: #fff; }

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { backend } from './backend';
+  import { backend, capabilities } from './backend';
   import MenuBar from './MenuBar.svelte';
   import { customTitleBar, type MenuItem } from './menu';
 
@@ -46,8 +46,11 @@
 </script>
 
 <!-- The empty parts of the bar move the window (and double-click maximises it). -->
-<header class="titlebar" class:custom={customTitleBar} data-tauri-drag-region>
-  {#if customTitleBar}
+<header class="titlebar" class:custom={customTitleBar && capabilities.windows} data-tauri-drag-region>
+  {#if !capabilities.menuBar}
+    <!-- metatrash.com: the site's own wordmark, home, instead of the app's icon and menus. -->
+    <a class="brand" href="/">metatrash<span>.</span></a>
+  {:else if customTitleBar}
     <img class="logo" src="/app-icon.png" alt="" data-tauri-drag-region />
     <MenuBar bind:this={menuBar} menus={menu} />
   {/if}
@@ -86,7 +89,7 @@
     </button>
   </div>
 
-  {#if customTitleBar}
+  {#if customTitleBar && capabilities.windows}
     <div class="controls">
       <button class="control" title="Minimize" aria-label="Minimize" onclick={() => void appWindow.minimize()}>
         <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M1.5 6h9" /></svg>
@@ -114,6 +117,8 @@
   }
   .titlebar.custom { padding-right: 0; }
   .logo { width: 18px; height: 18px; margin: 0 6px 0 4px; }
+  .brand { margin: 0 6px 0 6px; color: var(--side-fg); font-weight: 700; font-size: 17px; letter-spacing: -.02em; text-decoration: none; }
+  .brand span { color: var(--side-accent); }
   .nav { display: flex; gap: 2px; margin-left: 8px; }
   .title {
     flex: 1; min-width: 0; height: 100%; display: flex; align-items: center; justify-content: center; gap: 8px;

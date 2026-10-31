@@ -1,11 +1,12 @@
 {
   "name": "slate-viewer",
   "private": true,
-  "version": "0.20.5",
+  "version": "0.21.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:web": "vite build --mode web",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "tauri": "tauri",
     "release": "tauri build"
