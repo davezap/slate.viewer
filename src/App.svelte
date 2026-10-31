@@ -3,6 +3,7 @@
   import { backend, capabilities, type FolderListing, type LoadedDocument } from './lib/backend';
   import { showAddress } from './lib/site';
   import { rememberSpace, spaceOfPath } from './lib/siteSpaces';
+  import SettingsDialog from './lib/SettingsDialog.svelte';
   import type { SlateChangesEndDetail, SlateCompareEndDetail, SlateEditorApi, SlateFillEndDetail, SlateForm, SlateFormAnswers, SlateFormSubmitDetail, SlateModeChangeDetail, SlateOutline, SlateOutlineHeading, SlateUploadedAttachment, SlateWorkspaceMode } from '../public/slate/slate-editor';
   import { basename, dirname, extname, joinPath, toLocalPath } from './lib/paths';
   import { detectFormat, toFileText, NEW_FILE_FORMAT, type FileFormat } from './lib/document';
@@ -139,6 +140,16 @@
   let signedIn = $state(true);
   /** On the website: the signed-in account's name, for the account menu. */
   let account = $state('');
+  /** metatrash.com: the Settings dialog's address (#settings/<tab>…, without the #), or null. */
+  let settings = $state<string | null>(null);
+  function readSettingsHash() {
+    const hash = decodeURIComponent(location.hash.slice(1));
+    settings = web && (hash === 'settings' || hash.startsWith('settings/')) ? hash : null;
+  }
+  function closeSettings() {
+    settings = null;
+    window.history.replaceState(window.history.state, '', location.pathname + location.search);
+  }
 
   function setEditing(on: boolean) {
     editing = on;
@@ -2803,6 +2814,9 @@
     let disposed = false;
 
     if (web) {
+      readSettingsHash();
+      addEventListener('hashchange', readSettingsHash);
+      cleanups.push(() => removeEventListener('hashchange', readSettingsHash));
       void backend.sync.whoami(null).then(text => {
         const who = text ? JSON.parse(text) : null;
         signedIn = who?.signedIn === true;
@@ -3129,6 +3143,15 @@
 
 {#if submissionsDialog && openedSpace}
   <SubmissionsDialog folder={openedSpace.folder} space={openedSpace.space} initialId={submissionsDialog.id} onClose={() => (submissionsDialog = null)} />
+{/if}
+
+{#if settings !== null}
+  <SettingsDialog
+    address={settings}
+    current={web ? spaceOfPath(root) : null}
+    onNavigate={next => { location.hash = next; }}
+    onClose={closeSettings}
+  />
 {/if}
 
 {#if updateDialog}

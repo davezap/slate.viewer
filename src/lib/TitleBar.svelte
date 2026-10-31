@@ -189,7 +189,7 @@
           {#if accountOpen}
             <div class="account-menu" role="menu">
               {#if account}<div class="signed">Signed in as <strong>{account}</strong></div>{/if}
-              <a role="menuitem" href="/account">Settings</a>
+              <a role="menuitem" href="#settings/spaces" onclick={() => (accountOpen = false)}>Settings</a>
               <button role="menuitem" onclick={() => void signOut()}>Sign out</button>
             </div>
           {/if}
