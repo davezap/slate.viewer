@@ -2,10 +2,12 @@
   // metatrash.com: Settings, the account's settings in the app (Metatrash 0.79.0), in place of the
   // old /account pages. Its address is #settings/<tab>[/<space>]: Spaces (and each owned space's
   // sharing and settings), Security, Services (0.80.0, ServicesPanel.svelte: …/services/apps/<id>,
-  // …/services/actions/<job>) and Profile. Security still opens the account page for now. On a
-  // phone it is full screen: the tabs are a list, each opens on its own.
+  // …/services/actions/<job>), Security (0.81.0, SecurityPanel.svelte) and Profile. A change's
+  // result floats at the top for 10 seconds; a problem stays until it is closed. On a phone it is
+  // full screen: the tabs are a list, each opens on its own.
   import { onMount, tick, untrack } from 'svelte';
   import ConfirmSheet from './ConfirmSheet.svelte';
+  import SecurityPanel from './SecurityPanel.svelte';
   import ServicesPanel from './ServicesPanel.svelte';
   import {
     account, AccountError, browserZone, downloadAddress, openAddress, timeZones,
@@ -40,8 +42,9 @@
   let signedOut = $state(false);
   let sharing = $state<Sharing | null>(null);
   let sharingError = $state('');
-  let notice = $state('');
-  let error = $state('');
+  /** The floating result of the last change. */
+  let toast = $state<{ text: string; error: boolean } | null>(null);
+  let toastTimer: ReturnType<typeof setTimeout> | undefined;
   let busy = $state(false);
   let confirm = $state<{ reason: string; retry: () => void } | null>(null);
   let narrow = $state(false);
@@ -107,8 +110,6 @@
   function resetSpace(id: string) {
     sharing = null;
     sharingError = '';
-    notice = '';
-    error = '';
     removing = '';
     webWarning = false;
     deleteName = '';
@@ -116,7 +117,16 @@
     zone = selected?.timezone ?? '';
     void loadSharing(id);
   }
-  $effect(() => { void tab; notice = ''; error = ''; });
+  // A problem belongs to its tab; a result may follow the person to the next page.
+  $effect(() => { void tab; untrack(() => { if (toast?.error) say(''); }); });
+
+  /** Shows a change's result for 10 seconds, or a problem until it is closed; '' clears it. */
+  function say(text: string, error = false) {
+    clearTimeout(toastTimer);
+    toast = text ? { text, error } : null;
+    if (text && !error) toastTimer = setTimeout(() => (toast = null), 10_000);
+  }
+  onMount(() => () => clearTimeout(toastTimer));
   $effect(() => {
     if (key === 'new' && acct) void tick().then(() => (panel?.querySelector('#settings-new-space') as HTMLInputElement | null)?.focus());
   });
@@ -128,11 +138,10 @@
   async function run(work: () => Promise<Notice>, after?: (n: Notice) => void | Promise<void>) {
     if (busy) return;
     busy = true;
-    error = '';
-    notice = '';
+    if (toast?.error) say('');
     try {
       const n = await work();
-      notice = n.notice ?? '';
+      if (n.notice) say(n.notice);
       await after?.(n);
       await load();
       if (selectedId) await loadSharing(selectedId);
@@ -140,7 +149,7 @@
       if (e instanceof AccountError && e.code === 'step_up_needed') {
         confirm = { reason: e.message, retry: () => void run(work, after) };
       } else {
-        error = e instanceof Error ? e.message : String(e);
+        say(e instanceof Error ? e.message : String(e), true);
       }
     } finally {
       busy = false;
@@ -182,6 +191,15 @@
       <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
     </button>
 
+    {#if toast}
+      <div class="toast" class:bad={toast.error} role={toast.error ? 'alert' : 'status'}>
+        <span>{toast.text}</span>
+        <button class="toast-x" aria-label="Dismiss" title="Dismiss" onclick={() => say('')}>
+          <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
+        </button>
+      </div>
+    {/if}
+
     {#if !narrow || !tab}
       <nav aria-label="Settings">
         <div class="heading">Settings</div>
@@ -200,8 +218,6 @@
     {#if !narrow || tab}
       <section class="content">
         {#if narrow}<button class="back" onclick={() => go(up.to)}>‹ {up.label}</button>{/if}
-        {#if notice}<p class="notice" role="status">{notice}</p>{/if}
-        {#if error}<p class="error" role="alert">{error}</p>{/if}
 
         {#if signedOut}
           <h2>Sign in to see your settings</h2>
@@ -447,7 +463,7 @@
 
           <h3>Email</h3>
           <p class="big mono">{acct.email}</p>
-          <p class="muted">Kept private, for signing in. It is never shown in spaces. <a href="/account/security#email-address">Change it in Security</a>.</p>
+          <p class="muted">Kept private, for signing in. It is never shown in spaces. <button class="link" onclick={() => go('settings/security')}>Change it in Security</button>.</p>
 
           <h3>Delete account</h3>
           {#if acct.unavailable?.includes('spaces')}
@@ -464,12 +480,10 @@
           {/if}
 
         {:else if tab === 'security'}
-          <h2>Security</h2>
-          <p>Passkeys, the authenticator app, recovery codes, email sign-in, your email address and your signed-in devices are still on the account page for now.</p>
-          <a class="button primary" href="/account/security">Open Security</a>
+          <SecurityPanel onConfirm={(reason, retry) => (confirm = { reason, retry })} onNotice={say} onChanged={() => void load()} />
 
         {:else if tab === 'services'}
-          <ServicesPanel {sub} onNavigate={go} onConfirm={(reason, retry) => (confirm = { reason, retry })} />
+          <ServicesPanel {sub} onNavigate={go} onConfirm={(reason, retry) => (confirm = { reason, retry })} onNotice={say} />
         {/if}
       </section>
     {/if}
@@ -525,7 +539,24 @@
   .hint { font-size: 12px; }
   .mono, code { font-family: Consolas, "Cascadia Mono", ui-monospace, monospace; }
   .big { font-size: 15px; }
-  .notice { padding: 8px 12px; border-radius: 6px; background: var(--side-accent-soft); }
+  /* Floats over the top of the box, so a result shows without scrolling the page away. */
+  .toast {
+    position: absolute; top: 10px; left: 50%; z-index: 2; transform: translateX(-50%);
+    display: flex; align-items: flex-start; gap: 8px; box-sizing: border-box; width: max-content; max-width: calc(100% - 96px);
+    padding: 8px 8px 8px 14px; background: var(--side-input); border: 1px solid var(--side-accent); border-radius: 8px;
+    box-shadow: 0 6px 24px rgb(0 0 0 / .18); animation: toast-in .15s ease-out;
+  }
+  .toast::before { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: var(--side-accent-soft); }
+  .toast span { padding-top: 2px; }
+  .toast.bad { border-color: #c0392b; }
+  .toast.bad::before { background: rgb(192 57 43 / .1); }
+  /* Over the content, beside the 180px tabs. */
+  .panel:not(.narrow) .toast { left: calc(50% + 90px); max-width: calc(100% - 180px - 96px); }
+  .narrow .toast { top: 8px; max-width: calc(100% - 24px); }
+  .toast-x { flex: none; display: grid; place-items: center; width: 24px; height: 24px; padding: 0; color: var(--side-muted); background: none; border: 0; }
+  .toast-x:hover:not(:disabled) { color: var(--side-fg); background: var(--side-hover); }
+  @keyframes toast-in { from { opacity: 0; transform: translate(-50%, -6px); } }
+  @media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
   .error { color: #c0392b; }
   :global([data-theme="dark"]) .error { color: #ff8a7a; }
   .warning { padding: 10px 12px; border: 1px solid #d9a33b; border-radius: 8px; background: rgb(217 163 59 / .1); }

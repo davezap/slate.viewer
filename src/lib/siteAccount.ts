@@ -1,5 +1,5 @@
 // metatrash.com: what the Settings dialog reads and changes, through the site
-// API's account routes (/api/v1/site/account, Metatrash 0.79.0; Services 0.80.0). Writes carry
+// API's account routes (/api/v1/site/account, Metatrash 0.79.0; Services 0.80.0; Security 0.81.0). Writes carry
 // the session's CSRF token; the steps that need a recent sign-in answer 403
 // step_up_needed, and the dialog asks the person to confirm it's them.
 
@@ -91,6 +91,35 @@ export interface ActionOffer {
   current?: string;
 }
 
+// Security (Metatrash 0.81.0).
+export interface Passkey { id: string; name: string; created: string; lastUsed: string; synced?: boolean }
+export interface Device { id: string; device: string; ip?: string; signedIn: string; lastUsed: string; current?: boolean }
+export interface Security {
+  email: string;
+  fresh?: boolean;
+  minutes?: number;
+  /** A change finished on another page (linking a Microsoft account). */
+  notice?: string;
+  passkeys: Passkey[];
+  maxPasskeys?: boolean;
+  /** WebAuthn creation options (JSON), while fresh. */
+  createOptions?: string;
+  /** Absent when the server has no authenticator app sign-in. */
+  totp?: { enabled?: boolean; added?: string; lastUsed?: string; pending?: boolean; qr?: string; secret?: string };
+  emailLogin?: boolean;
+  canTurnOffEmail?: boolean;
+  strong?: boolean;
+  recovery: number;
+  recoveryCreated?: string;
+  /** Shown once, right after they are created. */
+  newRecoveryCodes?: string[];
+  emailChangeTo?: string;
+  sessions: Device[];
+  otherSessions: number;
+  /** Absent when Microsoft sign-in is not set up. */
+  microsoft?: { accounts: { id: string; label: string; created: string; lastUsed: string }[]; waiting?: string; max?: boolean };
+}
+
 export class AccountError extends Error {
   constructor(message: string, readonly status: number, readonly code: string) { super(message); }
 }
@@ -127,6 +156,8 @@ export const account = {
   appSpaces: (id: string) => call<AppSpaces>('GET', `/services/apps/${encodeURIComponent(id)}`),
   actionOffer: (job: string) => call<ActionOffer>('GET', `/services/actions/${encodeURIComponent(job)}`),
   service: (path: string, body: Record<string, unknown> = {}) => call<Notice>('POST', `/services/${path}`, body),
+  security: () => call<Security>('GET', '/security'),
+  secure: (path: string, body: Record<string, unknown> = {}) => call<Notice>('POST', `/security/${path}`, body),
 };
 
 /** The app's address for a space (owner/slug), and its download. */
@@ -167,10 +198,27 @@ export async function passkeyAssertion(optionsJSON: string): Promise<Record<stri
   };
 }
 
+/** Asks the browser to make a passkey with the server's options; returns the fields passkeys/add takes. */
+export async function passkeyCreation(optionsJSON: string): Promise<Record<string, string>> {
+  const options = JSON.parse(optionsJSON);
+  options.challenge = decode(options.challenge);
+  options.user.id = decode(options.user.id);
+  options.excludeCredentials = (options.excludeCredentials ?? []).map((c: { id: string }) => ({ ...c, id: decode(c.id) }));
+  const credential = (await navigator.credentials.create({ publicKey: options })) as PublicKeyCredential | null;
+  if (!credential) throw new Error('No passkey was made.');
+  const r = credential.response as AuthenticatorAttestationResponse;
+  return {
+    client_data: encode(r.clientDataJSON),
+    attestation: encode(r.attestationObject),
+    transports: typeof r.getTransports === 'function' ? r.getTransports().join(',') : '',
+  };
+}
+
 export function passkeyProblem(error: unknown): string {
   switch ((error as { name?: string } | null)?.name) {
     case 'NotAllowedError': return 'Cancelled or timed out. Try again when you’re ready.';
     case 'SecurityError': return 'Passkeys are not available on this address.';
+    case 'InvalidStateError': return 'This device or password manager already has a passkey for your account.';
     default: return `Your browser could not use a passkey${error instanceof Error && error.message ? `: ${error.message}` : '.'}`;
   }
 }

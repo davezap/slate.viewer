@@ -16,8 +16,10 @@
     onNavigate: (address: string) => void;
     /** Asks the person to confirm it's them, then runs retry. */
     onConfirm: (reason: string, retry: () => void) => void;
+    /** Shows a change's result at the top of the dialog; errors stay until closed. */
+    onNotice: (text: string, error?: boolean) => void;
   }
-  let { sub, onNavigate, onConfirm }: Props = $props();
+  let { sub, onNavigate, onConfirm, onNotice }: Props = $props();
 
   const parts = $derived(sub.split('/'));
   const appId = $derived(parts[0] === 'apps' && parts[1] ? parts[1] : '');
@@ -27,11 +29,7 @@
   let app = $state<AppSpaces | null>(null);
   let offer = $state<ActionOffer | null>(null);
   let loadError = $state('');
-  let notice = $state('');
-  let error = $state('');
   let busy = $state(false);
-  /** Set by a change that moves to another page, so its notice shows there. */
-  let carry = false;
 
   // Inline steps.
   let revoking = $state('');
@@ -77,8 +75,6 @@
       app = null;
       offer = null;
       revoking = removing = changing = disconnecting = optingOut = '';
-      if (carry) carry = false;
-      else { notice = ''; error = ''; }
       void load();
     });
   });
@@ -87,30 +83,25 @@
   async function run(work: () => Promise<Notice>, after?: (n: Notice) => void) {
     if (busy) return;
     busy = true;
-    error = '';
-    notice = '';
     try {
       const n = await work();
       if (n.redirect) {
         location.href = n.redirect;
         return;
       }
-      if (n.failed) error = n.notice ?? '';
-      else notice = n.notice ?? '';
+      onNotice(n.notice ?? '', !!n.failed);
       after?.(n);
       await load();
     } catch (e) {
       if (e instanceof AccountError && e.code === 'step_up_needed') onConfirm(e.message, () => void run(work, after));
-      else error = e instanceof Error ? e.message : String(e);
+      else onNotice(e instanceof Error ? e.message : String(e), true);
     } finally {
       busy = false;
     }
   }
 
-  /** After a change on a page of its own, goes back to Services with its notice. */
-  function back(n: Notice) {
-    notice = n.notice ?? '';
-    carry = true;
+  /** After a change on a page of its own, goes back to Services; its notice floats over both. */
+  function back() {
     onNavigate('settings/services');
   }
 
@@ -145,8 +136,6 @@
   const when = (stamp: string) => stamp.replace(' UTC', '');
 </script>
 
-{#if notice}<p class="notice" role="status">{notice}</p>{/if}
-{#if error}<p class="error" role="alert">{error}</p>{/if}
 
 {#if appId}
   <!-- One connection's spaces. -->
@@ -397,7 +386,6 @@
   .muted, .hint { color: var(--side-muted); }
   .hint { font-size: 12px; }
   .mono, code { font-family: Consolas, "Cascadia Mono", ui-monospace, monospace; }
-  .notice { padding: 8px 12px; border-radius: 6px; background: var(--side-accent-soft); }
   .error { color: #c0392b; }
   :global([data-theme="dark"]) .error { color: #ff8a7a; }
   .endpoint { flex: 1; min-width: 0; padding: 6px 8px; overflow-wrap: anywhere; background: var(--side-bg); border: 1px solid var(--side-border); border-radius: 6px; user-select: all; }
