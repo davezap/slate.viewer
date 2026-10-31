@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
   import { backend, capabilities, type FolderListing, type LoadedDocument } from './lib/backend';
+  import { showAddress } from './lib/site';
   import type { SlateChangesEndDetail, SlateCompareEndDetail, SlateEditorApi, SlateFillEndDetail, SlateForm, SlateFormAnswers, SlateFormSubmitDetail, SlateModeChangeDetail, SlateOutline, SlateOutlineHeading, SlateUploadedAttachment, SlateWorkspaceMode } from '../public/slate/slate-editor';
   import { basename, dirname, extname, joinPath, toLocalPath } from './lib/paths';
   import { detectFormat, toFileText, NEW_FILE_FORMAT, type FileFormat } from './lib/document';
@@ -114,7 +115,14 @@
   // says whether that column is expanded or folded to a strip.
   let outlinePinned = $state(outlinePinnedPref());
   let pinnedOutlineWidth = $state(pinnedOutlineWidthPref());
-  const openSections = $derived(SECTION_IDS.filter(id => sections[id] && !(id === 'outline' && outlinePinned)));
+  // On a phone-sized screen the website shows one section at a time, over the document, as a
+  // drawer that closes when a file opens (like the site's Files drawer, 0.69.1).
+  let narrow = $state(false);
+  let drawer = $state<SectionId | null>(null);
+  const openSections = $derived(narrow
+    ? (drawer ? [drawer] : [])
+    : SECTION_IDS.filter(id => sections[id] && !(id === 'outline' && outlinePinned)));
+  const shownSections = $derived(narrow ? { ...Object.fromEntries(SECTION_IDS.map(id => [id, id === drawer])) } as typeof sections : sections);
   let theme = $state<ThemePref>(themePref());
   let showHidden = $state(showHiddenPref());
   let readOnly = $state(false);
@@ -125,6 +133,9 @@
   const web = capabilities.kind === 'web';
   const EDITING_KEY = 'metatrash.editing';
   let editing = $state(web && (() => { try { return sessionStorage.getItem(EDITING_KEY) === 'on'; } catch { return false; } })());
+
+  /** On the website: whether someone is signed in (Change Space, or Sign In when not). */
+  let signedIn = $state(true);
 
   function setEditing(on: boolean) {
     editing = on;
@@ -145,7 +156,7 @@
   const currentRelative = $derived(root && path ? relativeIn(root, path) : null);
 
   $effect(() => {
-    const flags = `${dirty ? '• ' : ''}${name}${missingOnDisk ? ' (deleted on disk)' : ''}${readOnly ? ' [read only]' : ''}${root ? ` - ${basename(root)}` : ''}`;
+    const flags = `${dirty ? '• ' : ''}${name}${missingOnDisk ? ' (deleted on disk)' : ''}${readOnly && !web ? ' [read only]' : ''}${root ? ` - ${basename(root)}` : ''}`;
     void appWindow.setTitle(`${flags} - Slate Viewer`);
   });
 
@@ -865,8 +876,22 @@
   }
 
   function toggleSection(id: SectionId) {
+    if (narrow) {
+      drawer = drawer === id ? null : id;
+      return;
+    }
     setSection(id, !sections[id]);
   }
+
+  // A file opened from the drawer (or a link) closes it, to show the file.
+  $effect(() => {
+    void path;
+    if (untrack(() => narrow)) drawer = null;
+  });
+
+  $effect(() => {
+    if (web) showAddress(path);
+  });
 
   function toggleActivityLabels() {
     activityLabels = !activityLabels;
@@ -2771,6 +2796,15 @@
     const cleanups: Array<() => void> = [];
     let disposed = false;
 
+    if (web) {
+      void backend.sync.whoami(null).then(text => { signedIn = !!text && JSON.parse(text).signedIn === true; }, () => {});
+      const phone = matchMedia('(max-width: 800px)');
+      const update = () => { narrow = phone.matches; drawer = null; };
+      update();
+      phone.addEventListener('change', update);
+      cleanups.push(() => phone.removeEventListener('change', update));
+    }
+
     host.addEventListener('click', onHostClick, true);
     void markRecentSpaces();
     host.addEventListener('auxclick', onHostAuxClick, true);
@@ -2921,9 +2955,10 @@
   {theme}
   onTheme={chooseTheme}
   onPrint={() => void once('print', print)}
+  {signedIn}
 />
-<div class="layout">
-  <ActivityBar {sections} expanded={activityLabels} onToggle={toggleSection} onToggleExpanded={toggleActivityLabels} />
+<div class="layout" class:narrow>
+  <ActivityBar sections={shownSections} expanded={activityLabels && !narrow} onToggle={toggleSection} onToggleExpanded={toggleActivityLabels} />
   {#if openSections.length}
     <div class="side" style:width="{sidebarWidth}px">
       <SidePanel
@@ -2988,10 +3023,15 @@
         {/snippet}
       </SidePanel>
     </div>
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="resizer" onpointerdown={startResize}></div>
+    {#if narrow}
+      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+      <div class="drawer-backdrop" onclick={() => (drawer = null)}></div>
+    {:else}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="resizer" onpointerdown={startResize}></div>
+    {/if}
   {/if}
-  {#if outlinePinned}
+  {#if outlinePinned && !narrow}
     {#if sections.outline}
       <div class="pinned-nav" style:width="{pinnedOutlineWidth}px">
         <OutlineSection
@@ -3116,6 +3156,13 @@
   .shell { display: flex; flex-direction: column; height: 100%; }
   .layout { flex: 1; min-height: 0; display: flex; }
   .side { flex: none; height: 100%; border-right: 1px solid var(--side-border); }
+  .layout.narrow { position: relative; }
+  /* The drawer: over the document, beside the icon bar, as wide as a phone allows. */
+  .layout.narrow .side {
+    position: absolute; z-index: 20; left: 44px; top: 0; bottom: 0; width: min(320px, calc(100vw - 64px)) !important;
+    background: var(--side-bg); box-shadow: 4px 0 18px rgba(0, 0, 0, .18);
+  }
+  .drawer-backdrop { position: absolute; z-index: 19; inset: 0 0 0 44px; background: rgba(0, 0, 0, .25); }
   .resizer { flex: none; width: 5px; margin-left: -3px; cursor: col-resize; z-index: 1; }
   .resizer:hover { background: var(--side-accent-soft); }
   .editor { position: relative; flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; }

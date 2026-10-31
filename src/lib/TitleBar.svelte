@@ -31,11 +31,13 @@
     onTheme?: (theme: ThemePref) => void;
     /** metatrash.com: the print button (the desktop app has File > Print). */
     onPrint?: () => void;
+    /** metatrash.com: Change Space when signed in, Sign In when not. */
+    signedIn?: boolean;
   }
 
   let {
     menu, title, detail, dirty, backTo, forwardTo, onBack, onForward, onFind, sync = null, onSync, syncOpen = false,
-    editing = null, onEditing, theme = 'system', onTheme, onPrint,
+    editing = null, onEditing, theme = 'system', onTheme, onPrint, signedIn = true,
   }: Props = $props();
 
   const themes: { value: ThemePref; label: string }[] = [
@@ -65,7 +67,7 @@
 </script>
 
 <!-- The empty parts of the bar move the window (and double-click maximises it). -->
-<header class="titlebar" class:custom={customTitleBar && capabilities.windows} data-tauri-drag-region>
+<header class="titlebar" class:custom={customTitleBar && capabilities.windows} class:web={!capabilities.menuBar} data-tauri-drag-region>
   {#if !capabilities.menuBar}
     <!-- metatrash.com: the site's own wordmark, home, instead of the app's icon and menus. -->
     <a class="brand" href="/">metatrash<span>.</span></a>
@@ -121,7 +123,7 @@
     </button>
     {#if !capabilities.menuBar}
       {#if onPrint}
-        <button title="Print (Ctrl+P)" aria-label="Print" onclick={onPrint}>
+        <button class="print" title="Print (Ctrl+P)" aria-label="Print" onclick={onPrint}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 9V4h10v5M7 17H5a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-2M7 14h10v6H7z" /></svg>
         </button>
       {/if}
@@ -134,7 +136,11 @@
         </label>
       {/if}
       <!-- A proper space picker later; for now the account page lists them. -->
-      <a class="change" href="/account" title="Open another space from your account">Change Space</a>
+      {#if signedIn}
+        <a class="change" href="/account" title="Open another space from your account"><span class="wide">Change Space</span><span class="phone">Spaces</span></a>
+      {:else}
+        <a class="change" href="/login" title="Sign in to open your own spaces">Sign In</a>
+      {/if}
     {/if}
   </div>
 
@@ -219,6 +225,18 @@
     border: 1px solid var(--side-border); border-radius: 14px;
   }
   .change:hover { background: var(--side-hover); }
+  .phone { display: none; }
+  /* A phone on the website: the title and the switches that matter, nothing else. */
+  @media (max-width: 800px) {
+    .web { gap: 2px; padding: 0 6px; }
+    .web .brand { margin: 0 4px; font-size: 15px; }
+    .web .nav, .web .detail, .web .print, .web .sync { display: none; }
+    .web .tools { margin-right: 0; }
+    .web .switch { padding: 0 4px; }
+    .web .change { padding: 0 8px; margin-left: 2px; }
+    .web .wide { display: none; }
+    .web .phone { display: inline; }
+  }
   .controls { display: flex; align-self: stretch; }
   .control { width: 46px; height: 100%; border-radius: 0; color: var(--side-fg); }
   .control svg { width: 11px; height: 11px; stroke-width: 1.1; stroke-linecap: butt; stroke-linejoin: miter; }

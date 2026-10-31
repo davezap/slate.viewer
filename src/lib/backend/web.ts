@@ -288,9 +288,15 @@ export const backend: Backend = {
   sync: {
     info: async () => ({ path: 'metatrash.com', version: null, supported: true, minVersion: '', installHint: '' }),
     setup: () => notOnTheSite('Setting up sync'),
-    spaces: async (): Promise<SpaceRow[]> => (await siteSession()).spaces.map(s => ({
-      space: s.space, name: s.name, access: s.access === 'read_write' ? 'read and write' : 'read only',
-    })),
+    spaces: async (): Promise<SpaceRow[]> => {
+      const rows: SpaceRow[] = (await siteSession()).spaces.map(s => ({
+        space: s.space, name: s.name, access: s.access === 'read_write' ? 'read and write' : 'read only',
+      }));
+      // An open space the person isn't a member of is one readable on the web (the docs, say).
+      const open = watchedRoot ? locate(watchedRoot).space : null;
+      if (open && !rows.some(r => r.space === open)) rows.push({ space: open, name: open, access: 'read only' });
+      return rows;
+    },
     // The open space is the only "registration", always in sync.
     list: async () => watchedRoot ? [{ folder: watchedRoot, space: locate(watchedRoot).space, state: 'in sync', server: location.origin }] : [],
     whoami: async () => {
@@ -338,8 +344,8 @@ export const backend: Backend = {
     submission: async (folder, id) => call<Receipt>('GET', spaceUrl(locate(folder).space, 'submissions', { id })),
     policies: async folder => {
       const { space } = locate(folder);
-      // The public space keeps no read records, so there is nothing to ask.
-      if (space === 'public') return { space, folders: [], outstanding: 0 };
+      // The public space keeps no read records, and signed out there is nobody to keep them for.
+      if (space === 'public' || !(await siteSession()).signedIn) return { space, folders: [], outstanding: 0 };
       return call<Policies>('GET', spaceUrl(space, 'acknowledgements'));
     },
     acknowledge: async (file, version) => {
