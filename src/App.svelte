@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
-  import { backend, type FolderListing, type LoadedDocument } from './lib/backend';
+  import { backend, capabilities, type FolderListing, type LoadedDocument } from './lib/backend';
   import type { SlateChangesEndDetail, SlateCompareEndDetail, SlateEditorApi, SlateFillEndDetail, SlateForm, SlateFormAnswers, SlateFormSubmitDetail, SlateModeChangeDetail, SlateOutline, SlateOutlineHeading, SlateUploadedAttachment, SlateWorkspaceMode } from '../public/slate/slate-editor';
   import { basename, dirname, extname, joinPath, toLocalPath } from './lib/paths';
   import { detectFormat, toFileText, NEW_FILE_FORMAT, type FileFormat } from './lib/document';
@@ -120,6 +120,17 @@
   let readOnly = $state(false);
   let zoom = $state(zoomPref());
 
+  // On metatrash.com a space opens for reading; editing is a switch the person turns on, and the
+  // choice lasts for the browser tab's session (every space in it).
+  const web = capabilities.kind === 'web';
+  const EDITING_KEY = 'metatrash.editing';
+  let editing = $state(web && (() => { try { return sessionStorage.getItem(EDITING_KEY) === 'on'; } catch { return false; } })());
+
+  function setEditing(on: boolean) {
+    editing = on;
+    try { sessionStorage.setItem(EDITING_KEY, on ? 'on' : 'off'); } catch { /* private window: this page only */ }
+  }
+
   const name = $derived(path ? basename(path) : 'Untitled');
   const folder = () => (path ? dirname(path) : null);
 
@@ -238,6 +249,11 @@
     try {
       await backend.files.write(target, text, hasBom);
     } catch (error) {
+      // The website refuses a save when the file changed on the server since it was read: ask
+      // again, now with their version, as when the change is noticed before saving.
+      if ((error as Error).name === 'SaveConflict' && target === path) {
+        return (await diskUnchangedOrConfirmed()) ? writeTo(target) : false;
+      }
       await showError(error);
       return false;
     }
@@ -602,7 +618,7 @@
   // ---- Managing files (the Files section) ----------------------------------------
 
   /** Files can be added, renamed, moved and deleted anywhere but in a read-only space. */
-  const canManageFiles = $derived(openedSpace?.access !== 'read only');
+  const canManageFiles = $derived(openedSpace?.access !== 'read only' && (!web || editing));
   /**
    * Files that stay where they are: every folder of a space keeps its AGENTS.md and .metatrash.json,
    * and files its settings lock for everyone (readOnly) can't change at all.
@@ -1930,6 +1946,10 @@
 
   async function toggleReadOnly() {
     if (!editor) return;
+    if (web) {
+      if (!lockReason) setEditing(!editing);
+      return;
+    }
     if (lockReason && readOnly) {
       await message(lockReason, { title: 'Slate Viewer', kind: 'info' });
       return;
@@ -1964,7 +1984,7 @@
   // Lock (and unlock) the editor as documents in and out of a locked space open.
   let lockedByUs = false;
   $effect(() => {
-    const locked = lockReason !== null;
+    const locked = lockReason !== null || (web && !editing);
     if (!editor) return;
     if (locked && !readOnly) {
       lockedByUs = true;
@@ -2153,6 +2173,9 @@
     if (conflictCount) parts.push(`${conflictCount} conflict${conflictCount === 1 ? '' : 's'}`);
     if (policies?.outstanding) parts.push(`${policies.outstanding} to read`);
     if (currentRelative !== null && docBytes > SPACE_FILE_LIMIT * 0.85) parts.push(`${Math.ceil(docBytes / 1024)} of 64 KB`);
+    // The website has no sync to report: the chip shows only what to read and the file's size.
+    if (web) parts.shift();
+    if (!parts.length) return null;
     return {
       label: parts.join(' · '),
       tone: conflictCount || docBytes > SPACE_FILE_LIMIT ? ('warn' as const) : tone,
@@ -2672,6 +2695,16 @@
 
   // ---- Keyboard ---------------------------------------------------------------
 
+  /** The browser's own shortcuts, and the app's that only mean something in a window of its own. */
+  function webKeepsKey(event: KeyboardEvent): boolean {
+    if (!(event.ctrlKey || event.metaKey)) return false;
+    if (event.altKey) return event.code === 'KeyO' || event.code === 'KeyM';
+    const key = event.key.toLowerCase();
+    if (['n', 'w', 'o', '=', '+', '-', '_', '0'].includes(key) && !event.shiftKey) return true;
+    if (key === 'r') return true;
+    return !event.shiftKey && /^Digit[1-9]$/.test(event.code);
+  }
+
   function onKeydown(event: KeyboardEvent) {
     if (event.altKey && !event.ctrlKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
       event.preventDefault();
@@ -2693,6 +2726,8 @@
     const key = event.key.toLowerCase();
     const shift = event.shiftKey;
     const handle = (action: () => unknown) => { event.preventDefault(); void action(); };
+    // The browser keeps its own Ctrl+N, Ctrl+W, Ctrl+O, Ctrl+1…, zoom and Ctrl+Shift+R (reload).
+    if (web && webKeepsKey(event)) return;
     if ((event.ctrlKey || event.metaKey) && event.altKey && event.code === 'KeyO') {
       handle(chooseFolder);
       return;
@@ -2808,6 +2843,13 @@
       outline = editor.getOutline();
       editor.setChangesToggle(historyFile ? () => showDefaultChanges() : null);
       applyTheme();
+      if (web && !editing) {
+        // The site opens spaces for reading until the editing switch is on (the lock effect above
+        // ran before the editor existed).
+        lockedByUs = true;
+        readOnly = true;
+        await editor.setReadOnly(true);
+      }
       showWindow();
       if (zoom !== 1) void appWindow.setZoom(zoom);
       baseline = editor.getMarkdown();
@@ -2872,8 +2914,13 @@
   onForward={() => void once('nav', goForward)}
   onFind={() => void findBar?.open()}
   sync={syncStatus}
-  onSync={onSyncClick}
+  onSync={web ? undefined : onSyncClick}
   syncOpen={!!syncMenu}
+  editing={web && openedSpace && openedSpace.access !== 'read only' ? editing : null}
+  onEditing={setEditing}
+  {theme}
+  onTheme={chooseTheme}
+  onPrint={() => void once('print', print)}
 />
 <div class="layout">
   <ActivityBar {sections} expanded={activityLabels} onToggle={toggleSection} onToggleExpanded={toggleActivityLabels} />
@@ -2901,7 +2948,7 @@
               onCreate={createNoteFromSidebar}
               editable={canManageFiles}
               locked={lockedFiles}
-              onCreateFolder={createFolder}
+              onCreateFolder={web ? undefined : createFolder}
               onRename={renameEntry}
               onMove={moveEntry}
               onDuplicate={relative => void duplicateEntry(relative)}

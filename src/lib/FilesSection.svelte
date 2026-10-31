@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick, untrack } from 'svelte';
-  import { backend } from './backend';
+  import { backend, capabilities } from './backend';
   import { basename, joinPath } from './paths';
   import { canConvert, conflictOriginal, sizeLabel, type FolderDescription, type VirtualFile } from './space';
   import Section from './Section.svelte';
@@ -376,7 +376,7 @@
     if (node && !node.folder) {
       separate();
       items.push({ text: '&Open', action: () => onOpen(node.path, { newWindow: false }) });
-      items.push({ text: 'Open in New &Window', action: () => onOpen(node.path, { newWindow: true }) });
+      items.push({ text: capabilities.windows ? 'Open in New &Window' : 'Open in New &Tab', action: () => onOpen(node.path, { newWindow: true }) });
       const v = virtualFiles[node.path];
       if (v && canConvert(v) && onConvert && editable) items.push({ text: 'Convert to &Markdown', action: () => onConvert(node.path) });
     }
@@ -389,8 +389,14 @@
     if (node) {
       const target = joinPath(root, node.path);
       separate();
-      items.push({ text: revealLabel, action: () => void backend.opener.reveal(target).catch(console.error) });
-      items.push({ text: 'Copy &Path', action: () => void navigator.clipboard.writeText(target).catch(console.error) });
+      if (capabilities.fileManager) {
+        items.push({ text: revealLabel, action: () => void backend.opener.reveal(target).catch(console.error) });
+        items.push({ text: 'Copy &Path', action: () => void navigator.clipboard.writeText(target).catch(console.error) });
+      } else {
+        // On the website a file's place is its address.
+        const address = `${location.origin}/app${target.replace(/^\/spaces/, '')}`;
+        items.push({ text: 'Copy &Address', action: () => void navigator.clipboard.writeText(address).catch(console.error) });
+      }
     }
     if (editable && onPublish && (!node || node.folder)) {
       const which = node ? node.path : '';
@@ -427,7 +433,8 @@
           </button>
         {/if}
       {/if}
-      <button title="Close folder" aria-label="Close folder" onclick={onCloseFolder}>×</button>
+      <!-- On the website the page is the space: there is nothing to go back to without it. -->
+      {#if capabilities.kind === 'desktop'}<button title="Close folder" aria-label="Close folder" onclick={onCloseFolder}>×</button>{/if}
     {/if}
   {/snippet}
 

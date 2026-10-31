@@ -98,7 +98,10 @@ async function writeFile(path: string, text: string, createOnly = false): Promis
     return out;
   } catch (error) {
     if (error instanceof SiteError && error.status === 409) {
-      throw new Error(`${rel} changed on the server while you were editing. Copy your changes, reload the page and add them again.`);
+      // App.svelte asks what to do, with the server's version (read again, so the state is fresh).
+      const conflict = new Error(`${rel} changed on the server while you were editing.`);
+      conflict.name = 'SaveConflict';
+      throw conflict;
     }
     throw error;
   }
@@ -145,7 +148,8 @@ function dialog(text: string, options: MessageOptions = {}, input?: string): Pro
     box.setAttribute('aria-modal', 'true');
     if (options.title) {
       const h = document.createElement('h2');
-      h.textContent = options.title;
+      // The app's messages are titled with its name; here it is the site's.
+      h.textContent = options.title === 'Slate Viewer' ? 'Metatrash' : options.title;
       box.append(h);
     }
     for (const para of text.split('\n\n')) {

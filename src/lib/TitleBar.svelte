@@ -3,6 +3,7 @@
   import { backend, capabilities } from './backend';
   import MenuBar from './MenuBar.svelte';
   import { customTitleBar, type MenuItem } from './menu';
+  import type { ThemePref } from './prefs';
 
   interface Props {
     menu: MenuItem[];
@@ -22,9 +23,27 @@
     onSync?: (chip: DOMRect) => void;
     /** The sync menu is open (the chip shows pressed). */
     syncOpen?: boolean;
+    /** metatrash.com: the editing switch's state, or null to hide it (a space the person can only read). */
+    editing?: boolean | null;
+    onEditing?: (on: boolean) => void;
+    /** metatrash.com: the theme selector (the desktop app has View > Theme). */
+    theme?: ThemePref;
+    onTheme?: (theme: ThemePref) => void;
+    /** metatrash.com: the print button (the desktop app has File > Print). */
+    onPrint?: () => void;
   }
 
-  let { menu, title, detail, dirty, backTo, forwardTo, onBack, onForward, onFind, sync = null, onSync, syncOpen = false }: Props = $props();
+  let {
+    menu, title, detail, dirty, backTo, forwardTo, onBack, onForward, onFind, sync = null, onSync, syncOpen = false,
+    editing = null, onEditing, theme = 'system', onTheme, onPrint,
+  }: Props = $props();
+
+  const themes: { value: ThemePref; label: string }[] = [
+    { value: 'system', label: 'Match system' },
+    { value: 'light', label: 'Light' },
+    { value: 'dark', label: 'Dark' },
+    { value: 'paper', label: 'Paper' },
+  ];
 
   const appWindow = backend.window;
   let maximized = $state(false);
@@ -71,7 +90,9 @@
   </div>
 
   <div class="tools">
-    {#if sync}
+    {#if sync && !onSync}
+      <span class="sync {sync.tone}" title={sync.title}><span class="dot"></span>{sync.label}</span>
+    {:else if sync}
       <button
         class="sync {sync.tone}"
         class:open={syncOpen}
@@ -84,9 +105,37 @@
         <span class="dot"></span>{sync.label}
       </button>
     {/if}
+    {#if editing !== null}
+      <button
+        class="switch"
+        role="switch"
+        aria-checked={editing}
+        title={editing ? 'Editing is on: changes save to the space (Ctrl+S). Click to only read.' : 'Reading only. Click to edit this space.'}
+        onclick={() => onEditing?.(!editing)}
+      >
+        <span class="track"><span class="knob"></span></span>Edit
+      </button>
+    {/if}
     <button title="Find in document (Ctrl+F)" aria-label="Find in document" onclick={onFind}>
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.5 4.5a6 6 0 1 1 0 12a6 6 0 0 1 0-12zM15 15l5 5" /></svg>
     </button>
+    {#if !capabilities.menuBar}
+      {#if onPrint}
+        <button title="Print (Ctrl+P)" aria-label="Print" onclick={onPrint}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 9V4h10v5M7 17H5a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-2M7 14h10v6H7z" /></svg>
+        </button>
+      {/if}
+      {#if onTheme}
+        <label class="theme" title="Theme">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0-18zM12 3v18" /></svg>
+          <select aria-label="Theme" value={theme} onchange={event => onTheme?.(event.currentTarget.value as ThemePref)}>
+            {#each themes as option (option.value)}<option value={option.value}>{option.label}</option>{/each}
+          </select>
+        </label>
+      {/if}
+      <!-- A proper space picker later; for now the account page lists them. -->
+      <a class="change" href="/account" title="Open another space from your account">Change Space</a>
+    {/if}
   </div>
 
   {#if customTitleBar && capabilities.windows}
@@ -145,6 +194,31 @@
   .sync.warn .dot { background: #d9b100; }
   .sync.error .dot { background: #c0392b; }
   @keyframes pulse { 50% { opacity: .3; } }
+  .sync:not(button) { display: flex; align-items: center; box-sizing: border-box; color: var(--side-muted); }
+  .switch {
+    display: flex; gap: 7px; width: auto; height: 28px; padding: 0 8px; font: inherit; font-size: 12px;
+  }
+  .track {
+    position: relative; width: 26px; height: 14px; border-radius: 7px; background: var(--side-border); transition: background .15s;
+  }
+  .knob {
+    position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; border-radius: 50%; background: var(--side-bar); transition: left .15s;
+  }
+  .switch[aria-checked="true"] { color: var(--side-fg); }
+  .switch[aria-checked="true"] .track { background: var(--side-accent); }
+  .switch[aria-checked="true"] .knob { left: 14px; }
+  .theme {
+    position: relative; display: grid; place-items: center; width: 32px; height: 32px; color: var(--side-muted); border-radius: 6px;
+  }
+  .theme:hover { background: var(--side-hover); color: var(--side-fg); }
+  /* The select covers the icon, invisible, so a click opens the browser's own list. */
+  .theme select { position: absolute; inset: 0; opacity: 0; cursor: pointer; font: inherit; }
+  .change {
+    display: flex; align-items: center; height: 28px; padding: 0 10px; margin-left: 4px;
+    color: var(--side-fg); font-size: 12px; text-decoration: none; white-space: nowrap;
+    border: 1px solid var(--side-border); border-radius: 14px;
+  }
+  .change:hover { background: var(--side-hover); }
   .controls { display: flex; align-self: stretch; }
   .control { width: 46px; height: 100%; border-radius: 0; color: var(--side-fg); }
   .control svg { width: 11px; height: 11px; stroke-width: 1.1; stroke-linecap: butt; stroke-linejoin: miter; }
