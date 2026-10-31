@@ -2,6 +2,8 @@
   import { onMount } from 'svelte';
   import { backend, capabilities } from './backend';
   import MenuBar from './MenuBar.svelte';
+  import SpacePicker from './SpacePicker.svelte';
+  import { pickerSession } from './siteSpaces';
   import { customTitleBar, type MenuItem } from './menu';
   import type { ThemePref } from './prefs';
 
@@ -33,12 +35,41 @@
     onPrint?: () => void;
     /** metatrash.com: Change Space when signed in, Sign In when not. */
     signedIn?: boolean;
+    /** metatrash.com: the signed-in account's name, for the account menu. */
+    account?: string;
+    /** metatrash.com: the open space (owner/slug or public), ticked in the space picker. */
+    space?: string | null;
   }
 
   let {
     menu, title, detail, dirty, backTo, forwardTo, onBack, onForward, onFind, sync = null, onSync, syncOpen = false,
-    editing = null, onEditing, theme = 'system', onTheme, onPrint, signedIn = true,
+    editing = null, onEditing, theme = 'system', onTheme, onPrint, signedIn = true, account = '', space = null,
   }: Props = $props();
+
+  /** metatrash.com: the space picker's anchor while it is open. */
+  let picker = $state<DOMRect | null>(null);
+  let accountOpen = $state(false);
+
+  function togglePicker(event: MouseEvent) {
+    accountOpen = false;
+    picker = picker ? null : (event.currentTarget as HTMLElement).getBoundingClientRect();
+  }
+
+  /** Signs this browser out (POST /api/v1/site/logout with the session's token), then home. */
+  async function signOut() {
+    accountOpen = false;
+    try {
+      const { csrf } = await pickerSession();
+      const res = await fetch('/api/v1/site/logout', { method: 'POST', headers: csrf ? { 'X-Metatrash-CSRF': csrf } : {}, credentials: 'same-origin' });
+      location.href = res.ok ? '/' : '/account';
+    } catch {
+      location.href = '/account';
+    }
+  }
+
+  function closeAccount(event: PointerEvent) {
+    if (accountOpen && !(event.target as Element | null)?.closest('[data-account-menu]')) accountOpen = false;
+  }
 
   const themes: { value: ThemePref; label: string }[] = [
     { value: 'system', label: 'Match system' },
@@ -135,9 +166,34 @@
           </select>
         </label>
       {/if}
-      <!-- A proper space picker later; for now the account page lists them. -->
+      <button
+        class="change"
+        data-space-picker
+        title="Open another space"
+        aria-haspopup="dialog"
+        aria-expanded={!!picker}
+        onclick={togglePicker}
+      ><span class="wide">Change Space</span><span class="phone">Spaces</span></button>
       {#if signedIn}
-        <a class="change" href="/account" title="Open another space from your account"><span class="wide">Change Space</span><span class="phone">Spaces</span></a>
+        <div class="account" data-account-menu>
+          <button
+            class="who"
+            title={account ? `Signed in as ${account}` : 'Your account'}
+            aria-label="Your account"
+            aria-haspopup="menu"
+            aria-expanded={accountOpen}
+            onclick={() => { picker = null; accountOpen = !accountOpen; }}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 1 0 0-8a4 4 0 0 0 0 8zM4 20a8 8 0 0 1 16 0" /></svg>
+          </button>
+          {#if accountOpen}
+            <div class="account-menu" role="menu">
+              {#if account}<div class="signed">Signed in as <strong>{account}</strong></div>{/if}
+              <a role="menuitem" href="/account">Settings</a>
+              <button role="menuitem" onclick={() => void signOut()}>Sign out</button>
+            </div>
+          {/if}
+        </div>
       {:else}
         <a class="change" href="/login" title="Sign in to open your own spaces">Sign In</a>
       {/if}
@@ -162,6 +218,12 @@
     </div>
   {/if}
 </header>
+
+<svelte:window onpointerdown={closeAccount} />
+
+{#if picker}
+  <SpacePicker anchor={picker} current={space} onClose={() => (picker = null)} />
+{/if}
 
 <style>
   .titlebar {
@@ -225,6 +287,21 @@
     border: 1px solid var(--side-border); border-radius: 14px;
   }
   .change:hover { background: var(--side-hover); }
+  button.change { width: auto; font: inherit; font-size: 12px; cursor: pointer; }
+  button.change[aria-expanded="true"] { background: var(--side-hover); }
+  .account { position: relative; margin-left: 2px; }
+  .account-menu {
+    position: absolute; right: 0; top: 36px; z-index: 4000; min-width: 190px; padding: 6px; box-sizing: border-box;
+    background: var(--side-input); color: var(--side-fg); border: 1px solid var(--side-border); border-radius: 8px;
+    box-shadow: 0 10px 30px rgb(0 0 0 / .2);
+  }
+  .signed { padding: 4px 10px 8px; margin-bottom: 4px; color: var(--side-muted); font-size: 12px; border-bottom: 1px solid var(--side-border); white-space: nowrap; }
+  .signed strong { color: var(--side-fg); font-weight: 600; }
+  .account-menu a, .account-menu button {
+    display: flex; align-items: center; width: 100%; height: 28px; padding: 0 10px; box-sizing: border-box;
+    color: inherit; font: inherit; font-size: 13px; text-align: left; text-decoration: none; border-radius: 4px; cursor: pointer;
+  }
+  .account-menu a:hover, .account-menu button:hover { background: var(--side-accent-soft); }
   .phone { display: none; }
   /* A phone on the website: the title and the switches that matter, nothing else. */
   @media (max-width: 800px) {

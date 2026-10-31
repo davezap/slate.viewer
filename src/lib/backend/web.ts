@@ -15,7 +15,7 @@ const API = '/api/v1/site';
 const SPACES = '/spaces/';
 const POLL_MS = 5000;
 
-interface SiteSession { signedIn: boolean; account?: string; csrf?: string; spaces: { space: string; name: string; owner: string; access: string }[] }
+interface SiteSession { signedIn: boolean; account?: string; csrf?: string; spaces: { space: string; name: string; owner: string; access: string; web?: boolean }[] }
 
 let session: Promise<SiteSession> | null = null;
 function siteSession(): Promise<SiteSession> {
@@ -291,10 +291,11 @@ export const backend: Backend = {
     spaces: async (): Promise<SpaceRow[]> => {
       const rows: SpaceRow[] = (await siteSession()).spaces.map(s => ({
         space: s.space, name: s.name, access: s.access === 'read_write' ? 'read and write' : 'read only',
+        web: s.web === true || !s.owner, member: !!s.owner,
       }));
       // An open space the person isn't a member of is one readable on the web (the docs, say).
       const open = watchedRoot ? locate(watchedRoot).space : null;
-      if (open && !rows.some(r => r.space === open)) rows.push({ space: open, name: open, access: 'read only' });
+      if (open && !rows.some(r => r.space === open)) rows.push({ space: open, name: open, access: 'read only', web: true, member: false });
       return rows;
     },
     // The open space is the only "registration", always in sync.

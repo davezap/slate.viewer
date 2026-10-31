@@ -2,6 +2,7 @@
   import { onMount, tick, untrack } from 'svelte';
   import { backend, capabilities, type FolderListing, type LoadedDocument } from './lib/backend';
   import { showAddress } from './lib/site';
+  import { rememberSpace, spaceOfPath } from './lib/siteSpaces';
   import type { SlateChangesEndDetail, SlateCompareEndDetail, SlateEditorApi, SlateFillEndDetail, SlateForm, SlateFormAnswers, SlateFormSubmitDetail, SlateModeChangeDetail, SlateOutline, SlateOutlineHeading, SlateUploadedAttachment, SlateWorkspaceMode } from '../public/slate/slate-editor';
   import { basename, dirname, extname, joinPath, toLocalPath } from './lib/paths';
   import { detectFormat, toFileText, NEW_FILE_FORMAT, type FileFormat } from './lib/document';
@@ -134,8 +135,10 @@
   const EDITING_KEY = 'metatrash.editing';
   let editing = $state(web && (() => { try { return sessionStorage.getItem(EDITING_KEY) === 'on'; } catch { return false; } })());
 
-  /** On the website: whether someone is signed in (Change Space, or Sign In when not). */
+  /** On the website: whether someone is signed in (the account menu, or Sign In when not). */
   let signedIn = $state(true);
+  /** On the website: the signed-in account's name, for the account menu. */
+  let account = $state('');
 
   function setEditing(on: boolean) {
     editing = on;
@@ -2070,9 +2073,12 @@
       recentFolders = recentFolderList.list();
       if (!registration || dir !== root) return;
       const server = registration.server ?? DEFAULT_SERVER;
-      const access = await mtsync.spaces(server).then(rows => rows.find(r => r.space === registration.space)?.access ?? 'read and write', () => 'read and write');
+      const row = await mtsync.spaces(server).then(rows => rows.find(r => r.space === registration.space), () => undefined);
+      const access = row?.access ?? 'read and write';
       if (dir !== root) return;
       openedSpace = { space: registration.space, server, access, folder: registration.folder, state: registration.state };
+      // On the website the space picker lists the spaces this browser opened.
+      if (web) rememberSpace(registration.space, row && row.name !== row.space ? row.name : undefined, row?.web ?? false);
       void loadDescriptions();
       void loadVirtualFiles();
       void loadPolicies();
@@ -2797,7 +2803,11 @@
     let disposed = false;
 
     if (web) {
-      void backend.sync.whoami(null).then(text => { signedIn = !!text && JSON.parse(text).signedIn === true; }, () => {});
+      void backend.sync.whoami(null).then(text => {
+        const who = text ? JSON.parse(text) : null;
+        signedIn = who?.signedIn === true;
+        account = typeof who?.account === 'string' ? who.account : '';
+      }, () => {});
       const phone = matchMedia('(max-width: 800px)');
       const update = () => { narrow = phone.matches; drawer = null; };
       update();
@@ -2956,6 +2966,8 @@
   onTheme={chooseTheme}
   onPrint={() => void once('print', print)}
   {signedIn}
+  {account}
+  space={web ? spaceOfPath(root) : null}
 />
 <div class="layout" class:narrow>
   <ActivityBar sections={shownSections} expanded={activityLabels && !narrow} onToggle={toggleSection} onToggleExpanded={toggleActivityLabels} />

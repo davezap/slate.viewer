@@ -201,7 +201,11 @@ export interface MtsyncInfo {
   installHint: string;
 }
 
-export interface SpaceRow { space: string; access: string; name: string }
+export interface SpaceRow {
+  space: string; access: string; name: string;
+  /** metatrash.com only: anyone can read it on the website, and whether the person is its owner or a member. */
+  web?: boolean; member?: boolean;
+}
 /** mtsync -json whoami: account is '' when the server is older than Metatrash 0.49.1. */
 export interface Whoami { server: string; signedIn: boolean; account: string }
 export interface Registration { folder: string; space: string; state: string; server: string | null }
