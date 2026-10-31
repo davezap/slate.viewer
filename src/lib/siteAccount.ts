@@ -1,5 +1,5 @@
 // metatrash.com: what the Settings dialog reads and changes, through the site
-// API's account routes (/api/v1/site/account, Metatrash 0.79.0). Writes carry
+// API's account routes (/api/v1/site/account, Metatrash 0.79.0; Services 0.80.0). Writes carry
 // the session's CSRF token; the steps that need a recent sign-in answer 403
 // step_up_needed, and the dialog asks the person to confirm it's them.
 
@@ -51,7 +51,45 @@ export interface ConfirmWays {
   sent?: boolean;
 }
 
-export interface Notice { notice?: string; space?: string; signedOut?: boolean }
+export interface Notice {
+  notice?: string;
+  space?: string;
+  signedOut?: boolean;
+  /** The notice says something did not work (an agent's test). */
+  failed?: boolean;
+  /** Where to go next (GitHub, to connect it). */
+  redirect?: string;
+}
+
+// Services (Metatrash 0.80.0).
+export interface App { id: string; name: string; host: string; kind: string; created: string; lastUsed?: string; spaces: { name: string; access: string }[] }
+export interface Agent {
+  id: string; name: string; provider: string; providerName: string; model: string; keyHint: string;
+  endpoint?: string; default?: boolean; dailyCap: number; usedToday: number; created: string;
+}
+export interface AgentProvider { value: string; name: string; model: string; keysURL: string }
+export interface OptIn { id: string; action: string; space: string; spaceName: string; folder: string; agentName: string; created: string }
+export interface GitHubInstallation { id: string; accountLogin: string; accountType: string; githubLogin: string; status: string; connected: string; settingsURL: string }
+export interface Services {
+  apps?: { connectURL: string; list: App[] };
+  agents?: { list: Agent[]; providers: AgentProvider[]; optIns: OptIn[]; max: number };
+  github?: { list: GitHubInstallation[] };
+  fresh?: boolean;
+  unavailable?: string[];
+}
+export interface AppSpaces {
+  id: string; name: string; host: string; kind: string; created: string; canWrite?: boolean;
+  spaces: { id: string; name: string; space: string; owned?: boolean; choice: string; writeAllowed?: boolean }[];
+  kept?: number;
+}
+export interface ActionOffer {
+  job: string; space: string; folder: string; action: string; file: string; status: string; reason?: string;
+  model?: string; modelName: string; keysURL?: string; do?: string; doFile?: string; steps: number;
+  /** contributor: opt in to pay for it; member: the person's own action; owner: the owner pays. */
+  pays: 'contributor' | 'member' | 'owner';
+  agents: { id: string; name: string; keyHint: string }[];
+  current?: string;
+}
 
 export class AccountError extends Error {
   constructor(message: string, readonly status: number, readonly code: string) { super(message); }
@@ -85,6 +123,10 @@ export const account = {
   confirmWays: () => call<ConfirmWays>('GET', '/confirm'),
   post: (path: string, body: Record<string, unknown> = {}) => call<Notice>('POST', path, body),
   space: (id: string, action: string, body: Record<string, unknown> = {}) => call<Notice>('POST', `/spaces/${encodeURIComponent(id)}/${action}`, body),
+  services: () => call<Services>('GET', '/services'),
+  appSpaces: (id: string) => call<AppSpaces>('GET', `/services/apps/${encodeURIComponent(id)}`),
+  actionOffer: (job: string) => call<ActionOffer>('GET', `/services/actions/${encodeURIComponent(job)}`),
+  service: (path: string, body: Record<string, unknown> = {}) => call<Notice>('POST', `/services/${path}`, body),
 };
 
 /** The app's address for a space (owner/slug), and its download. */

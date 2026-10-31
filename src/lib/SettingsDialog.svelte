@@ -1,10 +1,12 @@
 <script lang="ts">
   // metatrash.com: Settings, the account's settings in the app (Metatrash 0.79.0), in place of the
   // old /account pages. Its address is #settings/<tab>[/<space>]: Spaces (and each owned space's
-  // sharing and settings), Security, Services and Profile. Security and Services still open the
-  // account pages for now. On a phone it is full screen: the tabs are a list, each opens on its own.
+  // sharing and settings), Security, Services (0.80.0, ServicesPanel.svelte: …/services/apps/<id>,
+  // …/services/actions/<job>) and Profile. Security still opens the account page for now. On a
+  // phone it is full screen: the tabs are a list, each opens on its own.
   import { onMount, tick, untrack } from 'svelte';
   import ConfirmSheet from './ConfirmSheet.svelte';
+  import ServicesPanel from './ServicesPanel.svelte';
   import {
     account, AccountError, browserZone, downloadAddress, openAddress, timeZones,
     type Account, type AccountSpace, type Notice, type Sharing,
@@ -30,6 +32,8 @@
   const parts = $derived(address.split('/'));
   const tab = $derived(TABS.some(t => t.id === parts[1]) ? parts[1] : '');
   const key = $derived(tab === 'spaces' ? parts.slice(2).join('/') : '');
+  /** Services' own page: apps/<id> or actions/<job>. */
+  const sub = $derived(tab === 'services' ? parts.slice(2).join('/') : '');
 
   let acct = $state<Account | null>(null);
   let loadError = $state('');
@@ -58,6 +62,8 @@
   /** The owned space the address names, by id or owner/slug. */
   const selected = $derived<AccountSpace | null>(key && key !== 'new' && acct ? acct.spaces.find(s => s.id === key || s.space === key) ?? null : null);
   const selectedId = $derived(selected?.id ?? '');
+  /** Where a phone's back button (and Esc) goes from this page. */
+  const up = $derived(selected || key === 'new' ? { to: 'settings/spaces', label: 'Spaces' } : sub ? { to: 'settings/services', label: 'Services' } : { to: 'settings', label: 'Settings' });
 
   async function load() {
     try {
@@ -148,7 +154,7 @@
   function onKeydown(event: KeyboardEvent) {
     if (event.key !== 'Escape' || confirm) return;
     event.preventDefault();
-    if (narrow && tab) go('settings');
+    if (narrow && tab) go(up.to);
     else onClose();
   }
 
@@ -193,7 +199,7 @@
 
     {#if !narrow || tab}
       <section class="content">
-        {#if narrow}<button class="back" onclick={() => go(selected || key === 'new' ? 'settings/spaces' : 'settings')}>‹ {selected || key === 'new' ? 'Spaces' : 'Settings'}</button>{/if}
+        {#if narrow}<button class="back" onclick={() => go(up.to)}>‹ {up.label}</button>{/if}
         {#if notice}<p class="notice" role="status">{notice}</p>{/if}
         {#if error}<p class="error" role="alert">{error}</p>{/if}
 
@@ -463,9 +469,7 @@
           <a class="button primary" href="/account/security">Open Security</a>
 
         {:else if tab === 'services'}
-          <h2>Services</h2>
-          <p>Connected AI apps, agents and GitHub are still on the account page for now.</p>
-          <a class="button primary" href="/account/services">Open Services</a>
+          <ServicesPanel {sub} onNavigate={go} onConfirm={(reason, retry) => (confirm = { reason, retry })} />
         {/if}
       </section>
     {/if}
