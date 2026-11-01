@@ -3,7 +3,7 @@
   // codes, the email address, passkeys, Microsoft accounts, the authenticator app, recovery codes
   // and signed-in devices, one page each (#settings/security/<page>, 0.84.0). Changing the email address or a sign-in method needs a sign-in within
   // the last 10 minutes: the change asks the person to confirm it's them, then runs again.
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import {
     account, AccountError, passkeyCreation, passkeyProblem, passkeysSupported,
     type Notice, type Security,
@@ -18,8 +18,12 @@
     onNotice: (text: string, error?: boolean) => void;
     /** The account's email address changed. */
     onChanged: () => void;
+    /** Each load, so the sidebar can show how many passkeys, devices… there are. */
+    onLoaded?: (s: Security) => void;
+    /** New recovery codes the dialog already received (the server shows them once). */
+    revealed?: string[];
   }
-  let { page: asked, onConfirm, onNotice, onChanged }: Props = $props();
+  let { page: asked, onConfirm, onNotice, onChanged, onLoaded, revealed = [] }: Props = $props();
 
   /** Security's pages (0.84.0), in the order the Settings sidebar lists them. */
   const PAGES = {
@@ -34,7 +38,7 @@
   let loadError = $state('');
   let busy = $state(false);
   /** New recovery codes: kept while the panel is open, as the server shows them only once. */
-  let codes = $state<string[]>([]);
+  let codes = $state<string[]>(untrack(() => [...revealed]));
   let copied = $state(false);
 
   // Inline steps and fields.
@@ -50,6 +54,7 @@
     try {
       const s = await account.security();
       sec = s;
+      onLoaded?.(s);
       loadError = '';
       if (s.newRecoveryCodes?.length) codes = s.newRecoveryCodes;
       if (s.notice) onNotice(s.notice);

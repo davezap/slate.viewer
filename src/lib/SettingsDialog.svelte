@@ -5,6 +5,8 @@
   // …/services/actions/<job>), Security (0.81.0, SecurityPanel.svelte) and Profile. A change's
   // result floats at the top for 10 seconds; a problem stays until it is closed. On a phone it is
   // full screen: the tabs are a list, each opens on its own.
+  // 0.85.0: the tabs are Profile, Spaces, Services, Security, and a page that lists things shows how
+  // many on the right of the side.
   // 0.84.0: each tab is split into pages, listed under it in the side: #settings/<tab>/<page>.
   // Spaces: Your spaces, shared, invitations, and each owned space's …/<space>/general|members|ownership.
   // Profile: Username and email, delete. An address without a page (as in emails) opens the first.
@@ -14,7 +16,7 @@
   import ServicesPanel from './ServicesPanel.svelte';
   import {
     account, AccountError, browserZone, downloadAddress, openAddress, timeZones,
-    type Account, type AccountSpace, type Notice, type Sharing,
+    type Account, type AccountSpace, type Notice, type Security, type Services, type Sharing,
   } from './siteAccount';
 
   interface Props {
@@ -29,21 +31,23 @@
 
   /** The tabs and their pages; a page's id '' is the tab's first page. */
   const TABS = [
+    { id: 'profile', label: 'Profile', pages: [
+      { id: '', label: 'Username and email' }, { id: 'delete', label: 'Delete account' },
+    ] },
     { id: 'spaces', label: 'Spaces', pages: [
       { id: '', label: 'Your spaces' }, { id: 'shared', label: 'Shared with you' }, { id: 'invitations', label: 'Invitations' },
-    ] },
-    { id: 'security', label: 'Security', pages: [
-      { id: 'email', label: 'Email' }, { id: 'passkeys', label: 'Passkeys' }, { id: 'totp', label: 'Authenticator app' },
-      { id: 'microsoft', label: 'Microsoft accounts' }, { id: 'recovery', label: 'Recovery codes' }, { id: 'devices', label: 'Signed-in devices' },
     ] },
     { id: 'services', label: 'Services', pages: [
       { id: 'apps', label: 'Connected apps' }, { id: 'agents', label: 'Agents' },
       { id: 'actions', label: 'Actions you pay for' }, { id: 'github', label: 'GitHub' },
     ] },
-    { id: 'profile', label: 'Profile', pages: [
-      { id: '', label: 'Username and email' }, { id: 'delete', label: 'Delete account' },
+    { id: 'security', label: 'Security', pages: [
+      { id: 'email', label: 'Email' }, { id: 'passkeys', label: 'Passkeys' }, { id: 'totp', label: 'Authenticator app' },
+      { id: 'microsoft', label: 'Microsoft accounts' }, { id: 'recovery', label: 'Recovery codes' }, { id: 'devices', label: 'Signed-in devices' },
     ] },
   ] as const;
+  const SECURITY_PAGES = TABS.find(t => t.id === 'security')!.pages;
+  const SERVICES_PAGES = TABS.find(t => t.id === 'services')!.pages;
   /** An owned space's pages: …/spaces/<space>/<page>. */
   const SPACE_PAGES = [
     { id: 'general', label: 'General' }, { id: 'members', label: 'Members' }, { id: 'ownership', label: 'Ownership' },
@@ -61,8 +65,8 @@
   /** The page highlighted in the side, under its tab. */
   const pageOf = (t: string): string => {
     if (t === 'spaces') return spacesPage;
-    if (t === 'security') return TABS[1].pages.some(p => p.id === parts[2]) ? parts[2] : 'email';
-    if (t === 'services') return TABS[2].pages.some(p => p.id === parts[2]) ? parts[2] : 'apps';
+    if (t === 'security') return SECURITY_PAGES.some(p => p.id === parts[2]) ? parts[2] : 'email';
+    if (t === 'services') return SERVICES_PAGES.some(p => p.id === parts[2]) ? parts[2] : 'apps';
     return profilePage;
   };
 
@@ -77,6 +81,11 @@
   let busy = $state(false);
   let confirm = $state<{ reason: string; retry: () => void } | null>(null);
   let narrow = $state(false);
+  /** How many each Security and Services page lists, for the sidebar; a page not known yet shows none. */
+  let secCounts = $state<Record<string, number>>({});
+  let svcCounts = $state<Record<string, number>>({});
+  /** New recovery codes that came with the sidebar's own read of Security (the server shows them once). */
+  let revealed = $state<string[]>([]);
   let panel = $state<HTMLDivElement>();
 
   // Form fields.
@@ -115,6 +124,45 @@
     return { to: 'settings', label: 'Settings' };
   });
 
+  function securityLoaded(s: Security) {
+    secCounts = { passkeys: s.passkeys.length, recovery: s.recovery, devices: s.sessions.length, ...(s.microsoft ? { microsoft: s.microsoft.accounts.length } : {}) };
+  }
+  function servicesLoaded(s: Services) {
+    svcCounts = {
+      ...(s.apps ? { apps: s.apps.list.length } : {}),
+      ...(s.agents && !s.unavailable?.includes('agents') ? { agents: s.agents.list.length, actions: s.agents.optIns.length } : {}),
+      ...(s.github ? { github: s.github.list.length } : {}),
+    };
+  }
+  /** The count beside a page in the sidebar, or null for a page that isn't a list. */
+  function countOf(t: string, p: string): number | null {
+    if (t === 'spaces') {
+      if (!acct) return null;
+      if (p === '') return acct.unavailable?.includes('spaces') ? null : acct.spaces.length;
+      if (p === 'shared') return acct.unavailable?.includes('memberships') ? null : acct.joined.length;
+      return acct.invitations.length + acct.offers.length;
+    }
+    if (t === 'security') return secCounts[p] ?? null;
+    if (t === 'services') return svcCounts[p] ?? null;
+    return null;
+  }
+  /**
+   * The sidebar's counts for the tabs not open: each panel reports its own when it loads.
+   * Security is read here only when the dialog opens elsewhere, as its read hands over new
+   * recovery codes and a waiting notice once.
+   */
+  async function loadCounts(opened: string) {
+    if (opened !== 'services') account.services().then(servicesLoaded, () => {});
+    if (opened !== 'security') {
+      try {
+        const s = await account.security();
+        securityLoaded(s);
+        if (s.newRecoveryCodes?.length) revealed = s.newRecoveryCodes;
+        if (s.notice) say(s.notice);
+      } catch { /* the sidebar shows no counts */ }
+    }
+  }
+
   async function load() {
     try {
       acct = await account.get();
@@ -143,7 +191,7 @@
     const update = () => (narrow = media.matches);
     update();
     media.addEventListener('change', update);
-    void load();
+    void load().then(() => { if (acct) void loadCounts(untrack(() => tab)); });
     void tick().then(() => panel?.focus());
     return () => media.removeEventListener('change', update);
   });
@@ -252,16 +300,20 @@
         <div class="heading">Settings</div>
         <div class="tabs">
           {#each TABS as t (t.id)}
-            {@const here = !narrow && (tab || 'spaces') === t.id}
+            {@const here = !narrow && (tab || 'profile') === t.id}
             <button class="group" class:here onclick={() => go(`settings/${t.id}`)}>{t.label}</button>
             {#each t.pages as p (p.id)}
-              {@const waiting = t.id === 'spaces' && p.id === 'invitations' && acct ? acct.invitations.length + acct.offers.length : 0}
+              {@const n = countOf(t.id, p.id)}
+              {@const waiting = t.id === 'spaces' && p.id === 'invitations' && !!n}
               <button class="page" class:selected={here && pageOf(t.id) === p.id} aria-current={here && pageOf(t.id) === p.id ? 'page' : undefined}
                 onclick={() => go(p.id ? `settings/${t.id}/${p.id}` : `settings/${t.id}`)}>
                 <span>{p.label}</span>
-                {#if waiting}
-                  <span class="count" aria-label="{waiting} waiting for you">{waiting}</span>
-                {:else if narrow}<span class="chev" aria-hidden="true">›</span>{/if}
+                <span class="end">
+                  {#if n !== null}
+                    <span class="n" class:count={waiting} aria-label={waiting ? `${n} waiting for you` : `${n}`}>{n}</span>
+                  {/if}
+                  {#if narrow}<span class="chev" aria-hidden="true">›</span>{/if}
+                </span>
               </button>
             {/each}
           {/each}
@@ -284,7 +336,7 @@
         {:else if !acct}
           <p class="muted">Loading…</p>
 
-        {:else if (tab || 'spaces') === 'spaces' && selected}
+        {:else if (tab || 'profile') === 'spaces' && selected}
           <!-- One owned space: its address, sharing and settings. -->
           {#if !narrow}<button class="crumb" onclick={() => go('settings/spaces')}>‹ Your spaces</button>{/if}
           <div class="head">
@@ -429,7 +481,7 @@
             {/if}
           {/if}
 
-        {:else if (tab || 'spaces') === 'spaces'}
+        {:else if (tab || 'profile') === 'spaces'}
           {#if unknown}<p class="error" role="alert">That space isn’t one of yours, or it was deleted.</p>{/if}
           {#if acct.unavailable?.length}<p class="error" role="alert">Some of your spaces can’t be listed just now. Reload shortly.</p>{/if}
 
@@ -522,7 +574,7 @@
           {/if}
           {/if}
 
-        {:else if tab === 'profile'}
+        {:else if (tab || 'profile') === 'profile'}
           {#if profilePage === ''}
           <h2>Username and email</h2>
           <h3>Public username</h3>
@@ -560,10 +612,10 @@
           {/if}
 
         {:else if tab === 'security'}
-          <SecurityPanel page={parts[2] ?? ''} onConfirm={(reason, retry) => (confirm = { reason, retry })} onNotice={say} onChanged={() => void load()} />
+          <SecurityPanel page={parts[2] ?? ''} {revealed} onLoaded={securityLoaded} onConfirm={(reason, retry) => (confirm = { reason, retry })} onNotice={say} onChanged={() => void load()} />
 
         {:else if tab === 'services'}
-          <ServicesPanel {sub} onNavigate={go} onConfirm={(reason, retry) => (confirm = { reason, retry })} onNotice={say} />
+          <ServicesPanel {sub} onLoaded={servicesLoaded} onNavigate={go} onConfirm={(reason, retry) => (confirm = { reason, retry })} onNotice={say} />
         {/if}
       </section>
     {/if}
@@ -617,6 +669,8 @@
   h2 .muted { font-size: 13px; font-weight: 400; }
   .note { padding: 8px 10px; border-radius: 8px; background: var(--side-accent-soft); }
   .chev { color: var(--side-muted); font-size: 18px; }
+  .end { display: flex; align-items: center; gap: 8px; margin-left: 8px; }
+  .n { min-width: 16px; padding: 0 5px; color: var(--side-muted); font-size: 11px; font-weight: 400; text-align: center; font-variant-numeric: tabular-nums; }
   .count { min-width: 16px; padding: 0 5px; color: #fff; background: var(--side-accent); border-radius: 8px; font-size: 11px; text-align: center; }
   :global([data-theme="dark"]) .count { color: #1d1a22; }
   .who { margin-top: auto; padding: 8px 10px 0; color: var(--side-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

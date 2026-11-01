@@ -18,8 +18,10 @@
     onConfirm: (reason: string, retry: () => void) => void;
     /** Shows a change's result at the top of the dialog; errors stay until closed. */
     onNotice: (text: string, error?: boolean) => void;
+    /** Each load of the pages' list, so the sidebar can show how many apps, agents… there are. */
+    onLoaded?: (s: Services) => void;
   }
-  let { sub, onNavigate, onConfirm, onNotice }: Props = $props();
+  let { sub, onNavigate, onConfirm, onNotice, onLoaded }: Props = $props();
 
   const parts = $derived(sub.split('/'));
   const appId = $derived(parts[0] === 'apps' && parts[1] ? parts[1] : '');
@@ -60,6 +62,7 @@
       } else {
         const s = await account.services();
         services = s;
+        onLoaded?.(s);
         if (!add.provider) add.provider = s.agents?.providers[0]?.value ?? '';
       }
     } catch (e) {
