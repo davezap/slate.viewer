@@ -1,7 +1,7 @@
 <script lang="ts">
   // metatrash.com: Change Space. Lists the spaces the person can open (from the site's session
   // answer) and the web-readable spaces this browser visited, with a filter; picking one opens
-  // it at /app/owner/slug/.
+  // it at /spaces/owner/slug/.
   import { onMount, tick } from 'svelte';
   import {
     forgetSpace, groupSpaces, pickerSession, spaceAddress, visitedSpaces,

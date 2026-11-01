@@ -74,7 +74,7 @@ export function spaceOfPath(path: string | null | undefined): string | null {
 
 /** The app's address for a space: its first note opens. */
 export function spaceAddress(space: string): string {
-  return `/app/${space.split('/').map(encodeURIComponent).join('/')}/`;
+  return `/spaces/${space.split('/').map(encodeURIComponent).join('/')}/`;
 }
 
 export interface PickerGroups {

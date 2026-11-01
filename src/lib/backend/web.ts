@@ -362,7 +362,7 @@ export const backend: Backend = {
     openWindow: async path => {
       if (!path) return;
       const { root, rel } = locate(path);
-      window.open(`/app${root.slice('/spaces'.length)}/${rel}`, '_blank', 'noopener');
+      window.open(`${root}/${rel.split('/').map(encodeURIComponent).join('/')}`, '_blank', 'noopener');
     },
     openDefaultAppsSettings: () => notOnTheSite('Default apps'),
     openLogFolder: () => notOnTheSite('The log folder'),

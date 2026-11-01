@@ -470,7 +470,7 @@
             <form class="row" onsubmit={event => {
               event.preventDefault();
               void run(() => account.space(s.id, 'delete', { name: deleteName }), () => {
-                if (current === s.space) location.href = '/app/';
+                if (current === s.space) location.href = '/spaces/public/';
                 else go('settings/spaces');
               });
             }}>

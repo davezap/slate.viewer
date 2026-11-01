@@ -161,7 +161,7 @@ export const account = {
 };
 
 /** The app's address for a space (owner/slug), and its download. */
-export const openAddress = (space: string) => `/app/${space.split('/').map(encodeURIComponent).join('/')}/`;
+export const openAddress = (space: string) => `/spaces/${space.split('/').map(encodeURIComponent).join('/')}/`;
 export const downloadAddress = (space: string) => `/spaces/${space.split('/').map(encodeURIComponent).join('/')}/?export`;
 
 // Passkeys: base64url <-> bytes, as passkey.js on the account pages does.

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
   import { backend, capabilities, type FolderListing, type LoadedDocument } from './lib/backend';
-  import { showAddress } from './lib/site';
+  import { showAddress, siteLink } from './lib/site';
   import { rememberSpace, spaceOfPath } from './lib/siteSpaces';
   import SettingsDialog from './lib/SettingsDialog.svelte';
   import type { SlateChangesEndDetail, SlateCompareEndDetail, SlateEditorApi, SlateFillEndDetail, SlateForm, SlateFormAnswers, SlateFormSubmitDetail, SlateModeChangeDetail, SlateOutline, SlateOutlineHeading, SlateUploadedAttachment, SlateWorkspaceMode } from '../public/slate/slate-editor';
@@ -2569,6 +2569,16 @@
     if (hash === 0) {
       revealAnchor(anchor);
       return;
+    }
+    if (web) {
+      // An address on this site: a page of this space opens here, any other loads.
+      const site = siteLink(url);
+      if (site && 'navigate' in site) {
+        if (newWindow) window.open(site.navigate, '_blank', 'noopener');
+        else location.assign(site.navigate);
+        return;
+      }
+      if (site) url = site.path + (hash < 0 ? '' : url.slice(hash));
     }
     if (/^(https?|mailto):/i.test(url)) {
       await backend.opener.url(url).catch(error => showError(`Couldn't open ${url} in the browser.\n\n${error}`));

@@ -2,6 +2,7 @@
   import { tick, untrack } from 'svelte';
   import { backend, capabilities } from './backend';
   import { basename, joinPath } from './paths';
+  import { siteAddress } from './site';
   import { canConvert, conflictOriginal, sizeLabel, type FolderDescription, type VirtualFile } from './space';
   import Section from './Section.svelte';
   import KindIcon from './KindIcon.svelte';
@@ -394,7 +395,7 @@
         items.push({ text: 'Copy &Path', action: () => void navigator.clipboard.writeText(target).catch(console.error) });
       } else {
         // On the website a file's place is its address.
-        const address = `${location.origin}/app${target.replace(/^\/spaces/, '')}`;
+        const address = location.origin + siteAddress(target);
         items.push({ text: 'Copy &Address', action: () => void navigator.clipboard.writeText(address).catch(console.error) });
       }
     }
