@@ -5,6 +5,9 @@
   // …/services/actions/<job>), Security (0.81.0, SecurityPanel.svelte) and Profile. A change's
   // result floats at the top for 10 seconds; a problem stays until it is closed. On a phone it is
   // full screen: the tabs are a list, each opens on its own.
+  // 0.84.0: each tab is split into pages, listed under it in the side: #settings/<tab>/<page>.
+  // Spaces: Your spaces, shared, invitations, and each owned space's …/<space>/general|members|ownership.
+  // Profile: Username and email, delete. An address without a page (as in emails) opens the first.
   import { onMount, tick, untrack } from 'svelte';
   import ConfirmSheet from './ConfirmSheet.svelte';
   import SecurityPanel from './SecurityPanel.svelte';
@@ -24,18 +27,44 @@
   }
   let { address, current, onNavigate, onClose }: Props = $props();
 
+  /** The tabs and their pages; a page's id '' is the tab's first page. */
   const TABS = [
-    { id: 'spaces', label: 'Spaces' },
-    { id: 'security', label: 'Security' },
-    { id: 'services', label: 'Services' },
-    { id: 'profile', label: 'Profile' },
+    { id: 'spaces', label: 'Spaces', pages: [
+      { id: '', label: 'Your spaces' }, { id: 'shared', label: 'Shared with you' }, { id: 'invitations', label: 'Invitations' },
+    ] },
+    { id: 'security', label: 'Security', pages: [
+      { id: 'email', label: 'Email' }, { id: 'passkeys', label: 'Passkeys' }, { id: 'totp', label: 'Authenticator app' },
+      { id: 'microsoft', label: 'Microsoft accounts' }, { id: 'recovery', label: 'Recovery codes' }, { id: 'devices', label: 'Signed-in devices' },
+    ] },
+    { id: 'services', label: 'Services', pages: [
+      { id: 'apps', label: 'Connected apps' }, { id: 'agents', label: 'Agents' },
+      { id: 'actions', label: 'Actions you pay for' }, { id: 'github', label: 'GitHub' },
+    ] },
+    { id: 'profile', label: 'Profile', pages: [
+      { id: '', label: 'Username and email' }, { id: 'delete', label: 'Delete account' },
+    ] },
   ] as const;
+  /** An owned space's pages: …/spaces/<space>/<page>. */
+  const SPACE_PAGES = [
+    { id: 'general', label: 'General' }, { id: 'members', label: 'Members' }, { id: 'ownership', label: 'Ownership' },
+  ] as const;
+  type SpacePage = (typeof SPACE_PAGES)[number]['id'];
 
   const parts = $derived(address.split('/'));
   const tab = $derived(TABS.some(t => t.id === parts[1]) ? parts[1] : '');
-  const key = $derived(tab === 'spaces' ? parts.slice(2).join('/') : '');
-  /** Services' own page: apps/<id> or actions/<job>. */
+  /** After settings/spaces: shared, invitations, new, or a space (id or owner/slug) and maybe its page. */
+  const rest = $derived(tab === 'spaces' ? parts.slice(2).filter(Boolean) : []);
+  const spacesPage = $derived(rest.length === 1 && (rest[0] === 'shared' || rest[0] === 'invitations') ? rest[0] : '');
+  /** Services' own page: apps, agents, actions, github, apps/<id> or actions/<job>. */
   const sub = $derived(tab === 'services' ? parts.slice(2).join('/') : '');
+  const profilePage = $derived(tab === 'profile' && parts[2] === 'delete' ? 'delete' : '');
+  /** The page highlighted in the side, under its tab. */
+  const pageOf = (t: string): string => {
+    if (t === 'spaces') return spacesPage;
+    if (t === 'security') return TABS[1].pages.some(p => p.id === parts[2]) ? parts[2] : 'email';
+    if (t === 'services') return TABS[2].pages.some(p => p.id === parts[2]) ? parts[2] : 'apps';
+    return profilePage;
+  };
 
   let acct = $state<Account | null>(null);
   let loadError = $state('');
@@ -62,11 +91,29 @@
   let webWarning = $state(false);
   const zones = timeZones();
 
-  /** The owned space the address names, by id or owner/slug. */
-  const selected = $derived<AccountSpace | null>(key && key !== 'new' && acct ? acct.spaces.find(s => s.id === key || s.space === key) ?? null : null);
+  /** The owned space the address names, by id or owner/slug, and which of its pages. */
+  const found = $derived.by<{ space: AccountSpace; page: SpacePage } | null>(() => {
+    if (!acct || !rest.length || spacesPage || rest[0] === 'new') return null;
+    const find = (k: string) => acct?.spaces.find(s => s.id === k || s.space === k) ?? null;
+    const whole = find(rest.join('/'));
+    if (whole) return { space: whole, page: 'general' };
+    const last = rest[rest.length - 1];
+    const page = SPACE_PAGES.find(p => p.id === last);
+    const space = page && rest.length > 1 ? find(rest.slice(0, -1).join('/')) : null;
+    return space && page ? { space, page: page.id } : null;
+  });
+  const selected = $derived(found?.space ?? null);
+  const spacePage = $derived<SpacePage>(found?.page ?? 'general');
+  /** An address under spaces that names nothing: a space that isn't yours, or was deleted. */
+  const unknown = $derived(!!acct && rest.length > 0 && !spacesPage && rest[0] !== 'new' && !found);
   const selectedId = $derived(selected?.id ?? '');
   /** Where a phone's back button (and Esc) goes from this page. */
-  const up = $derived(selected || key === 'new' ? { to: 'settings/spaces', label: 'Spaces' } : sub ? { to: 'settings/services', label: 'Services' } : { to: 'settings', label: 'Settings' });
+  const up = $derived.by(() => {
+    if (selected) return { to: 'settings/spaces', label: 'Your spaces' };
+    const [first, id] = sub.split('/');
+    if (id && (first === 'apps' || first === 'actions')) return { to: `settings/services/${first}`, label: first === 'apps' ? 'Connected apps' : 'Actions you pay for' };
+    return { to: 'settings', label: 'Settings' };
+  });
 
   async function load() {
     try {
@@ -118,7 +165,7 @@
     void loadSharing(id);
   }
   // A problem belongs to its tab; a result may follow the person to the next page.
-  $effect(() => { void tab; untrack(() => { if (toast?.error) say(''); }); });
+  $effect(() => { void address; untrack(() => { if (toast?.error) say(''); }); });
 
   /** Shows a change's result for 10 seconds, or a problem until it is closed; '' clears it. */
   function say(text: string, error = false) {
@@ -128,7 +175,7 @@
   }
   onMount(() => () => clearTimeout(toastTimer));
   $effect(() => {
-    if (key === 'new' && acct) void tick().then(() => (panel?.querySelector('#settings-new-space') as HTMLInputElement | null)?.focus());
+    if (rest[0] === 'new' && acct) void tick().then(() => (panel?.querySelector('#settings-new-space') as HTMLInputElement | null)?.focus());
   });
 
   /**
@@ -203,14 +250,22 @@
     {#if !narrow || !tab}
       <nav aria-label="Settings">
         <div class="heading">Settings</div>
-        {#each TABS as t (t.id)}
-          <button class:selected={!narrow && (tab || 'spaces') === t.id} onclick={() => go(`settings/${t.id}`)}>
-            <span>{t.label}</span>
-            {#if t.id === 'spaces' && acct && acct.invitations.length + acct.offers.length}
-              <span class="count" aria-label="{acct.invitations.length + acct.offers.length} waiting for you">{acct.invitations.length + acct.offers.length}</span>
-            {:else if narrow}<span class="chev" aria-hidden="true">›</span>{/if}
-          </button>
-        {/each}
+        <div class="tabs">
+          {#each TABS as t (t.id)}
+            {@const here = !narrow && (tab || 'spaces') === t.id}
+            <button class="group" class:here onclick={() => go(`settings/${t.id}`)}>{t.label}</button>
+            {#each t.pages as p (p.id)}
+              {@const waiting = t.id === 'spaces' && p.id === 'invitations' && acct ? acct.invitations.length + acct.offers.length : 0}
+              <button class="page" class:selected={here && pageOf(t.id) === p.id} aria-current={here && pageOf(t.id) === p.id ? 'page' : undefined}
+                onclick={() => go(p.id ? `settings/${t.id}/${p.id}` : `settings/${t.id}`)}>
+                <span>{p.label}</span>
+                {#if waiting}
+                  <span class="count" aria-label="{waiting} waiting for you">{waiting}</span>
+                {:else if narrow}<span class="chev" aria-hidden="true">›</span>{/if}
+              </button>
+            {/each}
+          {/each}
+        </div>
         {#if acct}<div class="who" title={acct.email}>{acct.username ?? acct.email}</div>{/if}
       </nav>
     {/if}
@@ -231,7 +286,7 @@
 
         {:else if (tab || 'spaces') === 'spaces' && selected}
           <!-- One owned space: its address, sharing and settings. -->
-          {#if !narrow}<button class="crumb" onclick={() => go('settings/spaces')}>‹ Spaces</button>{/if}
+          {#if !narrow}<button class="crumb" onclick={() => go('settings/spaces')}>‹ Your spaces</button>{/if}
           <div class="head">
             <h2>{selected.name}</h2>
             {#if selected.space}
@@ -242,7 +297,14 @@
             {/if}
           </div>
           <p class="mono muted">{acct.username}/{selected.slug}</p>
+          <div class="subtabs" role="tablist" aria-label="{selected.name} settings">
+            {#each SPACE_PAGES as p (p.id)}
+              <button role="tab" aria-selected={spacePage === p.id} class:selected={spacePage === p.id}
+                onclick={() => go(`settings/spaces/${selected.id}${p.id === 'general' ? '' : `/${p.id}`}`)}>{p.label}</button>
+            {/each}
+          </div>
 
+          {#if spacePage === 'general'}
           <h3>Readable on the web</h3>
           {#if selected.web}
             <p><span class="pill web">public</span> Anyone with the link can read every file in it on the website, without signing in. AI apps still reach it only through connections you or your members approve.</p>
@@ -270,12 +332,13 @@
           <datalist id="settings-zones">{#each zones as z (z)}<option value={z}></option>{/each}</datalist>
           <p class="hint">When folder actions with <code>every</code> run, and the times in runner.md. Leave it empty for the server’s ({acct.defaultTimezone}).</p>
 
-          {#if sharingError}
+          {:else if sharingError}
             <p class="error" role="alert">Sharing can’t be loaded just now: {sharingError}</p>
           {:else if !sharing}
             <p class="muted">Loading sharing…</p>
           {:else}
             {@const s = sharing}
+            {#if spacePage === 'members'}
             <h3>Invite someone</h3>
             <form class="row" onsubmit={event => { event.preventDefault(); void run(() => account.space(s.id, 'invite', { email: inviteEmail }), () => { inviteEmail = ''; }); }}>
               <label class="vh" for="settings-invite">Email address</label>
@@ -329,6 +392,7 @@
             </ul>
             <p class="hint">Suspending, restoring and removing apply only to this space.{s.apps ? ' What their connected apps may do here applies from their next operation; you always have full access to your own space.' : ''}</p>
 
+            {:else}
             <h3>Transfer ownership</h3>
             {#if s.transfer && !s.transfer.expired}
               <p>Offered to <strong>{s.transfer.toEmail}</strong>{s.transfer.toUsername ? ` (${s.transfer.toUsername})` : ''} until {ago(s.transfer.expires)}. They accept or decline in Settings. Until they accept, nothing changes.</p>
@@ -362,13 +426,19 @@
               <input id="settings-delete-space" bind:value={deleteName} maxlength="120" autocomplete="off" placeholder="Type {s.name} to confirm" required />
               <button type="submit" class="danger" disabled={busy || deleteName.trim().toLowerCase() !== s.name.trim().toLowerCase()}>Delete space</button>
             </form>
+            {/if}
           {/if}
 
         {:else if (tab || 'spaces') === 'spaces'}
-          {#if key && key !== 'new'}<p class="error" role="alert">That space isn’t one of yours, or it was deleted.</p>{/if}
-          <h2>Spaces</h2>
+          {#if unknown}<p class="error" role="alert">That space isn’t one of yours, or it was deleted.</p>{/if}
           {#if acct.unavailable?.length}<p class="error" role="alert">Some of your spaces can’t be listed just now. Reload shortly.</p>{/if}
 
+          {#if spacesPage === 'invitations'}
+          <h2>Invitations</h2>
+          <p class="muted">Spaces other people invited you to, and spaces offered to you to own.</p>
+          {#if !acct.offers.length && !acct.invitations.length}
+            <p class="muted">Nothing is waiting for you.</p>
+          {/if}
           {#if acct.offers.length}
             <h3>Ownership offered to you</h3>
             <ul class="rows">
@@ -387,7 +457,7 @@
           {/if}
 
           {#if acct.invitations.length}
-            <h3>Invitations</h3>
+            <h3>Invited to join</h3>
             <ul class="rows">
               {#each acct.invitations as i (i.id)}
                 <li>
@@ -398,7 +468,29 @@
             </ul>
           {/if}
 
-          <h3>Your spaces <span class="muted">{acct.spaces.length} of {acct.maxSpaces}</span></h3>
+          {:else if spacesPage === 'shared'}
+          <h2>Shared with you</h2>
+          <p class="muted">Other people’s spaces you are a member of.</p>
+          <ul class="rows">
+            {#each acct.joined as j (j.space)}
+              <li>
+                {#if j.open}
+                  <a class="main" href={openAddress(j.space)}><strong>{j.name}</strong><span class="sub mono">{j.space}</span></a>
+                {:else}
+                  <span class="main"><strong>{j.name}</strong><span class="sub mono">{j.space}</span></span>
+                {/if}
+                <span class="pill" class:warn={j.status !== 'active'}>{j.status === 'active' ? 'member' : j.status}</span>
+              </li>
+            {:else}
+              <li class="empty">Nobody has shared a space with you yet.</li>
+            {/each}
+          </ul>
+
+          {:else}
+          <h2>Your spaces <span class="muted">{acct.spaces.length} of {acct.maxSpaces}</span></h2>
+          {#if acct.invitations.length + acct.offers.length}
+            <p class="note">{acct.invitations.length + acct.offers.length === 1 ? 'A space is' : `${acct.invitations.length + acct.offers.length} spaces are`} waiting for you in <button class="link" onclick={() => go('settings/spaces/invitations')}>Invitations</button>.</p>
+          {/if}
           <ul class="rows">
             {#each acct.spaces as s (s.id)}
               <li>
@@ -428,25 +520,11 @@
           {:else}
             <p class="hint">Your space allowance is used.</p>
           {/if}
-
-          <h3>Shared with you</h3>
-          <ul class="rows">
-            {#each acct.joined as j (j.space)}
-              <li>
-                {#if j.open}
-                  <a class="main" href={openAddress(j.space)}><strong>{j.name}</strong><span class="sub mono">{j.space}</span></a>
-                {:else}
-                  <span class="main"><strong>{j.name}</strong><span class="sub mono">{j.space}</span></span>
-                {/if}
-                <span class="pill" class:warn={j.status !== 'active'}>{j.status === 'active' ? 'member' : j.status}</span>
-              </li>
-            {:else}
-              <li class="empty">Nobody has shared a space with you yet.</li>
-            {/each}
-          </ul>
+          {/if}
 
         {:else if tab === 'profile'}
-          <h2>Profile</h2>
+          {#if profilePage === ''}
+          <h2>Username and email</h2>
           <h3>Public username</h3>
           {#if acct.username}
             <p class="big mono">{acct.username}</p>
@@ -463,9 +541,10 @@
 
           <h3>Email</h3>
           <p class="big mono">{acct.email}</p>
-          <p class="muted">Kept private, for signing in. It is never shown in spaces. <button class="link" onclick={() => go('settings/security')}>Change it in Security</button>.</p>
+          <p class="muted">Kept private, for signing in. It is never shown in spaces. <button class="link" onclick={() => go('settings/security/email')}>Change it in Security</button>.</p>
 
-          <h3>Delete account</h3>
+          {:else}
+          <h2>Delete account</h2>
           {#if acct.unavailable?.includes('spaces')}
             <p class="error">Your spaces can’t be checked just now. Reload shortly.</p>
           {:else if acct.spaces.length}
@@ -478,9 +557,10 @@
               <button type="submit" class="danger" disabled={busy || deleteEmail.trim().toLowerCase() !== acct.email.toLowerCase()}>Delete account</button>
             </form>
           {/if}
+          {/if}
 
         {:else if tab === 'security'}
-          <SecurityPanel onConfirm={(reason, retry) => (confirm = { reason, retry })} onNotice={say} onChanged={() => void load()} />
+          <SecurityPanel page={parts[2] ?? ''} onConfirm={(reason, retry) => (confirm = { reason, retry })} onNotice={say} onChanged={() => void load()} />
 
         {:else if tab === 'services'}
           <ServicesPanel {sub} onNavigate={go} onConfirm={(reason, retry) => (confirm = { reason, retry })} onNotice={say} />
@@ -502,27 +582,40 @@
   .backdrop { position: fixed; inset: 0; z-index: 3000; display: grid; place-items: center; background: rgb(0 0 0 / .22); }
   .panel {
     position: relative; display: flex; box-sizing: border-box; outline: none;
-    width: min(880px, calc(100vw - 48px)); height: min(640px, calc(100vh - 64px));
+    width: min(900px, calc(100vw - 48px)); height: min(700px, calc(100vh - 64px));
     background: var(--side-input); color: var(--side-fg); overflow: hidden;
     border: 1px solid var(--side-border); border-radius: 10px; box-shadow: 0 16px 50px rgb(0 0 0 / .28);
     font: 13px/1.45 Inter, "Segoe UI", system-ui, sans-serif;
   }
+  .narrow .x { right: 10px; }
   .panel.narrow { width: 100vw; height: 100dvh; border: 0; border-radius: 0; flex-direction: column; }
   .x {
-    position: absolute; top: 10px; right: 10px; z-index: 1; display: grid; place-items: center; width: 28px; height: 28px; padding: 0;
+    position: absolute; top: 10px; right: 24px; z-index: 1; display: grid; place-items: center; width: 28px; height: 28px; padding: 0;
     color: var(--side-muted); background: none; border: 0; border-radius: 5px; cursor: pointer;
   }
   .x:hover { color: var(--side-fg); background: var(--side-hover); }
-  nav { flex: none; display: flex; flex-direction: column; width: 180px; padding: 12px 8px; background: var(--side-bg); border-right: 1px solid var(--side-border); }
-  .narrow nav { width: auto; flex: 1; border: 0; padding: 14px 12px; }
+  nav { flex: none; display: flex; flex-direction: column; width: 200px; padding: 12px 8px; background: var(--side-bg); border-right: 1px solid var(--side-border); }
+  .narrow nav { width: auto; flex: 1; min-height: 0; border: 0; padding: 14px 12px; }
+  .tabs { flex: 1; min-height: 0; overflow: auto; }
   .heading { margin: 2px 8px 10px; font-size: 15px; font-weight: 700; }
   nav button {
     display: flex; justify-content: space-between; align-items: center; width: 100%; padding: 7px 10px; text-align: left;
     font: inherit; color: inherit; background: none; border: 0; border-radius: 6px; cursor: pointer;
   }
-  .narrow nav button { padding: 12px; font-size: 15px; border-bottom: 1px solid var(--side-border); border-radius: 0; }
+  nav button.page { padding: 4px 10px 4px 20px; }
+  nav button.group { margin-top: 8px; padding: 4px 10px; font-weight: 700; }
+  nav button.group:first-child { margin-top: 0; }
+  nav button.group:not(.here) { color: var(--side-muted); }
+  .narrow nav button.page { padding: 12px 12px 12px 20px; font-size: 15px; border-bottom: 1px solid var(--side-border); border-radius: 0; }
+  .narrow nav button.group { margin-top: 16px; padding: 6px 12px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--side-muted); }
   nav button:hover { background: var(--side-hover); }
   nav button.selected { background: var(--side-accent-soft); font-weight: 600; }
+  .subtabs { display: flex; gap: 2px; margin: 6px 0 4px; border-bottom: 1px solid var(--side-border); }
+  .subtabs button { margin-bottom: -1px; padding: 6px 12px; background: none; border: 0; border-bottom: 2px solid transparent; border-radius: 0; color: var(--side-muted); }
+  .subtabs button:hover:not(:disabled) { background: none; color: var(--side-fg); }
+  .subtabs button.selected { color: var(--side-fg); border-bottom-color: var(--side-accent); font-weight: 600; }
+  h2 .muted { font-size: 13px; font-weight: 400; }
+  .note { padding: 8px 10px; border-radius: 8px; background: var(--side-accent-soft); }
   .chev { color: var(--side-muted); font-size: 18px; }
   .count { min-width: 16px; padding: 0 5px; color: #fff; background: var(--side-accent); border-radius: 8px; font-size: 11px; text-align: center; }
   :global([data-theme="dark"]) .count { color: #1d1a22; }
@@ -533,7 +626,6 @@
   .narrow .back { font-size: 15px; }
   h2 { margin: 0 0 6px; font-size: 18px; }
   h3 { margin: 22px 0 8px; font-size: 13px; font-weight: 700; }
-  h3 .muted { font-weight: 400; }
   p { margin: 0 0 10px; }
   .muted, .hint { color: var(--side-muted); }
   .hint { font-size: 12px; }
@@ -550,8 +642,8 @@
   .toast span { padding-top: 2px; }
   .toast.bad { border-color: #c0392b; }
   .toast.bad::before { background: rgb(192 57 43 / .1); }
-  /* Over the content, beside the 180px tabs. */
-  .panel:not(.narrow) .toast { left: calc(50% + 90px); max-width: calc(100% - 180px - 96px); }
+  /* Over the content, beside the 200px tabs. */
+  .panel:not(.narrow) .toast { left: calc(50% + 100px); max-width: calc(100% - 200px - 96px); }
   .narrow .toast { top: 8px; max-width: calc(100% - 24px); }
   .toast-x { flex: none; display: grid; place-items: center; width: 24px; height: 24px; padding: 0; color: var(--side-muted); background: none; border: 0; }
   .toast-x:hover:not(:disabled) { color: var(--side-fg); background: var(--side-hover); }

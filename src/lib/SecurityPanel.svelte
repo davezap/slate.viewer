@@ -1,7 +1,7 @@
 <script lang="ts">
   // metatrash.com: Settings → Security (Metatrash 0.81.0), in place of /account/security: email
   // codes, the email address, passkeys, Microsoft accounts, the authenticator app, recovery codes
-  // and signed-in devices. Changing the email address or a sign-in method needs a sign-in within
+  // and signed-in devices, one page each (#settings/security/<page>, 0.84.0). Changing the email address or a sign-in method needs a sign-in within
   // the last 10 minutes: the change asks the person to confirm it's them, then runs again.
   import { onMount } from 'svelte';
   import {
@@ -10,6 +10,8 @@
   } from './siteAccount';
 
   interface Props {
+    /** The page: email, passkeys, totp, microsoft, recovery or devices. */
+    page: string;
     /** Asks the person to confirm it's them, then runs retry. */
     onConfirm: (reason: string, retry: () => void) => void;
     /** Shows a change's result at the top of the dialog; errors stay until closed. */
@@ -17,7 +19,14 @@
     /** The account's email address changed. */
     onChanged: () => void;
   }
-  let { onConfirm, onNotice, onChanged }: Props = $props();
+  let { page: asked, onConfirm, onNotice, onChanged }: Props = $props();
+
+  /** Security's pages (0.84.0), in the order the Settings sidebar lists them. */
+  const PAGES = {
+    email: 'Email', passkeys: 'Passkeys', totp: 'Authenticator app', microsoft: 'Microsoft accounts',
+    recovery: 'Recovery codes', devices: 'Signed-in devices',
+  } as const;
+  const page = $derived<keyof typeof PAGES>(asked in PAGES ? (asked as keyof typeof PAGES) : 'email');
 
   const STEP_UP = 'Changing your email address or how you sign in needs a sign-in within the last 10 minutes. Confirm it’s you first.';
 
@@ -120,8 +129,12 @@
   const appOn = $derived(!!sec?.totp?.enabled);
 </script>
 
-<h2>Security</h2>
-<p class="muted">A passkey lets you sign in with your fingerprint, face, device PIN or password manager instead of an emailed code. It is faster, and it only works on this site, so it can’t be phished.{sec?.totp ? ' An authenticator app on your phone is another option: it shows a new six-digit code every 30 seconds.' : ''}</p>
+<h2>{PAGES[page]}{#if sec}{#if page === 'passkeys'} <span class="muted">{sec.passkeys.length} of 20</span>{:else if page === 'microsoft' && sec.microsoft} <span class="muted">{sec.microsoft.accounts.length} of 10</span>{:else if page === 'recovery' && sec.recovery} <span class="muted">{sec.recovery} of 10 left</span>{:else if page === 'devices'} <span class="muted">{sec.sessions.length}</span>{/if}{/if}</h2>
+{#if page === 'passkeys'}
+  <p class="muted">A passkey lets you sign in with your fingerprint, face, device PIN or password manager instead of an emailed code. It is faster, and it only works on this site, so it can’t be phished.</p>
+{:else if page === 'totp'}
+  <p class="muted">An app on your phone that shows a new six-digit code every 30 seconds. You sign in with your email address and the code.</p>
+{/if}
 
 {#if loadError}
   <p class="error" role="alert">Sign-in methods can’t be loaded just now: {loadError}</p>
@@ -130,6 +143,7 @@
   <p class="muted">Loading…</p>
 {:else}
   {@const s = sec}
+  {#if page !== 'devices'}
   {#if s.fresh}
     <p class="status ok">You can change your email address and sign-in methods for the next {s.minutes} {s.minutes === 1 ? 'minute' : 'minutes'}.</p>
   {:else}
@@ -138,7 +152,9 @@
       <button onclick={confirmNow}>Confirm it’s you now</button>
     </div>
   {/if}
+  {/if}
 
+  {#if page === 'email'}
   <h3 id="email-address">Email address</h3>
   <p class="big mono">{s.email}</p>
   {#if s.emailChangeTo}
@@ -173,7 +189,7 @@
     <button disabled={busy} onclick={() => void run(secure('email-login', { email_login: 'on' }))}>Turn email sign-in back on</button>
   {/if}
 
-  <h3 id="passkeys">Passkeys <span class="muted">{s.passkeys.length} of 20</span></h3>
+  {:else if page === 'passkeys'}
   <ul class="rows">
     {#each s.passkeys as p (p.id)}
       <li>
@@ -212,9 +228,9 @@
     <p class="hint">The name helps you tell your passkeys apart. Your browser then asks where to save it: this device, your phone or a password manager.</p>
   {/if}
 
-  {#if s.microsoft}
+  {:else if page === 'microsoft'}
+    {#if s.microsoft}
     {@const m = s.microsoft}
-    <h3 id="microsoft">Microsoft accounts <span class="muted">{m.accounts.length} of 10</span></h3>
     {#if m.waiting}
       <div class="warning">
         <p><strong>Link {m.waiting}?</strong> This browser signed in with the Microsoft account <strong class="mono">{m.waiting}</strong>. Link it to this Metatrash account only if it is yours: whoever has it can then sign in as you.</p>
@@ -245,11 +261,12 @@
       <button disabled={busy} onclick={() => void run(secure('microsoft/link'))}>Link a Microsoft account</button>
       <p class="hint">Sign in with a work, school or personal Microsoft account to use it as another way to sign in here.</p>
     {/if}
-  {/if}
-
-  {#if s.totp}
+      {:else}
+      <p class="muted">Signing in with Microsoft isn’t available on this server.</p>
+    {/if}
+  {:else if page === 'totp'}
+    {#if s.totp}
     {@const t = s.totp}
-    <h3 id="totp">Authenticator app</h3>
     {#if t.enabled}
       <ul class="rows">
         <li>
@@ -282,12 +299,12 @@
         </div>
       </div>
     {:else}
-      <p class="muted">Use an app on your phone that shows a new code every 30 seconds. You sign in with your email address and the code.</p>
       <button disabled={busy} onclick={() => void run(secure('totp/start'))}>Set up an authenticator app</button>
     {/if}
-  {/if}
-
-  <h3 id="recovery">Recovery codes{#if s.recovery} <span class="muted">{s.recovery} of 10 left</span>{/if}</h3>
+      {:else}
+      <p class="muted">Authenticator apps aren’t available on this server.</p>
+    {/if}
+  {:else if page === 'recovery'}
   {#if codes.length}
     <div class="warning">
       <p><strong>Save these codes now. They are shown only this once.</strong> Each one signs you in once, with your email address, if you lose your passkeys and authenticator app.</p>
@@ -304,7 +321,7 @@
   <button disabled={busy} onclick={() => void run(secure('recovery/create'))}>{s.recovery || codes.length ? 'Create new codes' : 'Create recovery codes'}</button>
   {#if s.recovery}<p class="hint">Your current codes stop working when you create new ones.</p>{/if}
 
-  <h3 id="sessions">Signed-in devices <span class="muted">{s.sessions.length}</span></h3>
+  {:else}
   <ul class="rows">
     {#each s.sessions as d (d.id)}
       <li>
@@ -322,12 +339,14 @@
     <p class="muted">Only this device is signed in.</p>
   {/if}
   <p class="hint">Sessions last 24 hours. Removing a passkey or the authenticator app, turning off email sign-in, changing your email address or signing in with a recovery code also signs out every other device.</p>
+  {/if}
 {/if}
 
 <style>
   h2 { margin: 0 0 6px; font-size: 18px; }
+  h2 .muted { margin-left: 4px; font-size: 13px; font-weight: 400; }
+  h3 .pill { margin-left: 6px; font-weight: 400; }
   h3 { margin: 22px 0 8px; font-size: 13px; font-weight: 700; }
-  h3 .muted, h3 .pill { margin-left: 6px; font-weight: 400; }
   p { margin: 0 0 10px; }
   .muted, .hint { color: var(--side-muted); }
   .hint { font-size: 12px; }
@@ -335,7 +354,7 @@
   .big { font-size: 15px; }
   .error { color: #c0392b; }
   :global([data-theme="dark"]) .error { color: #ff8a7a; }
-  .status { margin: 10px 0 0; padding: 10px 12px; border: 1px solid var(--side-border); border-radius: 8px; }
+  .status { margin: 10px 0 14px; padding: 10px 12px; border: 1px solid var(--side-border); border-radius: 8px; }
   .status p { margin: 0 0 8px; }
   p.status.ok { border-color: #2e7d4f; }
   .warning { margin: 0 0 10px; padding: 10px 12px; border: 1px solid #d9a33b; border-radius: 8px; background: rgb(217 163 59 / .1); }

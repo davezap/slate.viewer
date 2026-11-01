@@ -1,9 +1,9 @@
 <script lang="ts">
-  // metatrash.com: Settings → Services (Metatrash 0.80.0), in place of /account/services: connected
-  // AI apps and the spaces each may use, the agents folder actions run on and the actions paid for
-  // in other people's spaces, and GitHub. Its addresses are #settings/services, …/apps/<id> (one
-  // connection's spaces) and …/actions/<job> (an action that skipped one of your files, from its
-  // email). Giving an app more and adding an agent ask the person to confirm it's them.
+  // metatrash.com: Settings → Services (Metatrash 0.80.0), in place of /account/services. One page
+  // each (0.84.0): #settings/services/apps (connected AI apps), …/agents (the agents folder actions
+  // run on), …/actions (actions paid for in other people's spaces) and …/github; …/apps/<id> is one
+  // connection's spaces and …/actions/<job> an action that skipped one of your files, from its
+  // email. Giving an app more and adding an agent ask the person to confirm it's them.
   import { untrack } from 'svelte';
   import {
     account, AccountError,
@@ -11,7 +11,7 @@
   } from './siteAccount';
 
   interface Props {
-    /** The address after settings/services: '', apps/<id> or actions/<job>. */
+    /** The address after settings/services: a page (apps, agents, actions, github), apps/<id> or actions/<job>. */
     sub: string;
     onNavigate: (address: string) => void;
     /** Asks the person to confirm it's them, then runs retry. */
@@ -24,6 +24,9 @@
   const parts = $derived(sub.split('/'));
   const appId = $derived(parts[0] === 'apps' && parts[1] ? parts[1] : '');
   const jobId = $derived(parts[0] === 'actions' && parts[1] ? parts[1] : '');
+  /** Services' pages, in the order the Settings sidebar lists them. */
+  const PAGES = { apps: 'Connected apps', agents: 'Agents', actions: 'Actions you pay for', github: 'GitHub' } as const;
+  const page = $derived<keyof typeof PAGES>(parts[0] in PAGES ? (parts[0] as keyof typeof PAGES) : 'apps');
 
   let services = $state<Services | null>(null);
   let app = $state<AppSpaces | null>(null);
@@ -100,9 +103,9 @@
     }
   }
 
-  /** After a change on a page of its own, goes back to Services; its notice floats over both. */
+  /** After a change on a page of its own, goes back to its list; its notice floats over both. */
   function back() {
-    onNavigate('settings/services');
+    onNavigate(appId ? 'settings/services/apps' : 'settings/services/actions');
   }
 
   async function copy(text: string) {
@@ -139,7 +142,7 @@
 
 {#if appId}
   <!-- One connection's spaces. -->
-  <button class="crumb" onclick={() => onNavigate('settings/services')}>‹ Services</button>
+  <button class="crumb" onclick={() => onNavigate('settings/services/apps')}>‹ Connected apps</button>
   {#if loadError}
     <p class="error" role="alert">{loadError}</p>
   {:else if !app}
@@ -168,14 +171,14 @@
       {#if a.kept}<p class="hint">{a.kept} other connected {a.kept === 1 ? 'space is' : 'spaces are'} suspended by {a.kept === 1 ? 'its owner' : 'their owners'} and will stay connected for when access is restored.</p>{/if}
       <div class="actions">
         <button type="submit" class="primary" disabled={busy || !a.spaces.length}>Save spaces</button>
-        <button type="button" disabled={busy} onclick={() => onNavigate('settings/services')}>Cancel</button>
+        <button type="button" disabled={busy} onclick={() => onNavigate('settings/services/apps')}>Cancel</button>
       </div>
     </form>
   {/if}
 
 {:else if jobId}
   <!-- An action that skipped one of the person's files. -->
-  <button class="crumb" onclick={() => onNavigate('settings/services')}>‹ Services</button>
+  <button class="crumb" onclick={() => onNavigate('settings/services/actions')}>‹ Actions you pay for</button>
   {#if loadError}
     <p class="error" role="alert">{loadError}</p>
   {:else if !offer}
@@ -200,7 +203,7 @@
           <button type="submit" class="primary" disabled={busy}>{o.current ? 'Change agent' : o.status === 'skipped' ? 'Opt in and run it' : 'Opt in'}</button>
         </form>
       {:else}
-        <p class="hint">You have no {o.modelName} agent yet. <button class="link" onclick={() => onNavigate('settings/services')}>Add one in Services</button>{o.keysURL ? ` with a key from ${o.keysURL}` : ''}, then come back to this page.</p>
+        <p class="hint">You have no {o.modelName} agent yet. <button class="link" onclick={() => onNavigate('settings/services/agents')}>Add one in Agents</button>{o.keysURL ? ` with a key from ${o.keysURL}` : ''}, then come back to this page.</p>
       {/if}
     {:else if o.pays === 'member'}
       <p>This is your own action: it runs only for your files, on your {o.model ? o.modelName : 'default'} agent.</p>
@@ -210,8 +213,7 @@
   {/if}
 
 {:else}
-  <h2>Services</h2>
-  <p class="muted">AI apps that use your spaces, the agents your folder actions run on, and outside services that folders in your spaces can connect to.</p>
+  <h2>{PAGES[page]}</h2>
   {#if loadError}
     <p class="error" role="alert">Services can’t be loaded just now: {loadError}</p>
     <button onclick={() => void load()}>Try again</button>
@@ -219,8 +221,8 @@
     <p class="muted">Loading…</p>
   {:else}
     {@const s = services}
-    {#if s.apps}
-      <h3>Connected apps</h3>
+    {#if page === 'apps'}
+      {#if s.apps}
       <p class="hint">To let Claude, ChatGPT or another MCP app use your spaces, add this address to it as a custom connector. The app sends you here to sign in and choose which spaces it may use; there are no keys to copy. The public space is always included.</p>
       <div class="row">
         <code class="endpoint">{s.apps.connectURL}</code>
@@ -251,15 +253,48 @@
         </ul>
         <p class="hint">Revoking signs the app out at once and forgets its choices; connecting again asks for spaces again. Unused connections expire after a while.</p>
       {/if}
-    {/if}
-
-    {#if s.agents}
-      {@const ag = s.agents}
-      <h3>Agents</h3>
-      <p class="hint">Folder actions in your spaces run on your own agent: a model provider and your API key, so you pay the provider directly. Actions use your default agent unless they name a model, such as <code>"model": "minimax/MiniMax-M3"</code>. Members’ files in your spaces run on your agent too, unless an action says <code>"pays": "contributor"</code>: then whoever brings a file pays, once they opt in.</p>
-      {#if s.unavailable?.includes('agents')}
-        <p class="error" role="alert">Agents can’t be listed just now. Reload shortly.</p>
       {:else}
+        <p class="muted">Connected apps aren’t available on this server.</p>
+      {/if}
+    {:else if page === 'github'}
+      {#if s.github}
+      <p class="hint">Mirror a folder in a space to a GitHub repository. You install the Metatrash app on GitHub and choose which repositories it may use.</p>
+      {#if s.unavailable?.includes('github')}
+        <p class="error" role="alert">GitHub connections can’t be listed just now. Reload shortly.</p>
+      {:else}
+        <ul class="rows">
+          {#each s.github.list as g (g.id)}
+            <li>
+              <span class="main"><strong>{g.accountLogin}</strong><span class="sub">{g.accountType}{g.status === 'suspended' ? ' · suspended on GitHub' : ''} · connected {when(g.connected)} by {g.githubLogin}</span></span>
+              {#if disconnecting === g.id}
+                <button class="danger" disabled={busy} onclick={() => void run(() => account.service(`github/${g.id}/disconnect`))}>Disconnect</button>
+                <button disabled={busy} onclick={() => (disconnecting = '')}>Keep</button>
+              {:else}
+                <a class="button" href={g.settingsURL} target="_blank" rel="noopener noreferrer" title="Choose repositories or uninstall on GitHub">On GitHub ↗</a>
+                <button title="Metatrash stops using this installation; it stays installed on GitHub" onclick={() => (disconnecting = g.id)}>Disconnect…</button>
+              {/if}
+            </li>
+          {:else}
+            <li class="empty">GitHub is not connected.</li>
+          {/each}
+        </ul>
+        <div class="actions">
+          <button class="primary" disabled={busy} onclick={() => void run(() => account.service('github/connect'))}>{s.github.list.length ? 'Connect another GitHub account' : 'Connect GitHub'} →</button>
+          <button disabled={busy} onclick={() => void run(() => account.service('github/link'))}>Link an existing installation</button>
+        </div>
+        <p class="hint">Already installed the app from its GitHub page? Use Link an existing installation: GitHub only asks you to sign in, and every installation your GitHub account can see is connected.</p>
+      {/if}
+      {:else}
+        <p class="muted">GitHub isn’t available on this server.</p>
+      {/if}
+    {:else if !s.agents}
+      <p class="muted">Folder actions aren’t available on this server.</p>
+    {:else if s.unavailable?.includes('agents')}
+      <p class="error" role="alert">Agents can’t be listed just now. Reload shortly.</p>
+    {:else}
+      {@const ag = s.agents}
+      {#if page === 'agents'}
+        <p class="hint">Folder actions in your spaces run on your own agent: a model provider and your API key, so you pay the provider directly. Actions use your default agent unless they name a model, such as <code>"model": "minimax/MiniMax-M3"</code>. Members’ files in your spaces run on your agent too, unless an action says <code>"pays": "contributor"</code>: then whoever brings a file pays, once they opt in.</p>
         <ul class="rows">
           {#each ag.list as a (a.id)}
             <li>
@@ -298,23 +333,6 @@
           {/each}
         </ul>
 
-        <h3>Actions you pay for</h3>
-        <ul class="rows">
-          {#each ag.optIns as o (o.id)}
-            <li>
-              <span class="main"><strong>{o.action}</strong><span class="sub">{o.spaceName} · <span class="mono">{o.space}</span> · {o.folder} · paid by {o.agentName} since {day(o.created)}</span></span>
-              {#if optingOut === o.id}
-                <button class="danger" disabled={busy} onclick={() => void run(() => account.service(`optins/${o.id}/optout`))}>Opt out</button>
-                <button disabled={busy} onclick={() => (optingOut = '')}>Keep</button>
-              {:else}
-                <button title="Your files in that folder no longer run this action" onclick={() => (optingOut = o.id)}>Opt out…</button>
-              {/if}
-            </li>
-          {:else}
-            <li class="empty">None. When a folder action in someone else’s space runs on the key of whoever brings the file, you are asked by email before your first file runs it.</li>
-          {/each}
-        </ul>
-
         {#if ag.list.length >= ag.max}
           <p class="hint">You have the most agents allowed. Remove one to add another.</p>
         {:else}
@@ -339,41 +357,25 @@
             <div class="actions span"><button type="submit" class="primary" disabled={busy}>Add agent</button></div>
           </form>
         {/if}
-      {/if}
-    {/if}
-
-    {#if s.github}
-      <h3>GitHub</h3>
-      <p class="hint">Mirror a folder in a space to a GitHub repository. You install the Metatrash app on GitHub and choose which repositories it may use.</p>
-      {#if s.unavailable?.includes('github')}
-        <p class="error" role="alert">GitHub connections can’t be listed just now. Reload shortly.</p>
       {:else}
+        <p class="hint">Folder actions in other people’s spaces that run on your agent when you bring a file, because the owner set <code>"pays": "contributor"</code>. You are asked by email before your first file runs one.</p>
         <ul class="rows">
-          {#each s.github.list as g (g.id)}
+          {#each ag.optIns as o (o.id)}
             <li>
-              <span class="main"><strong>{g.accountLogin}</strong><span class="sub">{g.accountType}{g.status === 'suspended' ? ' · suspended on GitHub' : ''} · connected {when(g.connected)} by {g.githubLogin}</span></span>
-              {#if disconnecting === g.id}
-                <button class="danger" disabled={busy} onclick={() => void run(() => account.service(`github/${g.id}/disconnect`))}>Disconnect</button>
-                <button disabled={busy} onclick={() => (disconnecting = '')}>Keep</button>
+              <span class="main"><strong>{o.action}</strong><span class="sub">{o.spaceName} · <span class="mono">{o.space}</span> · {o.folder} · paid by {o.agentName} since {day(o.created)}</span></span>
+              {#if optingOut === o.id}
+                <button class="danger" disabled={busy} onclick={() => void run(() => account.service(`optins/${o.id}/optout`))}>Opt out</button>
+                <button disabled={busy} onclick={() => (optingOut = '')}>Keep</button>
               {:else}
-                <a class="button" href={g.settingsURL} target="_blank" rel="noopener noreferrer" title="Choose repositories or uninstall on GitHub">On GitHub ↗</a>
-                <button title="Metatrash stops using this installation; it stays installed on GitHub" onclick={() => (disconnecting = g.id)}>Disconnect…</button>
+                <button title="Your files in that folder no longer run this action" onclick={() => (optingOut = o.id)}>Opt out…</button>
               {/if}
             </li>
           {:else}
-            <li class="empty">GitHub is not connected.</li>
+            <li class="empty">None. When a folder action in someone else’s space runs on the key of whoever brings the file, you are asked by email before your first file runs it.</li>
           {/each}
         </ul>
-        <div class="actions">
-          <button class="primary" disabled={busy} onclick={() => void run(() => account.service('github/connect'))}>{s.github.list.length ? 'Connect another GitHub account' : 'Connect GitHub'} →</button>
-          <button disabled={busy} onclick={() => void run(() => account.service('github/link'))}>Link an existing installation</button>
-        </div>
-        <p class="hint">Already installed the app from its GitHub page? Use Link an existing installation: GitHub only asks you to sign in, and every installation your GitHub account can see is connected.</p>
-      {/if}
-    {/if}
 
-    {#if !s.apps && !s.agents && !s.github}
-      <p class="muted">No services are available on this server yet.</p>
+      {/if}
     {/if}
   {/if}
 {/if}
