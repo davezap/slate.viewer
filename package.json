@@ -1,7 +1,7 @@
 {
   "name": "slate-viewer",
   "private": true,
-  "version": "0.23.0",
+  "version": "0.24.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,6 +12,7 @@
     "release": "tauri build"
   },
   "dependencies": {
+    "@paddle/paddle-js": "^1.6.5",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2",
     "@tauri-apps/plugin-opener": "^2"

@@ -59,7 +59,14 @@ npm run build:web          # dist-web\assets\ and dist-web\.vite\manifest.json
 ```
 
 Copy everything in `dist-web` into Metatrash's `internal/service/web/app/` (replacing the old `assets` and `.vite`,
-keeping its README), and Metatrash embeds it. The page uses the site's own Slate (`/assets/slate.js`), so keep
+keeping its README), and Metatrash embeds it.
+
+The website build has a second entry, `src/pricing.ts` (0.24.0, Metatrash 0.90.0): metatrash.com's `/pricing`,
+`/checkout` and `/welcome` pages, in `src/lib/pricing/`. They load Paddle.js with `@paddle/paddle-js`, show the
+plan and storage prices from `Paddle.PricePreview` exactly as Paddle formats them, and open Paddle's one-page
+checkout in an overlay. The words on the page (plan name, features, notes) are in `src/lib/pricing/plans.ts`;
+the environment, client-side token and price IDs come from Metatrash's `accounts.json` (`"paddle"`), never from
+this repository. The desktop app doesn't include these pages. The page uses the site's own Slate (`/assets/slate.js`), so keep
 Metatrash's `web/slate.*` on the same Slate version as `public/slate/`.
 
 ## Making a release
