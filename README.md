@@ -338,6 +338,11 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
   settings when a file opens (`pageFooter` in `src/lib/folderSettings.ts`), draws it with `src/lib/footer.ts` and keeps it
   last in Slate's Preview pane (a MutationObserver puts it back each time Slate draws); it is hidden while editing. The
   desktop app shows none.
+- **Storage in Settings** (Metatrash 0.89.0, Viewer 0.23.0). On metatrash.com, Settings > Spaces shows each owned
+  space's size next to it (Git with its history plus virtual files; the tooltip splits them) and a Storage section with
+  the account's total, deleted spaces still counted, when it was measured, and a note that history counts and deleting a
+  file may not free any space. It reads `storage` and each space's `usage` from the site API (`formatBytes` and
+  `measuredAgo` in `src/lib/siteAccount.ts`); 1 GB is 1024 MB. Nothing is limited yet.
 - **Forms** (Metatrash 0.49.0, mtsync 0.49.0, Slate 0.19.0). A Markdown file whose front matter has `form`, `title` and
   `submitTo` is a form template, with fields written as `{{text name=…}}`, `{{choice name=…}}` and so on (see `docs/forms.md`
   in Metatrash). In Preview the form is ready to fill in (Slate's `startFill({ inPreview: true })`); Edit and Source show

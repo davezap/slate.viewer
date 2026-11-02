@@ -15,7 +15,7 @@
   import SecurityPanel from './SecurityPanel.svelte';
   import ServicesPanel from './ServicesPanel.svelte';
   import {
-    account, AccountError, browserZone, downloadAddress, openAddress, timeZones,
+    account, AccountError, browserZone, downloadAddress, formatBytes, measuredAgo, openAddress, timeZones,
     type Account, type AccountSpace, type Notice, type Security, type Services, type Sharing,
   } from './siteAccount';
 
@@ -483,7 +483,7 @@
 
         {:else if (tab || 'profile') === 'spaces'}
           {#if unknown}<p class="error" role="alert">That space isn’t one of yours, or it was deleted.</p>{/if}
-          {#if acct.unavailable?.length}<p class="error" role="alert">Some of your spaces can’t be listed just now. Reload shortly.</p>{/if}
+          {#if acct.unavailable?.some(part => part !== 'storage')}<p class="error" role="alert">Some of your spaces can’t be listed just now. Reload shortly.</p>{/if}
 
           {#if spacesPage === 'invitations'}
           <h2>Invitations</h2>
@@ -549,6 +549,7 @@
                 {#if s.space}
                   <a class="main" href={openAddress(s.space)}><strong>{s.name}</strong><span class="sub mono">{s.space}</span></a>
                   {#if s.web}<span class="pill web" title="Anyone can read it on the website">public</span>{/if}
+                  {#if s.usage}<span class="size" title={`Text with its history ${formatBytes(s.usage.git)}, files ${formatBytes(s.usage.files)}`}>{formatBytes(s.usage.bytes)}</span>{/if}
                   <button onclick={() => go(`settings/spaces/${s.id}`)}>Sharing and settings</button>
                 {:else}
                   <span class="main"><strong>{s.name}</strong><span class="sub">Not finished being set up</span></span>
@@ -571,6 +572,18 @@
             <p class="hint">To make a space of your own, first <button class="link" onclick={() => go('settings/profile')}>choose a public username</button>.</p>
           {:else}
             <p class="hint">Your space allowance is used.</p>
+          {/if}
+
+          {#if acct.storage}
+            {@const st = acct.storage}
+            {@const ago = measuredAgo(st.measured)}
+            <h3>Storage</h3>
+            <p class="storage">Your spaces take up <strong>{formatBytes(st.bytes)}</strong>{#if st.allowance} of {formatBytes(st.allowance)}{/if}{#if st.bytes}: {formatBytes(st.git)} of text with its history and {formatBytes(st.files)} of files{/if}.</p>
+            {#if st.deleted}<p class="muted">Spaces you deleted take up another {formatBytes(st.deleted)} until they are removed for good, 30 days after you deleted them.</p>{/if}
+            <p class="hint">Every version of every file is kept, so a space’s history counts, and deleting a file may not free any space. Spaces shared with you count for their owners, not for you.{#if ago}{' '}Measured {ago}.{/if}</p>
+          {:else if acct.unavailable?.includes('storage')}
+            <h3>Storage</h3>
+            <p class="muted">How much your spaces take up can’t be read just now. Reload shortly.</p>
           {/if}
           {/if}
 
@@ -743,5 +756,6 @@
   .pill.ok { color: #2e7d4f; border-color: #2e7d4f; }
   .pill.web { color: var(--side-accent); border-color: var(--side-accent); }
   .pill.warn { color: #b06d00; border-color: #b06d00; }
+  .size { color: var(--side-muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 </style>

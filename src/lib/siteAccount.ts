@@ -7,7 +7,13 @@ import { pickerSession } from './siteSpaces';
 
 const API = '/api/v1/site/account';
 
-export interface AccountSpace { id: string; name: string; slug: string; space?: string; ready: boolean; web?: boolean; timezone?: string }
+export interface AccountSpace { id: string; name: string; slug: string; space?: string; ready: boolean; web?: boolean; timezone?: string; usage?: Usage }
+/** Storage in bytes (Metatrash 0.89.0): git is the space's text with every version, files its virtual files (every version
+ * kept), bytes both. measured is when the oldest number was measured. */
+export interface Usage { bytes: number; git: number; files: number; measured?: string }
+/** The account's storage: the sum over its spaces. deleted is what its deleted spaces take up until they are removed for
+ * good (not in bytes); allowance is 0 or absent while no limit applies. */
+export interface Storage extends Usage { deleted?: number; allowance?: number }
 export interface JoinedSpace { space: string; name: string; owner: string; status: string; open?: boolean }
 export interface Invitation { id: string; spaceId?: string; name?: string; owner?: string; email?: string; status?: string; expires: string }
 export interface Offer { spaceId: string; name: string; slug: string; from: string; expires: string }
@@ -25,6 +31,7 @@ export interface Account {
   joined: JoinedSpace[];
   invitations: Invitation[];
   offers: Offer[];
+  storage?: Storage;
   unavailable?: string[];
 }
 
@@ -234,4 +241,24 @@ export function timeZones(): string[] {
 
 export function browserZone(): string {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone ?? ''; } catch { return ''; }
+}
+
+/** A byte count for people, in binary units as the server counts them (1 GB = 1024 MB). */
+export function formatBytes(n: number): string {
+  if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(2)} GB`;
+  if (n >= 1024 ** 2) return `${(n / 1024 ** 2).toFixed(1)} MB`;
+  if (n >= 1024) return `${Math.round(n / 1024)} KB`;
+  return n === 1 ? '1 byte' : `${n} bytes`;
+}
+
+/** How long ago an RFC 3339 time was, roughly ("" for none). */
+export function measuredAgo(when: string | undefined, now = Date.now()): string {
+  const t = when ? Date.parse(when) : NaN;
+  if (Number.isNaN(t)) return '';
+  const minutes = Math.max(0, Math.round((now - t) / 60000));
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours} h ago`;
+  return `${Math.round(hours / 24)} days ago`;
 }
