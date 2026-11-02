@@ -3,13 +3,13 @@
 // locks.go, 0.46.0+), so a change Metatrash would refuse is caught here instead of failing quietly
 // in Metatrash Sync. Writes from Slate Viewer go through Sync, so Metatrash counts them as a person's.
 // Publishing (publishedVersion and the acknowledge service) follows Metatrash 0.48.0, and the
-// printout image (print.image) Metatrash 0.57.6.
+// printout image (print.image) Metatrash 0.57.6, and the page footer (footer) Metatrash 0.88.0.
 
 export const SETTINGS_FILE = '.metatrash.json';
 
 export type LockLevel = '' | 'agents' | 'everyone';
-export type LockKey = 'purpose' | 'children' | 'services' | 'inherit' | 'readOnly' | 'publishedVersion' | 'print' | 'locked';
-export const LOCK_KEYS: LockKey[] = ['purpose', 'children', 'readOnly', 'services', 'publishedVersion', 'print', 'inherit', 'locked'];
+export type LockKey = 'purpose' | 'children' | 'services' | 'inherit' | 'readOnly' | 'publishedVersion' | 'print' | 'footer' | 'locked';
+export const LOCK_KEYS: LockKey[] = ['purpose', 'children', 'readOnly', 'services', 'publishedVersion', 'print', 'footer', 'inherit', 'locked'];
 export type PushMode = 'agent' | 'auto' | 'review';
 
 /** What each lockable key is, in the dialog's words. */
@@ -20,6 +20,7 @@ export const LOCK_KEY_LABELS: Record<LockKey, { title: string; about: string }> 
   services: { title: 'Connections and read tracking', about: 'The GitHub repository, and asking people to confirm they read the published files.' },
   publishedVersion: { title: 'Published version', about: 'Who can publish a new version of this folder.' },
   print: { title: 'Printout image', about: 'The image at the top of printed documents.' },
+  footer: { title: 'Page footer', about: 'The line below every page on the website.' },
   inherit: { title: 'Use the parent folder\'s settings', about: 'Whether this folder takes its parent\'s settings.' },
   locked: { title: 'This list of locked settings', about: 'Agents can never change it; people always can, so every lock can be lifted.' },
 };
@@ -28,10 +29,11 @@ const MAX_PURPOSE = 2000;
 const MAX_CHILDREN = 200;
 const MAX_CHILD_TEXT = 1000;
 const MAX_LOCKS = 200;
-const KNOWN_KEYS = ['inherit', 'purpose', 'children', 'locked', 'readOnly', 'publishedVersion', 'print', 'services', 'actions'];
+const KNOWN_KEYS = ['inherit', 'purpose', 'children', 'locked', 'readOnly', 'publishedVersion', 'print', 'footer', 'services', 'actions'];
 export const MAX_PUBLISHED_VERSION = 1_000_000;
 const MAX_ACKNOWLEDGE_FILES = 50;
 const MAX_PRINT_IMAGE = 2000;
+export const MAX_FOOTER = 500;
 
 const CHILD_NAME = /^[A-Za-z0-9._][A-Za-z0-9._-]*\/?$/;
 const GITHUB_REPO = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
@@ -56,6 +58,10 @@ export interface FolderSettings {
   acknowledge: AcknowledgeService | null;
   /** An https address of an image printed centred above the first page's title, or "" for none. */
   printImage: string;
+  /** The page footer: one line of Markdown, or "" when this folder sets none (the one above applies). */
+  footer: string;
+  /** This folder turns the footer off (footer: ""), for itself and the folders under it. */
+  footerOff: boolean;
 }
 
 /** One folder's settings file: `folder` is "" for the root or "notes/" style. */
@@ -112,7 +118,7 @@ export function lockMap(value: unknown): Record<string, string> {
   return {};
 }
 
-const emptyLocks = (): Record<LockKey, LockLevel> => ({ purpose: '', children: '', services: '', inherit: '', readOnly: '', publishedVersion: '', print: '', locked: '' });
+const emptyLocks = (): Record<LockKey, LockLevel> => ({ purpose: '', children: '', services: '', inherit: '', readOnly: '', publishedVersion: '', print: '', footer: '', locked: '' });
 
 /** The form for a settings object. */
 export function toSettings(raw: Record<string, unknown>): FolderSettings {
@@ -141,6 +147,8 @@ export function toSettings(raw: Record<string, unknown>): FolderSettings {
     publishedVersion: typeof raw.publishedVersion === 'number' ? raw.publishedVersion : null,
     acknowledge: ack ? { files: Array.isArray(ack.files) ? (ack.files as unknown[]).map(String) : [] } : null,
     printImage: raw.print && typeof raw.print === 'object' && typeof (raw.print as Record<string, unknown>).image === 'string' ? (raw.print as Record<string, string>).image : '',
+    footer: typeof raw.footer === 'string' ? raw.footer : '',
+    footerOff: raw.footer === '',
   };
 }
 
@@ -172,6 +180,8 @@ function keyValues(s: FolderSettings, isRoot: boolean): Record<string, unknown> 
   if (services.length) out.services = services;
   if (s.publishedVersion !== null) out.publishedVersion = s.publishedVersion;
   if (s.printImage.trim()) out.print = { image: s.printImage.trim() };
+  if (s.footerOff) out.footer = '';
+  else if (s.footer.trim()) out.footer = s.footer.trim();
   return out;
 }
 
@@ -193,7 +203,7 @@ export function toObject(s: FolderSettings, original: Record<string, unknown>, i
     if (!(key in values)) continue;
     out[key] = comparable(key, values[key]) === comparable(key, original[key]) ? original[key] : values[key];
   }
-  for (const key of ['inherit', 'purpose', 'children', 'locked', 'readOnly', 'publishedVersion', 'print', 'services']) {
+  for (const key of ['inherit', 'purpose', 'children', 'locked', 'readOnly', 'publishedVersion', 'print', 'footer', 'services']) {
     if (key in values && !(key in out)) out[key] = values[key];
   }
   return out;
@@ -393,6 +403,8 @@ export function check(s: FolderSettings, text: string, folder: string, ctx: Spac
   if (image && !isPrintImageAddress(image)) problems.push({ page: 'publishing', text: 'The printout image should be a web address starting with https://, such as https://example.com/logo.png.' });
   else if (image.length > MAX_PRINT_IMAGE) problems.push({ page: 'publishing', text: `The printout image's address is ${image.length} characters; ${MAX_PRINT_IMAGE} is the most.` });
 
+  if (!s.footerOff) problems.push(...footerProblems(s.footer.trim()).map(text => ({ page: 'publishing' as const, text })));
+
   // Locks for everyone guard the values the folder sees, inherited ones included.
   const after = new Map(ctx.texts);
   after.set(folder, text);
@@ -402,7 +414,7 @@ export function check(s: FolderSettings, text: string, folder: string, ctx: Spac
     if (before.keys[key] === now.keys[key]) continue;
     const label = key in LOCK_KEY_LABELS ? LOCK_KEY_LABELS[key as LockKey].title : key;
     problems.push({
-      page: key === 'services' ? 'connections' : key === 'publishedVersion' || key === 'print' ? 'publishing' : key === 'readOnly' || key === 'inherit' ? 'security' : 'general',
+      page: key === 'services' ? 'connections' : key === 'publishedVersion' || key === 'print' || key === 'footer' ? 'publishing' : key === 'readOnly' || key === 'inherit' ? 'security' : 'general',
       text: where === folder
         ? `"${label}" is locked for everyone, so it can't change. Set its lock to Unlocked or Agents on the Security page, save, and change it once that has synced.`
         : `"${label}" is locked for everyone by ${where || 'the top of the space'}, so this folder can't change it. Lift the lock in that folder's properties first.`,
@@ -454,4 +466,54 @@ export function printImage(eff: Effective): string | null {
   } catch {
     return null;
   }
+}
+
+// ---- Page footer (Metatrash 0.88.0) ---------------------------------------------------------
+
+/** A footer link's target as Metatrash takes it: https, mailto:, or a path on the site (/docs/about.md). */
+export function footerLinkTarget(target: string): boolean {
+  if (target.startsWith('/')) return !target.startsWith('//') && !target.includes('\\');
+  if (/^mailto:/i.test(target)) return target.length > 'mailto:'.length;
+  try {
+    const url = new URL(target);
+    return url.protocol === 'https:' && url.hostname !== '' && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
+/** Why Metatrash would refuse `footer` (folder_config.go checkFooter), in the dialog's words. */
+export function footerProblems(footer: string): string[] {
+  const problems: string[] = [];
+  if ([...footer].length > MAX_FOOTER) problems.push(`The page footer is ${[...footer].length} characters; ${MAX_FOOTER} is the most.`);
+  if (/[\u0000-\u001f\u007f\u2028\u2029]/.test(footer)) problems.push('The page footer is one line: no line breaks or tabs.');
+  if (/[<>]/.test(footer)) problems.push('The page footer is Markdown without HTML, so it can\'t contain < or >. Use [text](https://…) for a link and :metatrash: for the Metatrash wordmark.');
+  for (const match of footer.matchAll(/\]\(([^)\s]*)\)/g)) {
+    if (!footerLinkTarget(match[1])) problems.push(`The footer's link to "${match[1]}" should start with https:// or mailto:, or be a page of the site starting with /, such as /docs/about.md.`);
+  }
+  return problems;
+}
+
+/**
+ * The footer a page in `folder` shows on the website: the footer of the nearest folder at or above
+ * it that sets one, whether or not the folders inherit; null when there is none or it is turned
+ * off (""). `texts` maps each folder of folderChain(folder) to its settings text.
+ */
+export function pageFooter(texts: Map<string, string | null>, folder: string): string | null {
+  for (const f of folderChain(folder)) {
+    const raw = parseObject(texts.get(f) ?? defaultSettingsText(f));
+    if (typeof raw === 'string' || typeof raw.footer !== 'string') continue;
+    const footer = raw.footer.trim();
+    return footer && footerProblems(footer).length === 0 ? footer : null;
+  }
+  return null;
+}
+
+/** Where a folder's footer comes from for the dialog: the folder above that sets one, or null. */
+export function footerFrom(texts: Map<string, string | null>, folder: string): { footer: string; from: string } | null {
+  for (const f of folderChain(folder).slice(1)) {
+    const raw = parseObject(texts.get(f) ?? defaultSettingsText(f));
+    if (typeof raw !== 'string' && typeof raw.footer === 'string') return { footer: raw.footer, from: f };
+  }
+  return null;
 }

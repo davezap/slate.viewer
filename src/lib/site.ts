@@ -32,13 +32,14 @@ export function applySiteConfig() {
 /**
  * Keeps the address bar on the open file (/spaces/owner/slug/file, or /docs/file in the docs
  * space), so a reload or a copied address opens it again. The page's own file keeps the address
- * the page was opened at (metatrash.com/ for the home page).
+ * the page was opened at when that isn't the file's own (metatrash.com/ for the home page).
  */
 export function showAddress(path: string | null) {
   const config = readSiteConfig();
   if (!config || !path || !path.startsWith(config.root + '/')) return;
   const base = config.addressRoot ?? config.root;
-  const address = path === config.file ? config.address ?? location.pathname : base + encodePath(path.slice(config.root.length));
+  // Not location.pathname for the page's own file: after moving to other files it is theirs.
+  const address = path === config.file && config.address ? config.address : base + encodePath(path.slice(config.root.length));
   if (address !== location.pathname) history.replaceState(history.state, '', address);
 }
 

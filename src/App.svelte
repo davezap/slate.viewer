@@ -44,7 +44,8 @@
     answerKeyName, answerKeyText, clearDraft, fetchReceipt, fetchReceipts, loadDraft, parseFiledCopy, reviewCopy, saveDraft, submitForm,
     type FiledCopy, type FormDraft, type Receipt, type Review } from './lib/forms';
   import ReviewBanner from './lib/ReviewBanner.svelte';
-  import { SETTINGS_FILE, effectiveSettings, folderChain, frozenKeys, printImage, publishText, toSavedVersion } from './lib/folderSettings';
+  import { SETTINGS_FILE, effectiveSettings, folderChain, frozenKeys, pageFooter, printImage, publishText, toSavedVersion } from './lib/folderSettings';
+  import { renderFooter } from './lib/footer';
 
   /** The open folder is a Metatrash space that mtsync keeps in sync. */
   interface OpenedSpace { space: string; server: string; access: string; folder: string; state: string }
@@ -2370,6 +2371,64 @@
       box.remove();
       printImageBox = null;
     }
+  }
+
+  // ---- Page footer on the website (Metatrash 0.88.0) ---------------------------------------
+
+  /**
+   * On the site, the footer line (footer in .metatrash.json) of the nearest folder at or above the
+   * open document that sets one, or null. The desktop app shows none: it is the website's.
+   */
+  let pageFooterText = $state<string | null>(null);
+  let footerRequest = 0;
+  const footerSpaceFolder = $derived(web ? openedSpace?.folder ?? null : null);
+
+  $effect(() => {
+    const dir = footerSpaceFolder;
+    const file = path;
+    untrack(() => void loadPageFooter(dir, file));
+  });
+
+  async function loadPageFooter(dir: string | null, file: string | null) {
+    const request = ++footerRequest;
+    const relative = dir !== null && file ? spaceRelative(file) : null;
+    if (dir === null || relative === null) {
+      pageFooterText = null;
+      return;
+    }
+    const folder = relative.includes('/') ? relative.slice(0, relative.lastIndexOf('/') + 1) : '';
+    const chain = folderChain(folder);
+    const texts = new Map(await Promise.all(chain.map(async f =>
+      [f, await backend.files.read(joinPath(dir, f + SETTINGS_FILE)).then(d => d.text, () => null)] as const)));
+    if (request === footerRequest) pageFooterText = pageFooter(texts, folder);
+  }
+
+  let footerBox: HTMLElement | null = null;
+  let footerWatch: MutationObserver | null = null;
+
+  // Shown below the document in Preview while reading; not while editing on the site.
+  $effect(() => {
+    const text = pageFooterText !== null && workspaceMode === 'preview' && !editing ? pageFooterText : null;
+    untrack(() => placePageFooter(text));
+  });
+
+  /**
+   * Puts the footer last in Slate's Preview pane, so it scrolls with the document and prints with
+   * it. Slate replaces the pane's children each time it draws, so the footer goes back in after.
+   */
+  function placePageFooter(text: string | null) {
+    footerWatch?.disconnect();
+    footerWatch = null;
+    footerBox?.remove();
+    footerBox = null;
+    const pane = text === null ? null : host?.querySelector<HTMLElement>('#previewPane');
+    if (!pane || text === null) return;
+    const box = renderFooter(text);
+    const keep = () => { if (!box.isConnected) pane.append(box); };
+    keep();
+    footerWatch = new MutationObserver(keep);
+    footerWatch.observe(pane, { childList: true });
+    footerBox = box;
   }
 
   /** Puts the document's name in the print footer (app.css): its first # heading, or its file name. */

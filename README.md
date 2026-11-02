@@ -330,6 +330,14 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
   copies; inherited like the summary) puts that image centred above the title on the first page of every document printed
   from the folder. Print loads it (up to 5 s, otherwise it prints without it) and takes it away afterwards, so the file never
   changes (`addPrintImage` in `src/App.svelte`, `.print-image` in `src/app.css`).
+- **Page footer** (Metatrash 0.88.0, Viewer 0.22.0). A folder's `"footer"` (Properties > Publishing, Page footer) is one line of
+  Markdown that the website shows centred below a rule at the bottom of every page of the folder and its subfolders. The
+  nearest folder that sets one wins, whether or not folders use their parent's settings; `""` (No footer here) turns it off.
+  Only links (`https`, `mailto:` or a site path such as `/docs/about.md`), `**bold**`, `*italic*` and `` `code` `` are read,
+  into DOM nodes, never HTML; `:metatrash:` is the Metatrash wordmark. On the site, `App.svelte` reads the folders'
+  settings when a file opens (`pageFooter` in `src/lib/folderSettings.ts`), draws it with `src/lib/footer.ts` and keeps it
+  last in Slate's Preview pane (a MutationObserver puts it back each time Slate draws); it is hidden while editing. The
+  desktop app shows none.
 - **Forms** (Metatrash 0.49.0, mtsync 0.49.0, Slate 0.19.0). A Markdown file whose front matter has `form`, `title` and
   `submitTo` is a form template, with fields written as `{{text name=…}}`, `{{choice name=…}}` and so on (see `docs/forms.md`
   in Metatrash). In Preview the form is ready to fill in (Slate's `startFill({ inPreview: true })`); Edit and Source show

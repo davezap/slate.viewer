@@ -4,8 +4,8 @@
   import { joinPath } from './paths';
   import type { FolderDescription } from './space';
   import {
-    SETTINGS_FILE, LOCK_KEYS, LOCK_KEY_LABELS, check, defaultSettingsText, effectiveLocks, effectiveSettings, folderChain,
-    frozenKeys, lockedBy, parentFolder, parseObject, stableJson, toObject, toSavedVersion, toSettings, toText,
+    SETTINGS_FILE, LOCK_KEYS, LOCK_KEY_LABELS, MAX_FOOTER, check, defaultSettingsText, effectiveLocks, effectiveSettings, folderChain,
+    footerFrom, frozenKeys, lockedBy, parentFolder, parseObject, stableJson, toObject, toSavedVersion, toSettings, toText,
     type FolderSettings, type LockKey, type LockLevel, type Problem, type PushMode, type SpaceContext,
   } from './folderSettings';
   import { fetchReaders, type ReaderReport } from './policies';
@@ -33,7 +33,7 @@
     { id: 'general', title: 'General', about: 'What the folder is for' },
     { id: 'security', title: 'Security', about: 'Read-only files and locks' },
     { id: 'connections', title: 'Connections', about: 'GitHub repository' },
-    { id: 'publishing', title: 'Publishing', about: 'Versions and who has read them' },
+    { id: 'publishing', title: 'Publishing', about: 'Versions, readers, printouts and the page footer' },
     { id: 'automation', title: 'Automation', about: 'Triggers and actions' },
     { id: 'file', title: 'Settings File', about: SETTINGS_FILE },
   ];
@@ -136,6 +136,8 @@
     const value = form?.inherit && !form.printImage.trim() ? inherited('print')?.value : null;
     return value && typeof value === 'object' && typeof (value as { image?: unknown }).image === 'string' ? (value as { image: string }).image : null;
   });
+  /** The footer this folder's pages get from a folder above when it sets none itself. */
+  const footerAbove = $derived(form ? footerFrom(texts, folder) : null);
   const usesParentLocks = $derived(!!form && !isRoot && form.inherit && !form.ownLocks);
 
   /** What the folder will see once saved, with inherited settings filled in. */
@@ -565,6 +567,19 @@
               <input class="address" bind:value={form.printImage} placeholder={inheritedPrintImage ?? 'https://example.com/logo.png'} spellcheck="false" disabled={disabled('print')} />
               {#if inheritedPrintImage}<p class="hint small-print">Empty uses the image from {folderLabel(inherited('print')!.from)}.</p>{/if}
               {#if lockNote('print')}<p class="lock-note">{lockNote('print')}</p>{/if}
+            </section>
+
+            <section>
+              <h3>Page footer</h3>
+              <p class="hint">One line shown centred below a rule at the bottom of every page of this folder{isRoot ? '' : ' and its subfolders'} on the website, such as a notice or a link. Subfolders get it whether or not they use this folder's settings, unless they set their own. It is never added to the files.</p>
+              <input class="address" bind:value={form.footer} placeholder={footerAbove?.footer || ':metatrash: is a [Zaptronics](https://zaptronics.co.nz/) product'} spellcheck="false" maxlength={MAX_FOOTER} disabled={disabled('footer') || form.footerOff} />
+              <p class="hint small-print">Markdown on one line: <code>[text](https://…)</code> for a link (or a page of the site, such as <code>/docs/about.md</code>), <code>**bold**</code>, <code>*italic*</code> and <code>`code`</code>; no HTML. <code>:metatrash:</code> shows the Metatrash wordmark.</p>
+              {#if !form.footerOff && !form.footer.trim() && footerAbove}<p class="hint small-print">{footerAbove.footer ? `Empty uses the footer from ${folderLabel(footerAbove.from)}.` : `${folderLabel(footerAbove.from)} turns the footer off, so these pages have none.`}</p>{/if}
+              <label class="check">
+                <input type="checkbox" bind:checked={form.footerOff} disabled={disabled('footer')} />
+                <span>No footer here{isRoot ? '' : ', even if a folder above sets one'}, nor in subfolders that set none</span>
+              </label>
+              {#if lockNote('footer')}<p class="lock-note">{lockNote('footer')}</p>{/if}
             </section>
 
             {#if toSettings(original).acknowledge && savedVersion !== null}

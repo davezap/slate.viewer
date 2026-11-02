@@ -62,6 +62,22 @@ body {
 /* Only ever on paper, but hidden on screen in case printing ends without afterprint. */
 @media screen { .print-image { display: none; } }
 
+/* A folder's page footer on metatrash.com (footer in .metatrash.json; App.svelte, src/lib/footer.ts):
+   one centred line below a rule, after the document in Preview. */
+.slate-editor-host .preview-pane > .page-footer,
+.slate-editor-host .slate-print-section > .page-footer {
+  margin: 48px 0 0; padding: 14px 0 0; border-top: 1px solid var(--border);
+  text-align: center; color: var(--text-muted); font: 14px/1.5 var(--font-ui); user-select: text; cursor: auto;
+}
+.slate-editor-host .page-footer p { margin: 0; }
+.slate-editor-host .page-footer a { color: var(--accent); text-decoration: none; }
+.slate-editor-host .page-footer a:hover { text-decoration: underline; }
+.slate-editor-host .page-footer code { font: 0.92em var(--font-editor); }
+/* The wordmark as on the sign-in page (Metatrash web/signin.css .auth-brand). */
+.slate-editor-host .page-footer .metatrash-wordmark { color: var(--text); font-weight: 750; letter-spacing: -0.5px; }
+.slate-editor-host .page-footer .metatrash-wordmark span { color: var(--accent-strong); }
+@media print { .slate-editor-host .page-footer { break-inside: avoid; margin-top: 10mm; } }
+
 /* In-page dialogs on metatrash.com (src/lib/backend/web.ts), where there are no native ones. */
 .web-dialog-backdrop { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; background: rgb(0 0 0 / .35); }
 .web-dialog {
