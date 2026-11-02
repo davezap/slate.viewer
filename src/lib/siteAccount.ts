@@ -35,7 +35,18 @@ export interface Billing {
   portal?: boolean;
   pricing?: string;
   test?: boolean;
+  /** Settings can change the extra storage (Metatrash 0.92.0), from storageMinGb (what the spaces use) to storageMaxGb. */
+  storageChange?: boolean;
+  storageMinGb?: number;
+  storageMaxGb?: number;
 }
+/** An amount in the currency's smallest unit (cents), as Paddle gives it. */
+export interface Money { amount: string; currency: string }
+/**
+ * What changing the extra storage to storageGb would cost (Metatrash 0.92.0): now is charged at once (prorated), next is
+ * the next bill on nextAt, monthly the bill from then on. trial: nothing is charged before the trial ends.
+ */
+export interface StoragePreview { storageGb: number; now?: Money; next?: Money; nextAt?: string; monthly?: Money; trial?: boolean }
 export interface Offer { spaceId: string; name: string; slug: string; from: string; expires: string }
 
 export interface Account {
@@ -87,6 +98,8 @@ export interface Notice {
   failed?: boolean;
   /** Where to go next (GitHub, to connect it). */
   redirect?: string;
+  /** What a storage change would cost (Metatrash 0.92.0). */
+  preview?: StoragePreview;
 }
 
 // Services (Metatrash 0.80.0).
@@ -270,6 +283,18 @@ export function formatBytes(n: number): string {
   if (n >= 1024 ** 2) return `${(n / 1024 ** 2).toFixed(1)} MB`;
   if (n >= 1024) return `${Math.round(n / 1024)} KB`;
   return n === 1 ? '1 byte' : `${n} bytes`;
+}
+
+/** An amount for people in its own currency ("NZ$12.00"); Paddle's smallest unit has as many decimals as the currency. */
+export function formatMoney(m: Money | undefined): string {
+  if (!m) return '';
+  try {
+    const format = new Intl.NumberFormat(undefined, { style: 'currency', currency: m.currency });
+    const digits = format.resolvedOptions().maximumFractionDigits ?? 2;
+    return format.format(Number(m.amount) / 10 ** digits);
+  } catch {
+    return `${m.amount} ${m.currency}`;
+  }
 }
 
 /** An RFC 3339 time as a date for people ("2 Dec 2026"), in UTC so it matches Paddle's emails. */

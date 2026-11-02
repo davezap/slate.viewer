@@ -10,11 +10,13 @@
   // 0.84.0: each tab is split into pages, listed under it in the side: #settings/<tab>/<page>.
   // Spaces: Your spaces, shared, invitations, and each owned space's …/<space>/general|members|ownership.
   // Profile: Username and email, delete. An address without a page (as in emails) opens the first.
+  // 0.26.0: Billing → Storage changes the extra storage (BillingStorage.svelte).
   // 0.25.0: Billing (#settings/billing), on a server that sells plans: the plan, trial end, storage
   // allowance, and Manage subscription, which opens Paddle's customer portal.
   import { onMount, tick, untrack } from 'svelte';
   import ConfirmSheet from './ConfirmSheet.svelte';
   import SecurityPanel from './SecurityPanel.svelte';
+  import BillingStorage from './BillingStorage.svelte';
   import ServicesPanel from './ServicesPanel.svelte';
   import {
     account, AccountError, browserZone, downloadAddress, formatBytes, formatDay, measuredAgo, openAddress, timeZones,
@@ -667,8 +669,7 @@
 
             {#if b.storage}
               <h3>Storage</h3>
-              <p class="storage">Your plan includes <strong>{formatBytes(b.storage)}</strong>{#if b.storageGb}: 1 GB with the plan and {b.storageGb} GB extra{/if}.{#if acct.storage}{' '}Your spaces use {formatBytes(acct.storage.bytes)}.{/if}</p>
-              <p class="hint">Extra storage, in 1 GB steps at US$1 a month each, can be added here soon.</p>
+              <BillingStorage billing={b} used={acct.storage?.bytes} {busy} {run} />
             {/if}
 
             {#if b.portal}
