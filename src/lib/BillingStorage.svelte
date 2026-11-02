@@ -113,6 +113,14 @@
       </div>
     </div>
   {/if}
+{:else if billing.plan === 'comped'}
+  <p class="hint">Your plan is free of charge, so its storage is set for you. Ask us if you need more.</p>
+{:else if billing.status === 'past_due'}
+  <p class="hint">Extra storage can be changed once your card is updated in Manage subscription.</p>
+{:else if billing.status === 'read_only'}
+  <p class="hint">Extra storage can be changed once your subscription is resumed in Manage subscription.</p>
+{:else if billing.plan === 'trial' || billing.plan === 'individual'}
+  <p class="hint">Extra storage can’t be changed from here on this server yet.</p>
 {/if}
 
 <style>

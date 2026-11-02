@@ -470,12 +470,13 @@ fn note_version_ok(v: &str) -> bool {
     !v.is_empty() && v.len() <= 40 && v.starts_with(|c: char| c.is_ascii_alphanumeric()) && v.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-'))
 }
 
-/// The versions with change notes linked from a docs page's file tree, newest first.
-fn notes_in_page(html: &str) -> Vec<String> {
-    let link = format!("href=\"{CHANGE_NOTES_PATH}{NOTES_PREFIX}");
+/// The versions with change notes linked from a list of the change-logs folder's pages (its `llms.txt`, Metatrash
+/// 0.59.1+: one Markdown link per page), newest first. Since Metatrash 0.87.0 the docs pages are the site app, so the
+/// old server-rendered file tree is gone; the folder's `llms.txt` and each page's `?format=md` stay for programs.
+fn notes_in_list(text: &str) -> Vec<String> {
     let mut found: Vec<String> = Vec::new();
-    for part in html.split(&link).skip(1) {
-        let name = part.split('"').next().unwrap_or_default();
+    for part in text.split(NOTES_PREFIX).skip(1) {
+        let name: String = part.chars().take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-')).collect();
         if let Some(v) = name.strip_suffix(".md").filter(|v| note_version_ok(v) && version(v).is_some()) {
             if !found.iter().any(|f| f == v) {
                 found.push(v.to_string());
@@ -486,38 +487,33 @@ fn notes_in_page(html: &str) -> Vec<String> {
     found
 }
 
-/// A docs page's file text: the contents of `<pre id="document-source"><code>`, unescaped.
-fn source_in_page(html: &str) -> Option<String> {
-    let start = html.find("id=\"document-source\"")?;
-    let rest = &html[start..];
-    let rest = &rest[rest.find("<code>")? + "<code>".len()..];
-    let text = &rest[..rest.find("</code>")?];
-    Some(
-        text.replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&#34;", "\"")
-            .replace("&#39;", "'")
-            .replace("&quot;", "\"")
-            .replace("&amp;", "&"),
-    )
-}
-
 /// The versions that have change notes in the docs, newest first (for reading older notes).
 #[tauri::command]
 pub async fn change_notes() -> Result<Vec<String>, String> {
-    // Any docs page carries the whole file tree.
-    let html = get_text(&format!("{DEFAULT_SERVER}/docs/")).await?;
-    Ok(notes_in_page(&html))
+    let list = get_text(&format!("{DEFAULT_SERVER}{CHANGE_NOTES_PATH}llms.txt")).await?;
+    Ok(notes_in_list(&list))
 }
 
-/// The change notes of one version (the latest release's version comes from GitHub), as Markdown.
+/// The change notes of one version (the latest release's version comes from GitHub), as Markdown: the page's
+/// `?format=md`, which is the file as it is.
 #[tauri::command]
 pub async fn change_note(version: String) -> Result<String, String> {
     if !note_version_ok(&version) {
         return Err(format!("{version} isn't a version."));
     }
-    let html = get_text(&format!("{DEFAULT_SERVER}{CHANGE_NOTES_PATH}{NOTES_PREFIX}{version}.md")).await?;
-    source_in_page(&html).ok_or_else(|| format!("The notes for {version} came back in a form Slate Viewer doesn't recognise."))
+    let url = format!("{DEFAULT_SERVER}{CHANGE_NOTES_PATH}{NOTES_PREFIX}{version}.md?format=md");
+    let text = get_text(&url).await.map_err(|e| {
+        if e.ends_with("404 Not Found") {
+            format!("There are no notes for {version} in the docs yet.")
+        } else {
+            e
+        }
+    })?;
+    // A page instead of the file means an older server or something in the way.
+    if text.trim_start().starts_with("<!") || text.trim_start().starts_with("<html") {
+        return Err(format!("The notes for {version} came back in a form Slate Viewer doesn't recognise."));
+    }
+    Ok(text)
 }
 
 /// Checks shortly after launch, then twice a day while the app runs.
@@ -573,17 +569,15 @@ mod tests {
     }
 
     #[test]
-    fn docs_pages() {
-        let tree = r#"<ul class="tree"><li><a href="/docs/README.md">README.md</a></li><li><details><summary>change-logs</summary><ul>
-            <li><a href="/docs/tools/slate-viewer/change-logs/changenotes_0.5.0.md"><span>≡</span>changenotes_0.5.0.md</a></li>
-            <li><a href="/docs/tools/slate-viewer/change-logs/README.md">README.md</a></li>
-            <li><a href="/docs/tools/slate-viewer/change-logs/changenotes_0.10.0.md">x</a></li>
-            <li><a href="/docs/tools/slate-viewer/change-logs/changenotes_0.6.0.md" aria-current="page">changenotes_0.6.0.md</a></li></ul></details></li></ul>"#;
-        assert_eq!(notes_in_page(tree), ["0.10.0", "0.6.0", "0.5.0"]);
-        let page = r#"<pre id="document-source" tabindex="0" aria-label="File contents"><code># 0.6.0 &amp; more
-- &lt;b&gt; &#34;quoted&#34; it&#39;s</code></pre>"#;
-        assert_eq!(source_in_page(page).as_deref(), Some("# 0.6.0 & more\n- <b> \"quoted\" it's"));
-        assert_eq!(source_in_page("<html>not found</html>"), None);
+    fn docs_list() {
+        let list = "# Metatrash docs: tools/slate-viewer/change-logs/\n\n## Pages\n\n\
+            - [changenotes_0.5.0.md](https://metatrash.com/docs/tools/slate-viewer/change-logs/changenotes_0.5.0.md?format=md)\n\
+            - [README.md](https://metatrash.com/docs/tools/slate-viewer/change-logs/README.md?format=md)\n\
+            - [changenotes_0.10.0.md](https://metatrash.com/docs/tools/slate-viewer/change-logs/changenotes_0.10.0.md?format=md)\n\
+            - [changenotes_0.6.0.md](https://metatrash.com/docs/tools/slate-viewer/change-logs/changenotes_0.6.0.md?format=md)\n\
+            - [changenotes_..%2Fx.md](https://metatrash.com/docs/x)\n";
+        assert_eq!(notes_in_list(list), ["0.10.0", "0.6.0", "0.5.0"]);
+        assert!(notes_in_list("nothing here").is_empty());
     }
 
     #[test]

@@ -70,19 +70,34 @@
   });
 
   onMount(() => {
-    const listing = backend.app.changeNotes();
+    // The update check (GitHub) and the list of notes (the docs) run side by side, and the newest listed note
+    // shows as soon as the list arrives rather than after the check.
+    let found: string[] = [];
+    let picked = false;
+    const merge = () => {
+      // The latest release (GitHub's version) first, listed or not; then the older ones.
+      const latest = result?.latest;
+      const merged = latest && !found.some(v => compare(v, latest) === 0) ? [latest, ...found] : found;
+      notes = merged;
+      return merged;
+    };
+    void backend.app.changeNotes().then(
+      list => {
+        found = list;
+        const merged = merge();
+        if (!picked && merged.length) { picked = true; void show(result?.latest ?? merged[0]); }
+      },
+      e => { notesError = String(e); },
+    );
     void (async () => {
       if (!result) result = await backend.app.checkForUpdates();
-      let found: string[] = [];
-      try {
-        found = await listing;
-      } catch (e) {
-        notesError = String(e);
-      }
-      // The latest release (GitHub's version) first, listed or not; then the older ones.
+      merge();
       const latest = result.latest;
-      notes = latest && !found.some(v => compare(v, latest) === 0) ? [latest, ...found] : found;
-      if (notes.length) await show(latest ?? notes[0]);
+      // A newer release than any listed note takes over the view, unless someone already picked a note.
+      if (latest && (!picked || (selected && compare(latest, selected) > 0 && selected === found[0]))) {
+        picked = true;
+        await show(latest);
+      }
     })();
     const onMessage = (event: MessageEvent) => {
       if (event.source !== frame?.contentWindow) return;
