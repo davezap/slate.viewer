@@ -16,6 +16,26 @@ export interface Usage { bytes: number; git: number; files: number; measured?: s
 export interface Storage extends Usage { deleted?: number; allowance?: number }
 export interface JoinedSpace { space: string; name: string; owner: string; status: string; open?: boolean }
 export interface Invitation { id: string; spaceId?: string; name?: string; owner?: string; email?: string; status?: string; expires: string }
+/**
+ * The account's plan (Metatrash 0.91.0), absent when the server sells none. plan: free, trial, individual or comped;
+ * status: active, past_due, read_only or cancelled. storage is the allowance in bytes; storageGb the extra storage
+ * bought. Times are RFC 3339: renews is Paddle's next bill, ends a scheduled cancellation, pauses a scheduled pause.
+ * portal: Settings can open Paddle's customer portal. pricing: where to start a trial. test: Paddle's sandbox.
+ */
+export interface Billing {
+  plan: 'free' | 'trial' | 'individual' | 'comped' | 'enterprise';
+  status: 'active' | 'past_due' | 'read_only' | 'cancelled';
+  storage: number;
+  storageGb?: number;
+  trialEnds?: string;
+  renews?: string;
+  ends?: string;
+  pauses?: string;
+  canceledAt?: string;
+  portal?: boolean;
+  pricing?: string;
+  test?: boolean;
+}
 export interface Offer { spaceId: string; name: string; slug: string; from: string; expires: string }
 
 export interface Account {
@@ -32,6 +52,7 @@ export interface Account {
   invitations: Invitation[];
   offers: Offer[];
   storage?: Storage;
+  billing?: Billing;
   unavailable?: string[];
 }
 
@@ -249,6 +270,13 @@ export function formatBytes(n: number): string {
   if (n >= 1024 ** 2) return `${(n / 1024 ** 2).toFixed(1)} MB`;
   if (n >= 1024) return `${Math.round(n / 1024)} KB`;
   return n === 1 ? '1 byte' : `${n} bytes`;
+}
+
+/** An RFC 3339 time as a date for people ("2 Dec 2026"), in UTC so it matches Paddle's emails. */
+export function formatDay(when: string | undefined): string {
+  const t = when ? new Date(when) : null;
+  if (!t || Number.isNaN(t.getTime())) return '';
+  return t.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
 }
 
 /** How long ago an RFC 3339 time was, roughly ("" for none). */

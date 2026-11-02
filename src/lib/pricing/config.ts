@@ -5,6 +5,10 @@ export type PaddleEnvironment = 'sandbox' | 'production';
 
 export interface PricingConfig {
   page: 'pricing' | 'welcome';
+  /** Open the checkout once Paddle is ready: Start free trial was clicked while signed out, and signing in came back here. */
+  start?: boolean;
+  /** The signed-in person already has a plan (Metatrash 0.91.0): offer Settings → Billing, not a second checkout. */
+  subscribed?: boolean;
   environment: PaddleEnvironment;
   /** Paddle client-side token (test_... or live_...). Public: made for browser code. */
   token: string;

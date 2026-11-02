@@ -70,7 +70,7 @@
   }
 
   function subscribe() {
-    if (!paddle || !config) return;
+    if (!paddle || !config || config.subscribed) return;
     const items: CheckoutOpenLineItem[] = [{ priceId: config.prices.plan, quantity: 1 }];
     if (storageAddOn.atSignup && extraGB > 0) items.push({ priceId: config.prices.storage, quantity: extraGB });
     paddle.Checkout.open({
@@ -105,6 +105,14 @@
         });
         if (!instance) throw new Error('Paddle.js did not start.');
         paddle = instance;
+        if (config!.start && config!.signedIn) {
+          // Back from signing in after Start free trial: carry on to the checkout, once. The
+          // address loses ?start=trial so a reload or the back button doesn't open it again.
+          const url = new URL(location.href);
+          url.searchParams.delete('start');
+          history.replaceState(history.state, '', url);
+          subscribe();
+        }
         await preview(extraGB);
       } catch (err) {
         problem = 'Checkout could not be loaded. Check your connection, or turn off anything blocking paddle.com, and reload.';
@@ -168,8 +176,17 @@
           {#if storageAddOn.atSignup && extraGB > 0 && storageLine}
             <p class="with-storage">With {extraGB} GB extra storage: <strong>{storageLine.formattedTotals.total}</strong> / month on top.</p>
           {/if}
-          <button class="btn primary block" type="button" disabled={!paddle || !planLine} onclick={subscribe}>Start free trial</button>
-          {#if config?.email}<p class="small muted">Signed in as <span class="email">{config.email}</span>; checkout fills it in.</p>{/if}
+          {#if config?.subscribed}
+            <a class="btn primary block" href="{config.home}spaces/#settings/billing">Manage your plan</a>
+            <p class="small muted">You already have a plan{#if config.email}{' '}as <span class="email">{config.email}</span>{/if}. See it, change your card or cancel in Settings → Billing.</p>
+          {:else if config?.signedIn}
+            <button class="btn primary block" type="button" disabled={!paddle || !planLine} onclick={subscribe}>Start free trial</button>
+            {#if config.email}<p class="small muted">Signed in as <span class="email">{config.email}</span>; checkout fills it in.</p>{/if}
+          {:else}
+            <!-- A subscription belongs to an account: sign in or register first, then the checkout opens (/pricing/start). -->
+            <a class="btn primary block" href="{config?.home ?? '/'}pricing/start">Start free trial</a>
+            <p class="small muted">You'll sign in first, or make your account with a code sent to your email. Then checkout opens.</p>
+          {/if}
         </section>
 
         <section class="card addon" aria-labelledby="addon-name">
@@ -200,4 +217,12 @@
       {#if currency}<p class="small muted center">Prices in {currency}. Paddle is the merchant of record and handles payment, tax and receipts.</p>{/if}
     {/if}
   </main>
+
+  <!-- Paddle's website review asks for the terms, privacy and refund pages to be linked from the pricing page. -->
+  <footer class="legal">
+    <a href="{config?.home ?? '/'}docs/legal/terms.md">Terms</a>
+    <a href="{config?.home ?? '/'}docs/legal/privacy.md">Privacy</a>
+    <a href="{config?.home ?? '/'}docs/legal/refunds.md">Refunds</a>
+    <a href="{config?.home ?? '/'}docs/about.md">About</a>
+  </footer>
 </div>
