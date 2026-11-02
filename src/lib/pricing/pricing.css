@@ -107,3 +107,11 @@ label { display: block; margin: 8px 0 6px; font-size: 13px; font-weight: 600; }
 
 .legal { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 20px; margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--border); font-size: 13px; }
 .legal a { color: var(--muted); }
+
+/* Monthly / Yearly (Metatrash 0.93.0). */
+.cycle { display: flex; justify-content: center; gap: 0; margin: -10px auto 22px; width: fit-content; border: 1px solid var(--border); border-radius: 999px; padding: 3px; background: var(--card); }
+.cycle button { border: 0; background: transparent; color: var(--fg); font: inherit; font-weight: 600; padding: 7px 16px; border-radius: 999px; cursor: pointer; min-height: 36px; }
+.cycle button:hover { background: var(--hover); }
+.cycle button.on { background: var(--accent); color: var(--on-accent); }
+.cycle .saving { font-size: 12px; font-weight: 600; margin-left: 4px; padding: 1px 7px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
+.cycle button.on .saving { background: rgba(255, 255, 255, 0.22); color: inherit; }

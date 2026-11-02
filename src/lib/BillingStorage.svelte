@@ -59,13 +59,13 @@
   function costLine(p: StoragePreview): string {
     const monthly = formatMoney(p.monthly);
     const from = formatDay(p.nextAt);
-    const then = monthly ? `${monthly} a month${from ? ` from ${from}` : ''}` : '';
+    const then = monthly ? `${monthly} a ${p.interval === 'year' ? 'year' : 'month'}${from ? ` from ${from}` : ''}` : '';
     if (p.trial) return `Nothing to pay during your trial.${then ? ` After it, your plan is ${then}.` : ''}`;
     if (p.storageGb < current) {
-      return `${then ? `Your plan becomes ${then}. ` : ''}Paddle credits the unused part of this month to your next bill.`;
+      return `${then ? `Your plan becomes ${then}. ` : ''}Paddle credits the unused part of this ${p.interval === 'year' ? 'year' : 'month'} to your next bill.`;
     }
     const now = p.now && Number(p.now.amount) > 0 ? formatMoney(p.now) : '';
-    if (now) return `${now} now for the rest of this month${then ? `, then ${then}` : ''}.`;
+    if (now) return `${now} now for the rest of this ${p.interval === 'year' ? 'year' : 'month'}${then ? `, then ${then}` : ''}.`;
     return then ? `Nothing to pay now. Your plan becomes ${then}.` : 'Nothing to pay now.';
   }
 </script>

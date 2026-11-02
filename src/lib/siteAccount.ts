@@ -27,6 +27,8 @@ export interface Billing {
   status: 'active' | 'past_due' | 'read_only' | 'cancelled';
   storage: number;
   storageGb?: number;
+  /** How often Paddle bills the subscription (Metatrash 0.93.0); absent from older servers, which bill monthly. */
+  interval?: 'month' | 'year';
   trialEnds?: string;
   renews?: string;
   ends?: string;
@@ -44,9 +46,10 @@ export interface Billing {
 export interface Money { amount: string; currency: string }
 /**
  * What changing the extra storage to storageGb would cost (Metatrash 0.92.0): now is charged at once (prorated), next is
- * the next bill on nextAt, monthly the bill from then on. trial: nothing is charged before the trial ends.
+ * the next bill on nextAt, monthly the bill from then on: each month, or each year when interval is year (0.93.0).
+ * trial: nothing is charged before the trial ends.
  */
-export interface StoragePreview { storageGb: number; now?: Money; next?: Money; nextAt?: string; monthly?: Money; trial?: boolean }
+export interface StoragePreview { storageGb: number; now?: Money; next?: Money; nextAt?: string; monthly?: Money; interval?: 'month' | 'year'; trial?: boolean }
 export interface Offer { spaceId: string; name: string; slug: string; from: string; expires: string }
 
 export interface Account {

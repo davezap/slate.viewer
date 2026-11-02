@@ -643,10 +643,10 @@
               {#if b.ends}
                 <p class="muted">You cancelled: the plan ends on {formatDay(b.ends)} and you won’t be charged.</p>
               {:else if b.renews}
-                <p class="muted">Paddle charges the first month on {formatDay(b.renews)} unless you cancel before then.</p>
+                <p class="muted">Paddle charges the first {b.interval === 'year' ? 'year' : 'month'} on {formatDay(b.renews)} unless you cancel before then.</p>
               {/if}
             {:else if b.plan === 'individual'}
-              <p><strong>Personal</strong>, billed monthly.</p>
+              <p><strong>Personal</strong>, billed {b.interval === 'year' ? 'yearly' : 'monthly'}.</p>
               {#if b.status === 'past_due'}
                 <p class="error" role="alert">Your last payment didn’t go through. Update your card in Manage subscription; Paddle tries again for a while.</p>
               {:else if b.status === 'read_only'}

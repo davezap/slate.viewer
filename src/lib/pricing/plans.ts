@@ -5,8 +5,10 @@
 export interface Plan {
   name: string;
   description: string;
-  /** Shown under the price, before the button. */
-  trial: string;
+  /** Shown under the price, before the button, for each billing cycle. */
+  trial: { month: string; year: string };
+  /** Shown next to the Yearly choice. */
+  yearlySaving: string;
   features: string[];
 }
 
@@ -27,7 +29,12 @@ export interface AddOn {
 export const plan: Plan = {
   name: 'Personal',
   description: 'Spaces of your own for you and your AI agents, kept in Git.',
-  trial: '30 days free, then billed monthly. A card is needed to start; cancel any time in the trial and you pay nothing.',
+  trial: {
+    month: '30 days free, then billed monthly. A card is needed to start; cancel any time in the trial and you pay nothing.',
+    year: '30 days free, then billed once a year. A card is needed to start; cancel any time in the trial and you pay nothing.',
+  },
+  // Every yearly price is ten times the monthly one (US$100, NZ$100, A$150, £100, €100, C$140).
+  yearlySaving: '2 months free',
   features: [
     'Up to 5 private spaces',
     '1 GB of storage across your account, history and files included',

@@ -5,7 +5,7 @@
   // one-page checkout in an overlay; a completed checkout goes to /welcome (successUrl).
   import { onMount } from 'svelte';
   import { initializePaddle, type Paddle, type PricePreviewResponse, type CheckoutOpenLineItem } from '@paddle/paddle-js';
-  import { readPricingConfig, type PricingConfig } from './config';
+  import { readPricingConfig, pricesFor, type Cycle, type PricingConfig } from './config';
   import { plan, storageAddOn } from './plans';
 
   type Line = PricePreviewResponse['data']['details']['lineItems'][number];
@@ -13,8 +13,17 @@
   let config = $state<PricingConfig | null>(null);
   let problem = $state('');
   let paddle = $state<Paddle | null>(null);
-  let planLine = $state<Line | null>(null);
-  let storageLine = $state<Line | null>(null);
+  // Monthly or yearly (Metatrash 0.93.0). The page offers Yearly only when the server names
+  // yearly prices. Each cycle's lines are kept, so switching shows the other price at once.
+  let cycle = $state<Cycle>('month');
+  let lines = $state<Record<Cycle, { plan: Line | null; storage: Line | null }>>({
+    month: { plan: null, storage: null },
+    year: { plan: null, storage: null },
+  });
+  const hasYearly = $derived(!!config && pricesFor(config, 'year') !== null);
+  const planLine = $derived(lines[cycle].plan);
+  const storageLine = $derived(lines[cycle].storage);
+  const per = $derived(cycle === 'year' ? 'year' : 'month');
   let currency = $state('');
   let loading = $state(true);
   let extraGB = $state(0);
@@ -38,21 +47,30 @@
     const seq = ++previewSeq;
     previewProblem = '';
     try {
-      const result = await paddle.PricePreview({
-        items: [
-          { priceId: config.prices.plan, quantity: 1 },
-          // Always at least 1, for the price of 1 GB; the chosen count when there is one.
-          { priceId: config.prices.storage, quantity: Math.max(1, gb) },
-        ],
-        // Cloudflare's country when there is one. Otherwise nothing: Paddle finds the
-        // visitor's country from their IP address.
-        ...(config.country ? { address: { countryCode: config.country } } : {}),
-      });
+      // One preview per cycle: the plan and storage of a subscription share its cycle.
+      const cycles: Cycle[] = pricesFor(config, 'year') ? ['month', 'year'] : ['month'];
+      const results = await Promise.all(cycles.map(c => {
+        const ids = pricesFor(config!, c)!;
+        return paddle!.PricePreview({
+          items: [
+            { priceId: ids.plan, quantity: 1 },
+            // Always at least 1, for the price of 1 GB; the chosen count when there is one.
+            { priceId: ids.storage, quantity: Math.max(1, gb) },
+          ],
+          // Cloudflare's country when there is one. Otherwise nothing: Paddle finds the
+          // visitor's country from their IP address.
+          ...(config!.country ? { address: { countryCode: config!.country } } : {}),
+        });
+      }));
       if (seq !== previewSeq) return;
-      const lines = result.data.details.lineItems;
-      planLine = lines.find(l => l.price.id === config!.prices.plan) ?? null;
-      storageLine = lines.find(l => l.price.id === config!.prices.storage) ?? null;
-      currency = result.data.currencyCode;
+      const next = { month: { plan: null, storage: null }, year: { plan: null, storage: null } } as typeof lines;
+      cycles.forEach((c, i) => {
+        const ids = pricesFor(config!, c)!;
+        const found = results[i].data.details.lineItems;
+        next[c] = { plan: found.find(l => l.price.id === ids.plan) ?? null, storage: found.find(l => l.price.id === ids.storage) ?? null };
+      });
+      lines = next;
+      currency = results[0].data.currencyCode;
     } catch (err) {
       if (seq !== previewSeq) return;
       previewProblem = 'Prices could not be loaded just now. Reload the page to try again.';
@@ -71,8 +89,9 @@
 
   function subscribe() {
     if (!paddle || !config || config.subscribed) return;
-    const items: CheckoutOpenLineItem[] = [{ priceId: config.prices.plan, quantity: 1 }];
-    if (storageAddOn.atSignup && extraGB > 0) items.push({ priceId: config.prices.storage, quantity: extraGB });
+    const ids = pricesFor(config, cycle) ?? pricesFor(config, 'month')!;
+    const items: CheckoutOpenLineItem[] = [{ priceId: ids.plan, quantity: 1 }];
+    if (storageAddOn.atSignup && extraGB > 0) items.push({ priceId: ids.storage, quantity: extraGB });
     paddle.Checkout.open({
       items,
       settings: settings(),
@@ -156,25 +175,34 @@
         <p class="muted">Prices are for your country, with any tax Paddle collects there. Checkout shows the final amount.</p>
       </div>
 
+      {#if hasYearly}
+        <div class="cycle" role="radiogroup" aria-label="Billing">
+          <button type="button" role="radio" aria-checked={cycle === 'month'} class:on={cycle === 'month'} onclick={() => (cycle = 'month')}>Monthly</button>
+          <button type="button" role="radio" aria-checked={cycle === 'year'} class:on={cycle === 'year'} onclick={() => (cycle = 'year')}>
+            Yearly <span class="saving">{plan.yearlySaving}</span>
+          </button>
+        </div>
+      {/if}
+
       <div class="cards">
         <section class="card plan" aria-labelledby="plan-name">
           <h2 id="plan-name">{plan.name}</h2>
           <p class="muted">{plan.description}</p>
           <p class="price" aria-live="polite">
             {#if planLine}
-              <strong>{planLine.formattedTotals.total}</strong> <span class="per">/ month</span>
+              <strong>{planLine.formattedTotals.total}</strong> <span class="per">/ {per}</span>
             {:else if loading}
               <span class="placeholder">Loading price…</span>
             {:else}
               <span class="placeholder">Price unavailable</span>
             {/if}
           </p>
-          <p class="trial">{plan.trial}</p>
+          <p class="trial">{plan.trial[cycle]}</p>
           <ul>
             {#each plan.features as feature (feature)}<li>{feature}</li>{/each}
           </ul>
           {#if storageAddOn.atSignup && extraGB > 0 && storageLine}
-            <p class="with-storage">With {extraGB} GB extra storage: <strong>{storageLine.formattedTotals.total}</strong> / month on top.</p>
+            <p class="with-storage">With {extraGB} GB extra storage: <strong>{storageLine.formattedTotals.total}</strong> / {per} on top.</p>
           {/if}
           {#if config?.subscribed}
             <a class="btn primary block" href="{config.home}spaces/#settings/billing">Manage your plan</a>
@@ -194,7 +222,7 @@
           <p class="muted">{storageAddOn.description}</p>
           <p class="price">
             {#if storageLine}
-              <strong>{storageLine.formattedUnitTotals.total}</strong> <span class="per">per GB / month</span>
+              <strong>{storageLine.formattedUnitTotals.total}</strong> <span class="per">per GB / {per}</span>
             {:else if loading}
               <span class="placeholder">Loading price…</span>
             {:else}
