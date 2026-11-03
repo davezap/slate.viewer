@@ -30,7 +30,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::mtsync::{self, DEFAULT_SERVER};
 
 const MTSYNC_MANIFEST: &str = "https://github.com/davezap/metatrash/releases/latest/download/mtsync.json";
-const VIEWER_MANIFEST: &str = "https://github.com/davezap/slate.viewer/releases/latest/download/slateviewer.json";
+pub(crate) const DEFAULT_VIEWER_MANIFEST: &str = "https://github.com/davezap/slate.viewer/releases/latest/download/slateviewer.json";
 const SCHEMA_PATH: &str = "/api/v1/tool-schema.json";
 /// The docs folder of Slate Viewer change notes, one `changenotes_<version>.md` per release.
 const CHANGE_NOTES_PATH: &str = "/docs/tools/slate-viewer/change-logs/";
@@ -88,8 +88,15 @@ struct Saved {
 pub struct Updates {
     /// One check at a time: the timer's skips while another runs, a manual one waits for it.
     checking: tauri::async_runtime::Mutex<()>,
+    viewer_manifest: Option<&'static str>,
     /// The installer the last check offered, for Update in the dialog.
     offer: Mutex<Option<Asset>>,
+}
+
+impl Updates {
+    pub(crate) fn with_viewer_manifest(viewer_manifest: Option<&'static str>) -> Self {
+        Self { viewer_manifest, ..Self::default() }
+    }
 }
 
 /// What a check found, for the update dialog.
@@ -382,12 +389,15 @@ async fn check(app: &AppHandle) -> (CheckResult, bool) {
         }
     }
 
+    // Native editions choose their own installer channel at build time.
+    let Some(viewer_manifest) = app.state::<Updates>().viewer_manifest else { return (found, false); };
+
     // Slate Viewer itself.
     let have = version(&current).unwrap_or_default();
     found.required = schema.clients.slate_viewer.as_ref().and_then(|c| version(&c.min_version)).is_some_and(|n| n > have);
     let mut offer = None;
     let mut skipped = false;
-    match get_json::<Manifest>(VIEWER_MANIFEST).await {
+    match get_json::<Manifest>(viewer_manifest).await {
         Ok(manifest) => {
             if version(&manifest.version).is_some_and(|latest| latest > have) {
                 offer = manifest.files.get(viewer_platform()).cloned();

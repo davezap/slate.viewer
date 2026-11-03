@@ -12,7 +12,6 @@
     "release": "tauri build"
   },
   "dependencies": {
-    "@paddle/paddle-js": "^1.6.5",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2",
     "@tauri-apps/plugin-opener": "^2"

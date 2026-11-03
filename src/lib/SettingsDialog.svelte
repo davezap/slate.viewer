@@ -10,13 +10,10 @@
   // 0.84.0: each tab is split into pages, listed under it in the side: #settings/<tab>/<page>.
   // Spaces: Your spaces, shared, invitations, and each owned space's …/<space>/general|members|ownership.
   // Profile: Username and email, delete. An address without a page (as in emails) opens the first.
-  // 0.26.0: Billing → Storage changes the extra storage (BillingStorage.svelte).
-  // 0.25.0: Billing (#settings/billing), on a server that sells plans: the plan, trial end, storage
-  // allowance, and Manage subscription, which opens Paddle's customer portal.
   import { onMount, tick, untrack } from 'svelte';
   import ConfirmSheet from './ConfirmSheet.svelte';
   import SecurityPanel from './SecurityPanel.svelte';
-  import BillingStorage from './BillingStorage.svelte';
+  import { settingsAdditions, securityAdditions } from '$edition';
   import ServicesPanel from './ServicesPanel.svelte';
   import {
     account, AccountError, browserZone, downloadAddress, formatBytes, formatDay, measuredAgo, openAddress, timeZones,
@@ -47,9 +44,10 @@
     ] },
     { id: 'security', label: 'Security', pages: [
       { id: 'email', label: 'Email' }, { id: 'passkeys', label: 'Passkeys' }, { id: 'totp', label: 'Authenticator app' },
-      { id: 'microsoft', label: 'Microsoft accounts' }, { id: 'recovery', label: 'Recovery codes' }, { id: 'devices', label: 'Signed-in devices' },
+      { id: 'recovery', label: 'Recovery codes' }, { id: 'devices', label: 'Signed-in devices' },
+      ...securityAdditions,
     ] },
-    { id: 'billing', label: 'Billing', pages: [{ id: '', label: 'Plan and payment' }] },
+    ...settingsAdditions,
   ] as const;
   const SECURITY_PAGES = TABS.find(t => t.id === 'security')!.pages;
   const SERVICES_PAGES = TABS.find(t => t.id === 'services')!.pages;
@@ -130,7 +128,7 @@
   });
 
   function securityLoaded(s: Security) {
-    secCounts = { passkeys: s.passkeys.length, recovery: s.recovery, devices: s.sessions.length, ...(s.microsoft ? { microsoft: s.microsoft.accounts.length } : {}) };
+    secCounts = { passkeys: s.passkeys.length, recovery: s.recovery, devices: s.sessions.length, ...Object.fromEntries(securityAdditions.map(a => [a.id, a.count?.(s)]).filter(([, n]) => n !== undefined)) };
   }
   function servicesLoaded(s: Services) {
     svcCounts = {
@@ -304,7 +302,7 @@
       <nav aria-label="Settings">
         <div class="heading">Settings</div>
         <div class="tabs">
-          {#each TABS.filter(t => t.id !== 'billing' || acct?.billing || acct?.unavailable?.includes('billing')) as t (t.id)}
+          {#each TABS.filter(t => !('visible' in t) || t.visible(acct)) as t (t.id)}
             {@const here = !narrow && (tab || 'profile') === t.id}
             <button class="group" class:here onclick={() => go(`settings/${t.id}`)}>{t.label}</button>
             {#each t.pages as p (p.id)}
@@ -629,57 +627,9 @@
           {/if}
           {/if}
 
-        {:else if tab === 'billing'}
-          {@const b = acct.billing}
-          <h2>Plan and payment{#if b?.test}{' '}<span class="test-badge" title="Paddle's sandbox: no real money moves.">Test mode</span>{/if}</h2>
-          {#if !b}
-            <p class="muted">{acct.unavailable?.includes('billing') ? 'Your plan can’t be read just now. Reload shortly.' : 'This server doesn’t sell plans.'}</p>
-          {:else}
-            <h3>Plan</h3>
-            {#if b.plan === 'comped'}
-              <p><strong>Personal</strong>, free of charge.</p>
-            {:else if b.plan === 'trial'}
-              <p><strong>Personal</strong>, free trial{#if b.trialEnds}{' '}until {formatDay(b.trialEnds)}{/if}.</p>
-              {#if b.ends}
-                <p class="muted">You cancelled: the plan ends on {formatDay(b.ends)} and you won’t be charged.</p>
-              {:else if b.renews}
-                <p class="muted">Paddle charges the first {b.interval === 'year' ? 'year' : 'month'} on {formatDay(b.renews)} unless you cancel before then.</p>
-              {/if}
-            {:else if b.plan === 'individual'}
-              <p><strong>Personal</strong>, billed {b.interval === 'year' ? 'yearly' : 'monthly'}.</p>
-              {#if b.status === 'past_due'}
-                <p class="error" role="alert">Your last payment didn’t go through. Update your card in Manage subscription; Paddle tries again for a while.</p>
-              {:else if b.status === 'read_only'}
-                <p class="muted">Your subscription is paused.</p>
-              {:else if b.ends}
-                <p class="muted">You cancelled: the plan ends on {formatDay(b.ends)}.</p>
-              {:else if b.renews}
-                <p class="muted">Renews on {formatDay(b.renews)}.</p>
-              {/if}
-              {#if b.pauses}<p class="muted">It pauses on {formatDay(b.pauses)}.</p>{/if}
-            {:else if b.status === 'cancelled'}
-              <p>Your plan was cancelled{#if b.canceledAt}{' '}on {formatDay(b.canceledAt)}{/if}.</p>
-            {:else}
-              <p>You don’t have a plan.</p>
-            {/if}
-            {#if b.pricing}
-              <p><a class="button primary" href={b.pricing}>{b.status === 'cancelled' ? 'See plans' : 'Start your free trial'}</a></p>
-              <p class="hint">One plan, 30 days free. A card is needed to start, and Paddle handles the payment.</p>
-            {/if}
-
-            {#if b.storage}
-              <h3>Storage</h3>
-              <BillingStorage billing={b} used={acct.storage?.bytes} {busy} {run} />
-            {/if}
-
-            {#if b.portal}
-              <h3>Card, invoices and cancelling</h3>
-              <p class="muted">Paddle, who sell Metatrash on our behalf, keep your card details and send your invoices. Their billing page opens in this tab; you’ll be asked to confirm it’s you first if you haven’t signed in recently.</p>
-              <button class="primary" disabled={busy} onclick={() => void run(() => account.post('/billing/portal', {}), n => { if (n.redirect) location.href = n.redirect; })}>Manage subscription</button>
-            {:else if b.plan !== 'free' && b.plan !== 'comped'}
-              <p class="hint">To change your card or cancel, use the link in any email from Paddle.</p>
-            {/if}
-          {/if}
+        {:else if settingsAdditions.some(addition => addition.id === tab)}
+          {@const addition = settingsAdditions.find(addition => addition.id === tab)!}
+          <addition.component {acct} {busy} {run} />
 
         {:else if tab === 'security'}
           <SecurityPanel page={parts[2] ?? ''} {revealed} onLoaded={securityLoaded} onConfirm={(reason, retry) => (confirm = { reason, retry })} onNotice={say} onChanged={() => void load()} />
@@ -752,7 +702,6 @@
   h3 { margin: 22px 0 8px; font-size: 13px; font-weight: 700; }
   p { margin: 0 0 10px; }
   .muted, .hint { color: var(--side-muted); }
-  .test-badge { margin-left: 6px; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; vertical-align: middle; background: var(--side-hover, rgba(127, 127, 127, 0.15)); color: var(--side-accent); }
   .hint { font-size: 12px; }
   .mono, code { font-family: Consolas, "Cascadia Mono", ui-monospace, monospace; }
   .big { font-size: 15px; }

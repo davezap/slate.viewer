@@ -7,9 +7,23 @@
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "types": ["svelte", "vite/client"],
+    "types": [
+      "svelte",
+      "vite/client"
+    ],
     "resolveJsonModule": true,
-    "paths": { "$backend": ["./src/lib/backend/desktop.ts"] }
+    "paths": {
+      "$backend": [
+        "./src/lib/backend/desktop.ts"
+      ],
+      "$edition": [
+        "./src/lib/edition.ts"
+      ]
+    }
   },
-  "include": ["src/**/*.ts", "src/**/*.svelte", "public/slate/slate-editor.d.ts"]
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.svelte",
+    "public/slate/slate-editor.d.ts"
+  ]
 }

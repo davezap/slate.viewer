@@ -116,13 +116,21 @@ fn show_window(window: tauri::WebviewWindow) {
 #[tauri::command(async)]
 fn open_default_apps_settings(app: AppHandle) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
+    let registered: String = app.config().product_name.as_deref().unwrap_or("Slate Viewer")
+        .chars().filter(|c| c.is_ascii_alphanumeric()).collect();
     app.opener()
-        .open_url("ms-settings:defaultapps?registeredAppUser=SlateViewer", None::<&str>)
+        .open_url(format!("ms-settings:defaultapps?registeredAppUser={registered}"), None::<&str>)
         .map_err(|e| e.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    run_with_context(tauri::generate_context!(), Some(updates::DEFAULT_VIEWER_MANIFEST));
+}
+
+/// Compose a native edition with its own assets, identity, and update channel.
+/// None disables Viewer installer offers; mtsync keeps its independent channel.
+pub fn run_with_context(context: tauri::Context<tauri::Wry>, viewer_update_manifest: Option<&'static str>) {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             let paths = paths_from_args(&args, Path::new(&cwd));
@@ -209,7 +217,7 @@ pub fn run() {
         ])
         .manage(watcher::DocumentWatchers::default())
         .manage(mtsync::Mtsync::default())
-        .manage(updates::Updates::default())
+        .manage(updates::Updates::with_viewer_manifest(viewer_update_manifest))
         .on_window_event(|window, event| {
             if let WindowEvent::Destroyed = event {
                 watcher::forget_window(window.app_handle(), window.label());
@@ -229,6 +237,6 @@ pub fn run() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running Slate Viewer");
 }

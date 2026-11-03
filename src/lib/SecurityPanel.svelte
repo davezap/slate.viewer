@@ -1,16 +1,17 @@
 <script lang="ts">
   // metatrash.com: Settings → Security (Metatrash 0.81.0), in place of /account/security: email
-  // codes, the email address, passkeys, Microsoft accounts, the authenticator app, recovery codes
+  // codes, the email address, passkeys, the authenticator app, recovery codes
   // and signed-in devices, one page each (#settings/security/<page>, 0.84.0). Changing the email address or a sign-in method needs a sign-in within
   // the last 10 minutes: the change asks the person to confirm it's them, then runs again.
   import { onMount, untrack } from 'svelte';
+  import { securityAdditions } from '$edition';
   import {
     account, AccountError, passkeyCreation, passkeyProblem, passkeysSupported,
     type Notice, type Security,
   } from './siteAccount';
 
   interface Props {
-    /** The page: email, passkeys, totp, microsoft, recovery or devices. */
+    /** The page: email, passkeys, totp, recovery or devices. */
     page: string;
     /** Asks the person to confirm it's them, then runs retry. */
     onConfirm: (reason: string, retry: () => void) => void;
@@ -26,11 +27,12 @@
   let { page: asked, onConfirm, onNotice, onChanged, onLoaded, revealed = [] }: Props = $props();
 
   /** Security's pages (0.84.0), in the order the Settings sidebar lists them. */
-  const PAGES = {
-    email: 'Email', passkeys: 'Passkeys', totp: 'Authenticator app', microsoft: 'Microsoft accounts',
+  const PAGES: Record<string, string> = {
+    email: 'Email', passkeys: 'Passkeys', totp: 'Authenticator app',
     recovery: 'Recovery codes', devices: 'Signed-in devices',
+    ...Object.fromEntries(securityAdditions.map(a => [a.id, a.label])),
   } as const;
-  const page = $derived<keyof typeof PAGES>(asked in PAGES ? (asked as keyof typeof PAGES) : 'email');
+  const page = $derived(asked in PAGES ? asked : 'email');
 
   const STEP_UP = 'Changing your email address or how you sign in needs a sign-in within the last 10 minutes. Confirm it’s you first.';
 
@@ -134,7 +136,7 @@
   const appOn = $derived(!!sec?.totp?.enabled);
 </script>
 
-<h2>{PAGES[page]}{#if sec}{#if page === 'passkeys'} <span class="muted">{sec.passkeys.length} of 20</span>{:else if page === 'microsoft' && sec.microsoft} <span class="muted">{sec.microsoft.accounts.length} of 10</span>{:else if page === 'recovery' && sec.recovery} <span class="muted">{sec.recovery} of 10 left</span>{:else if page === 'devices'} <span class="muted">{sec.sessions.length}</span>{/if}{/if}</h2>
+<h2>{PAGES[page]}{#if sec}{#if page === 'passkeys'} <span class="muted">{sec.passkeys.length} of 20</span>{:else if page === 'recovery' && sec.recovery} <span class="muted">{sec.recovery} of 10 left</span>{:else if page === 'devices'} <span class="muted">{sec.sessions.length}</span>{/if}{/if}</h2>
 {#if page === 'passkeys'}
   <p class="muted">A passkey lets you sign in with your fingerprint, face, device PIN or password manager instead of an emailed code. It is faster, and it only works on this site, so it can’t be phished.</p>
 {:else if page === 'totp'}
@@ -233,42 +235,9 @@
     <p class="hint">The name helps you tell your passkeys apart. Your browser then asks where to save it: this device, your phone or a password manager.</p>
   {/if}
 
-  {:else if page === 'microsoft'}
-    {#if s.microsoft}
-    {@const m = s.microsoft}
-    {#if m.waiting}
-      <div class="warning">
-        <p><strong>Link {m.waiting}?</strong> This browser signed in with the Microsoft account <strong class="mono">{m.waiting}</strong>. Link it to this Metatrash account only if it is yours: whoever has it can then sign in as you.</p>
-        <div class="actions">
-          <button class="primary" disabled={busy} onclick={() => void run(secure('microsoft/confirm'))}>Link this Microsoft account</button>
-          <button disabled={busy} onclick={() => void run(secure('microsoft/forget'))}>Don’t link it</button>
-        </div>
-      </div>
-    {/if}
-    <ul class="rows">
-      {#each m.accounts as id (id.id)}
-        <li>
-          <span class="main"><strong>{id.label}</strong><span class="sub">Linked {id.created} · last used {id.lastUsed}</span></span>
-          {#if removing === id.id}
-            <button class="danger" disabled={busy} onclick={() => void run(secure('microsoft/remove', { identity: id.id }))}>Remove this Microsoft account</button>
-            <button disabled={busy} onclick={() => (removing = '')}>Keep</button>
-          {:else}
-            <button disabled={busy} onclick={() => (removing = id.id)}>Remove…</button>
-          {/if}
-        </li>
-      {:else}
-        <li class="empty">No Microsoft accounts linked.</li>
-      {/each}
-    </ul>
-    {#if m.max}
-      <p class="hint">You have the maximum of 10 Microsoft accounts.</p>
-    {:else}
-      <button disabled={busy} onclick={() => void run(secure('microsoft/link'))}>Link a Microsoft account</button>
-      <p class="hint">Sign in with a work, school or personal Microsoft account to use it as another way to sign in here.</p>
-    {/if}
-      {:else}
-      <p class="muted">Signing in with Microsoft isn’t available on this server.</p>
-    {/if}
+  {:else if securityAdditions.some(addition => addition.id === page)}
+    {@const addition = securityAdditions.find(addition => addition.id === page)!}
+    <addition.component security={s} {busy} {run} />
   {:else if page === 'totp'}
     {#if s.totp}
     {@const t = s.totp}
@@ -363,7 +332,6 @@
   .status p { margin: 0 0 8px; }
   p.status.ok { border-color: #2e7d4f; }
   .warning { margin: 0 0 10px; padding: 10px 12px; border: 1px solid #d9a33b; border-radius: 8px; background: rgb(217 163 59 / .1); }
-  .actions { display: flex; flex-wrap: wrap; gap: 6px; }
   .row { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
   .row input { flex: 1; min-width: 180px; }
   .full { flex-basis: 100%; }

@@ -16,43 +16,11 @@ export interface Usage { bytes: number; git: number; files: number; measured?: s
 export interface Storage extends Usage { deleted?: number; allowance?: number }
 export interface JoinedSpace { space: string; name: string; owner: string; status: string; open?: boolean }
 export interface Invitation { id: string; spaceId?: string; name?: string; owner?: string; email?: string; status?: string; expires: string }
-/**
- * The account's plan (Metatrash 0.91.0), absent when the server sells none. plan: free, trial, individual or comped;
- * status: active, past_due, read_only or cancelled. storage is the allowance in bytes; storageGb the extra storage
- * bought. Times are RFC 3339: renews is Paddle's next bill, ends a scheduled cancellation, pauses a scheduled pause.
- * portal: Settings can open Paddle's customer portal. pricing: where to start a trial. test: Paddle's sandbox.
- */
-export interface Billing {
-  plan: 'free' | 'trial' | 'individual' | 'comped' | 'enterprise';
-  status: 'active' | 'past_due' | 'read_only' | 'cancelled';
-  storage: number;
-  storageGb?: number;
-  /** How often Paddle bills the subscription (Metatrash 0.93.0); absent from older servers, which bill monthly. */
-  interval?: 'month' | 'year';
-  trialEnds?: string;
-  renews?: string;
-  ends?: string;
-  pauses?: string;
-  canceledAt?: string;
-  portal?: boolean;
-  pricing?: string;
-  test?: boolean;
-  /** Settings can change the extra storage (Metatrash 0.92.0), from storageMinGb (what the spaces use) to storageMaxGb. */
-  storageChange?: boolean;
-  storageMinGb?: number;
-  storageMaxGb?: number;
-}
-/** An amount in the currency's smallest unit (cents), as Paddle gives it. */
-export interface Money { amount: string; currency: string }
-/**
- * What changing the extra storage to storageGb would cost (Metatrash 0.92.0): now is charged at once (prorated), next is
- * the next bill on nextAt, monthly the bill from then on: each month, or each year when interval is year (0.93.0).
- * trial: nothing is charged before the trial ends.
- */
-export interface StoragePreview { storageGb: number; now?: Money; next?: Money; nextAt?: string; monthly?: Money; interval?: 'month' | 'year'; trial?: boolean }
 export interface Offer { spaceId: string; name: string; slug: string; from: string; expires: string }
 
 export interface Account {
+  /** Edition-specific response fields are interpreted by compiled-in additions. */
+  [key: string]: unknown;
   email: string;
   username?: string;
   maxSpaces: number;
@@ -66,7 +34,6 @@ export interface Account {
   invitations: Invitation[];
   offers: Offer[];
   storage?: Storage;
-  billing?: Billing;
   unavailable?: string[];
 }
 
@@ -94,6 +61,8 @@ export interface ConfirmWays {
 }
 
 export interface Notice {
+  /** Edition-specific response fields are interpreted by compiled-in additions. */
+  [key: string]: unknown;
   notice?: string;
   space?: string;
   signedOut?: boolean;
@@ -101,8 +70,6 @@ export interface Notice {
   failed?: boolean;
   /** Where to go next (GitHub, to connect it). */
   redirect?: string;
-  /** What a storage change would cost (Metatrash 0.92.0). */
-  preview?: StoragePreview;
 }
 
 // Services (Metatrash 0.80.0).
@@ -139,10 +106,12 @@ export interface ActionOffer {
 export interface Passkey { id: string; name: string; created: string; lastUsed: string; synced?: boolean }
 export interface Device { id: string; device: string; ip?: string; signedIn: string; lastUsed: string; current?: boolean }
 export interface Security {
+  /** Edition-specific response fields are interpreted by compiled-in additions. */
+  [key: string]: unknown;
   email: string;
   fresh?: boolean;
   minutes?: number;
-  /** A change finished on another page (linking a Microsoft account). */
+  /** A change finished on another page. */
   notice?: string;
   passkeys: Passkey[];
   maxPasskeys?: boolean;
@@ -160,8 +129,6 @@ export interface Security {
   emailChangeTo?: string;
   sessions: Device[];
   otherSessions: number;
-  /** Absent when Microsoft sign-in is not set up. */
-  microsoft?: { accounts: { id: string; label: string; created: string; lastUsed: string }[]; waiting?: string; max?: boolean };
 }
 
 export class AccountError extends Error {
@@ -288,19 +255,9 @@ export function formatBytes(n: number): string {
   return n === 1 ? '1 byte' : `${n} bytes`;
 }
 
-/** An amount for people in its own currency ("NZ$12.00"); Paddle's smallest unit has as many decimals as the currency. */
-export function formatMoney(m: Money | undefined): string {
-  if (!m) return '';
-  try {
-    const format = new Intl.NumberFormat(undefined, { style: 'currency', currency: m.currency });
-    const digits = format.resolvedOptions().maximumFractionDigits ?? 2;
-    return format.format(Number(m.amount) / 10 ** digits);
-  } catch {
-    return `${m.amount} ${m.currency}`;
-  }
-}
 
-/** An RFC 3339 time as a date for people ("2 Dec 2026"), in UTC so it matches Paddle's emails. */
+
+/** An RFC 3339 time as a date for people ("2 Dec 2026"), in UTC. */
 export function formatDay(when: string | undefined): string {
   const t = when ? new Date(when) : null;
   if (!t || Number.isNaN(t.getTime())) return '';

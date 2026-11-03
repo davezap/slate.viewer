@@ -7,14 +7,14 @@ import pkg from './package.json' with { type: 'json' };
 // `vite build --mode web` builds the same UI for metatrash.com instead: the site API backend,
 // no index.html (Metatrash writes the page) and a manifest naming the hashed files, which are
 // copied into Metatrash's internal/service/web/app/ (see README, "The website build"). The web
-// build has a second entry, src/pricing.ts: metatrash.com's pricing and checkout pages (Paddle).
+// build uses the public edition; private additions are composed by their own build.
 export default defineConfig(({ mode }) => {
   const web = mode === 'web';
   return {
     plugins: [svelte()],
     clearScreen: false,
     resolve: {
-      alias: { $backend: fileURLToPath(new URL(`./src/lib/backend/${web ? 'web' : 'desktop'}.ts`, import.meta.url)) },
+      alias: { $edition: fileURLToPath(new URL('./src/lib/edition.ts', import.meta.url)), $backend: fileURLToPath(new URL(`./src/lib/backend/${web ? 'web' : 'desktop'}.ts`, import.meta.url)) },
     },
     define: { 'import.meta.env.VITE_APP_VERSION': JSON.stringify(pkg.version) },
     server: {
@@ -29,7 +29,7 @@ export default defineConfig(({ mode }) => {
           emptyOutDir: true,
           manifest: true,
           copyPublicDir: false,
-          rollupOptions: { input: { main: 'src/main.ts', pricing: 'src/pricing.ts' } },
+          rollupOptions: { input: { main: 'src/main.ts' } },
         }
       : { target: 'es2022' },
     base: web ? '/app/' : '/',
