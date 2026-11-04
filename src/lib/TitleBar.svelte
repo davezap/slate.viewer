@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { headerAdditions } from '$edition';
   import { backend, capabilities } from './backend';
   import MenuBar from './MenuBar.svelte';
   import SpacePicker from './SpacePicker.svelte';
@@ -166,6 +167,9 @@
           </select>
         </label>
       {/if}
+      {#each headerAdditions as addition (addition.id)}
+        <addition.component {signedIn} {account} />
+      {/each}
       <button
         class="change"
         data-space-picker
@@ -313,6 +317,12 @@
     .web .change { padding: 0 8px; margin-left: 2px; }
     .web .wide { display: none; }
     .web .phone { display: inline; }
+  }
+  /* Wrap website tools on small screens rather than squeeze out an edition action. */
+  @media (max-width: 600px) {
+    .web { height: auto; min-height: 44px; flex-wrap: wrap; padding-block: 5px; }
+    .web .title { min-width: 40px; height: 32px; }
+    .web .tools { margin-left: auto; flex-wrap: wrap; align-items: center; justify-content: flex-end; max-width: 100%; }
   }
   .controls { display: flex; align-self: stretch; }
   .control { width: 46px; height: 100%; border-radius: 0; color: var(--side-fg); }
