@@ -30,7 +30,7 @@
   import UpdateDialog, { type UpdateCheck } from './lib/UpdateDialog.svelte';
   import FolderProperties from './lib/FolderProperties.svelte';
   import {
-    mtsync, sameFolder, describeState, lastSyncTime, spacePathProblem, spaceSafeName, conflictOriginal, isSignedOut, SPACE_FILE_LIMIT,
+    mtsync, sameFolder, describeState, lastSyncTime, spacePathProblem, conflictOriginal, isSignedOut, SPACE_FILE_LIMIT,
     DEFAULT_SERVER, fileLock, canConvert, type SpaceRef, type FolderDescription, type VirtualFile } from './lib/space';
   import QuickOpen from './lib/QuickOpen.svelte';
   import HistoryPanel from './lib/HistoryPanel.svelte';
@@ -567,13 +567,16 @@
       await message('Save this document first, so the new note has a folder to go in.', { title: 'Slate Viewer', kind: 'info' });
       return null;
     }
-    // In a space, names can't have spaces or capitals beyond ASCII: "My Note" becomes my-note.md.
+    // Preserve the requested name, including Unicode, spaces and case.
     const inSpace = spaceRelative(joinPath(inFolder, 'x.md')) !== null;
     if (inSpace && openedSpace?.access === 'read only') {
       await message(`${openedSpace.space} is a read-only space, so notes can't be added to it.`, { title: 'Slate Viewer', kind: 'info' });
       return null;
     }
-    const fileName = inSpace ? spaceSafeName(noteName) : noteName;
+    const fileName = noteName;
+    const relative = spaceRelative(joinPath(inFolder, fileName.endsWith('.md') ? fileName : `${fileName}.md`));
+    const problem = relative === null ? null : spacePathProblem(relative);
+    if (problem) { await message(problem, { title: 'Slate Viewer', kind: 'warning' }); return null; }
     try {
       const created = await backend.files.createNote(inFolder, fileName, noteName);
       await refreshFolder();
@@ -704,7 +707,7 @@
   async function createFolder(typed: string, relativeFolder: string): Promise<string | null> {
     if (!root) return null;
     if (!canManageFiles) { await refuseReadOnly(); return null; }
-    const folderName = rootInSpace() ? spaceSafeName(typed) : typed.trim();
+    const folderName = typed;
     const rel = relativeFolder ? `${relativeFolder}/${folderName}` : folderName;
     const problem = spaceProblem(rel, true, null);
     if (problem) {
@@ -723,17 +726,15 @@
 
   /**
    * Renames a file or folder in place. A file keeps its extension unless the new name has one;
-   * in a space the name is made space-safe, as for new notes. Returns the new relative path, or null.
+   * the requested spelling and case are preserved. Returns the new relative path, or null.
    */
   async function renameEntry(relative: string, isFolder: boolean, typed: string): Promise<string | null> {
-    let newName = typed.trim();
+    let newName = typed;
     if (!isFolder) {
       const hasExtension = /\.(md|markdown|mdown|mkd)$/i.test(newName);
       const stem = hasExtension ? newName.replace(/\.[^.]+$/, '') : newName;
       const extension = hasExtension ? newName.slice(stem.length) : (/\.[^./]+$/.exec(basename(relative))?.[0] ?? '.md');
-      newName = (rootInSpace() ? spaceSafeName(stem) : stem.trim()) + extension;
-    } else if (rootInSpace()) {
-      newName = spaceSafeName(newName);
+      newName = stem + extension;
     }
     if (newName === basename(relative)) return relative;
     const parent = relative.slice(0, Math.max(0, relative.lastIndexOf('/')));
@@ -1023,8 +1024,7 @@
     }
 
     if (!found) {
-      const inSpace = openedSpace !== null && currentRelative !== null;
-      const fileName = `${inSpace ? spaceSafeName(noteFileName(target)) : noteFileName(target)}.md`;
+      const fileName = `${noteFileName(target)}.md`;
       const choice = await message(`There is no note called "${target}" yet.\n\nCreate ${fileName}?`, {
         title: 'Slate Viewer',
         kind: 'info',
@@ -2056,11 +2056,11 @@
       const problem = spacePathProblem(rel);
       if (problem) {
         const dir = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/') + 1) : '';
-        const suggestion = dir + spaceSafeName(basename(rel).replace(/\.[^.]+$/, '')) + (extname(rel) ? `.${extname(rel)}` : '.md');
+        const suggestion = dir + 'New Note.md';
         return refuse(`${problem}\n\nMetatrash wouldn't sync this file. Try a name like "${suggestion}".`);
       }
       const clash = folderFiles.find(f => f !== rel && f.toLowerCase() === rel.toLowerCase());
-      if (clash) return refuse(`"${clash}" already exists. Spaces treat names that differ only by capitals as different files, but Windows doesn't, so pick another name.`);
+      if (clash && backend.capabilities.kind === 'desktop') return refuse(`"${clash}" already exists. Spaces treat names that differ only by capitals as different files, but Windows doesn't, so pick another name.`);
     }
     const bytes = new TextEncoder().encode(text).length;
     if (bytes > SPACE_FILE_LIMIT) {

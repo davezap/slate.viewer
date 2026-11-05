@@ -1,7 +1,7 @@
 // Resolving [[wiki links]] to Markdown files in the open folder.
 
 import { basename, dirname, joinPath } from './paths';
-import { spaceSafeName } from './space';
+import { legacySpaceSlug } from './space';
 
 const strip = (name: string) => name.replace(/\.(md|markdown|mdown|mkd)$/i, '');
 const norm = (path: string) => path.replace(/\\/g, '/').toLowerCase();
@@ -14,9 +14,11 @@ const norm = (path: string) => path.replace(/\\/g, '/').toLowerCase();
 export function resolveWikiLink(target: string, files: string[], root: string, currentPath: string | null): string | null {
   const wanted = norm(strip(target.split('#')[0].trim()));
   if (!wanted) return null;
-  // Metatrash spaces can't have spaces in names, so [[My Note]] also finds my-note.md.
-  const slug = spaceSafeName(basename(wanted));
-  const candidates = files.filter(rel => {
+  // Keep resolving older slugged notes: [[My Note]] also finds my-note.md.
+  const slug = legacySpaceSlug(basename(wanted));
+  const spelling = strip(target.split('#')[0].trim()).replace(/\\/g, '/');
+  const exact = files.filter(rel => strip(rel) === spelling || strip(rel).endsWith(`/${spelling}`));
+  const candidates = exact.length ? exact : files.filter(rel => {
     const bare = norm(strip(rel));
     return bare === wanted || bare.endsWith(`/${wanted}`) || (!wanted.includes('/') && basename(bare) === slug);
   });

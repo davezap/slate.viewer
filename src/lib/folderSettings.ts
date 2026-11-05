@@ -1,3 +1,5 @@
+import { storageNameProblem } from './filenames';
+
 // A folder's settings in a Metatrash space: its .metatrash.json, read into a form the Properties
 // dialog can edit and written back. The rules mirror Metatrash's own checks (folder_config.go and
 // locks.go, 0.46.0+), so a change Metatrash would refuse is caught here instead of failing quietly
@@ -35,7 +37,6 @@ const MAX_ACKNOWLEDGE_FILES = 50;
 const MAX_PRINT_IMAGE = 2000;
 export const MAX_FOOTER = 500;
 
-const CHILD_NAME = /^[A-Za-z0-9._][A-Za-z0-9._-]*\/?$/;
 const GITHUB_REPO = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
 const GIT_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/;
 
@@ -158,13 +159,13 @@ function keyValues(s: FolderSettings, isRoot: boolean): Record<string, unknown> 
   if (!isRoot && s.inherit) out.inherit = true;
   if (s.purpose.trim()) out.purpose = s.purpose;
   const children = s.children.filter(c => c.name.trim());
-  if (children.length) out.children = Object.fromEntries(children.map(c => [c.name.trim(), c.text]));
+  if (children.length) out.children = Object.fromEntries(children.map(c => [c.name, c.text]));
   const locks = Object.entries(s.locked).filter(([, level]) => level);
   // With inherit, a folder that sets no locks of its own uses its parent's; an empty map overrides them.
   const inheritsLocks = !isRoot && s.inherit && !s.ownLocks;
   if (!inheritsLocks && (locks.length || (s.inherit && !isRoot))) out.locked = Object.fromEntries(locks);
   const readOnly = s.readOnly.filter(r => r.name.trim());
-  if (readOnly.length) out.readOnly = Object.fromEntries(readOnly.map(r => [r.name.trim(), r.level]));
+  if (readOnly.length) out.readOnly = Object.fromEntries(readOnly.map(r => [r.name, r.level]));
   const services: Record<string, unknown>[] = [];
   if (s.github) {
     const svc: Record<string, string> = { type: 'github', repo: s.github.repo.trim() };
@@ -327,8 +328,6 @@ export interface SpaceContext {
 /** One problem with the form, and the dialog page it is on. */
 export interface Problem { page: 'general' | 'security' | 'connections' | 'publishing'; text: string }
 
-const hasDotName = (path: string) => path.split('/').some((seg, i, all) => seg.startsWith('.') && !(i === all.length - 1 && seg === SETTINGS_FILE));
-
 /** Every reason Metatrash would refuse the settings `text` for `folder` written by a person. */
 export function check(s: FolderSettings, text: string, folder: string, ctx: SpaceContext): Problem[] {
   const problems: Problem[] = [];
@@ -338,11 +337,11 @@ export function check(s: FolderSettings, text: string, folder: string, ctx: Spac
   if (children.length > MAX_CHILDREN) problems.push({ page: 'general', text: `There are ${children.length} descriptions; ${MAX_CHILDREN} is the most.` });
   const names = new Set<string>();
   for (const c of children) {
-    const name = c.name.trim();
+    const name = c.name;
     const bare = name.replace(/\/$/, '');
     if (!name) problems.push({ page: 'general', text: 'A description has no file or folder name.' });
-    else if (name.length > 240 || !CHILD_NAME.test(name) || bare === '.' || bare === '..' || /^\.git\.*$/i.test(bare)) {
-      problems.push({ page: 'general', text: `"${name}" should be one file name, or a folder name ending in / (letters, digits, dots, dashes and underscores).` });
+    else if (new TextEncoder().encode(name).length > 240 || storageNameProblem(bare) !== null) {
+      problems.push({ page: 'general', text: `"${name}" should be one file name, or a folder name ending in / (Unicode and punctuation are allowed; reserved names and control characters are not).` });
     } else if (names.has(name)) problems.push({ page: 'general', text: `"${name}" is described twice.` });
     names.add(name);
     if (c.text.length > MAX_CHILD_TEXT) problems.push({ page: 'general', text: `The description of "${name}" is over ${MAX_CHILD_TEXT} characters.` });
@@ -352,7 +351,7 @@ export function check(s: FolderSettings, text: string, folder: string, ctx: Spac
   if (readOnly.length > MAX_LOCKS) problems.push({ page: 'security', text: `There are ${readOnly.length} read-only entries; ${MAX_LOCKS} is the most.` });
   const entries = new Set<string>();
   for (const r of readOnly) {
-    const entry = r.name.trim();
+    const entry = r.name;
     const name = entry.replace(/\/$/, '');
     if (!name || entry.length > 240 || name.includes('/') || name.includes('\\') || name === '.' || name === '..') {
       problems.push({ page: 'security', text: `"${entry}" should be one file name or pattern in this folder (plan.md, *.pdf) or a subfolder ending in / (archive/).` });
@@ -376,9 +375,6 @@ export function check(s: FolderSettings, text: string, folder: string, ctx: Spac
       if (other.startsWith(folder)) problems.push({ page: 'connections', text: `${other} inside this folder already mirrors a repository, and GitHub folders can't nest. Choose a folder that doesn't contain it.` });
       else if (folder.startsWith(other)) problems.push({ page: 'connections', text: `This folder is inside ${other}, which already mirrors a repository. Put this one beside it instead, for example in dependencies/.` });
     }
-  } else if (ctx.githubFolders.includes(folder)) {
-    const dotted = ctx.files.find(f => f.startsWith(folder) && hasDotName(f.slice(folder.length)));
-    if (dotted) problems.push({ page: 'connections', text: `This folder holds ${dotted}. Names starting with a dot are allowed only in GitHub folders, so move or delete such files before removing the repository.` });
   }
 
   if (s.publishedVersion !== null) {

@@ -226,10 +226,10 @@
     if (event.key === 'Escape') { creating = false; return; }
     if (event.key !== 'Enter' || !newName.trim()) return;
     if (createKind === 'file') {
-      if (await onCreate(newName.trim(), createIn)) creating = false;
+      if (await onCreate(newName, createIn)) creating = false;
       return;
     }
-    const made = await onCreateFolder?.(newName.trim(), createIn);
+    const made = await onCreateFolder?.(newName, createIn);
     if (made) {
       creating = false;
       expandTo(made);
@@ -269,7 +269,7 @@
     event.stopPropagation();
     if (event.key === 'Escape') { renaming = null; return; }
     if (event.key !== 'Enter' || !renameValue.trim()) return;
-    const renamed = await onRename?.(node.path, node.folder, renameValue.trim());
+    const renamed = await onRename?.(node.path, node.folder, renameValue);
     if (renamed == null) return;
     renaming = null;
     if (node.folder) followFolder(node.path, renamed);

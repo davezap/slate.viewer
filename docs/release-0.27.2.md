@@ -50,9 +50,12 @@ publishes native installers. Do not reuse v0.27.1 or move an existing tag. The
 company source pin must be the committed v0.27.2 tag target, not an uncommitted
 asset copy. The company release guide covers its separate server deployment.
 
-After the desktop release, publish the change note to the existing docs space's
-tools/slate-viewer/change-logs/changenotes_0.27.2.md using its folder instructions.
-That public documentation is a separate publication step, not performed by Codex.
+Completed on 2026-11-06 at David's request: Codex published the repository's
+change note to the connected `dave-zap/metatrash-com` space at
+`tools/slate-viewer/change-logs/changenotes_0.27.2.md` and read it back to verify
+the text. This is the app's user-facing source; a local note alone is not enough.
+Every subsequent Viewer release requires the same publication and verification
+step once its matching release is available.
 
 Rollback desktop clients with the preceding released installer; a website rollback
 uses the preceding company's binary and source pins. Do not revert or rewrite

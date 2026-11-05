@@ -221,9 +221,10 @@ fn trim_line(line: &str) -> String {
 /// Creates `<folder>/<name>.md` with a heading, unless it already exists. Returns its path.
 #[tauri::command(async)]
 pub fn create_note(folder: String, name: String, title: Option<String>) -> Result<String, String> {
-    let name = name.trim().trim_end_matches(".md");
-    if name.is_empty() || name.contains(['/', '\\', ':', '*', '?', '"', '<', '>', '|']) || name.starts_with('.') {
-        return Err(format!("\"{name}\" can't be used as a note name."));
+    let name = name.strip_suffix(".md").unwrap_or(&name);
+    if name.is_empty() { return Err("A name is needed.".into()); }
+    if let Some(problem) = crate::files::name_problem(&format!("{name}.md")) {
+        return Err(problem);
     }
     let path = PathBuf::from(folder).join(format!("{name}.md"));
     if path.exists() {

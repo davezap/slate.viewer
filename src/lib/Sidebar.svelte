@@ -89,7 +89,7 @@
   async function finishCreate(event: KeyboardEvent) {
     if (event.key === 'Escape') { creating = false; return; }
     if (event.key !== 'Enter' || !newName.trim()) return;
-    if (await onCreate(newName.trim())) creating = false;
+    if (await onCreate(newName)) creating = false;
   }
 
   // ---- Search ------------------------------------------------------------------

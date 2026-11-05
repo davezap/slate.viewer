@@ -236,7 +236,7 @@ export const backend: Backend = {
       return { matches: out.matches.map(({ path, line, text }) => ({ path, line, text })), truncated: out.matches.length >= 200 };
     },
     createNote: async (folder, name, title) => {
-      const path = `${folder}/${name}`;
+      const path = `${folder}/${name.endsWith('.md') ? name : `${name}.md`}`;
       await writeFile(path, `# ${title}\n`, true);
       return path;
     },

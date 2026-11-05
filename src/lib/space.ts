@@ -66,28 +66,10 @@ export function isCloudSyncedFolder(folder: string): boolean {
 
 export const SPACE_FILE_LIMIT = 64 * 1024;
 
-const SEGMENT = /^[A-Za-z0-9_.][A-Za-z0-9._-]*$/;
+export { storagePathProblem as spacePathProblem } from './filenames';
 
-/** Why `relative` (a path inside the space, with /) can't be stored in a space, or null if it can. */
-export function spacePathProblem(relative: string): string | null {
-  if (relative.length > 240) return 'The path is longer than 240 characters.';
-  // eslint-disable-next-line no-control-regex
-  if (/[^\x00-\x7f]/.test(relative)) return 'Names in a space can only use plain ASCII letters.';
-  const segments = relative.split('/');
-  if (segments.length > 8) return 'Spaces allow at most 8 folder levels.';
-  for (const segment of segments) {
-    if (!SEGMENT.test(segment)) {
-      return /\s/.test(segment)
-        ? 'Names in a space can\'t contain spaces.'
-        : `"${segment}" can only use letters, digits, dots, dashes and underscores.`;
-    }
-    if (segment.startsWith('.') && segment !== '.metatrash.json') return 'Names in a space can\'t start with a dot.';
-  }
-  return null;
-}
-
-/** A name that a space accepts: "My Note!" → "my-note". */
-export function spaceSafeName(name: string): string {
+/** Find older notes created under the previous automatic slug naming rule. */
+export function legacySpaceSlug(name: string): string {
   const slug = name
     .normalize('NFKD')
     .replace(/[̀-ͯ]/g, '')

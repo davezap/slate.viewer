@@ -6,22 +6,25 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-/// Characters Windows doesn't allow in names (and `/`, which separates folders everywhere).
-const BAD_CHARACTERS: [char; 9] = ['/', '\\', ':', '*', '?', '"', '<', '>', '|'];
-
-/// Why `name` can't be used for a file or folder, or None when it can.
+/// Storage allows Unicode and punctuation; native Windows has extra limits.
 pub(crate) fn name_problem(name: &str) -> Option<String> {
-    if name.trim().is_empty() {
-        return Some("A name is needed.".into());
+    let alias = name.trim_end_matches(['.', ' ']).to_lowercase();
+    if alias.is_empty() || alias == ".git" {
+        return Some("That name is reserved.".into());
     }
-    if name != name.trim() || name.ends_with('.') {
-        return Some(format!("\"{name}\" can't start or end with a space, or end with a dot."));
+    if name.contains(['/', '\\']) || name.chars().any(char::is_control) {
+        return Some("Names cannot contain slashes, backslashes or control characters.".into());
     }
-    if name.contains(BAD_CHARACTERS) || name.chars().any(char::is_control) {
-        return Some(format!("\"{name}\" can't contain any of / \\ : * ? \" < > |"));
-    }
-    if name.starts_with('.') {
-        return Some(format!("\"{name}\" starts with a dot, which hides it."));
+    if cfg!(windows) {
+        if name.ends_with(['.', ' ']) || name.contains([':', '*', '?', '"', '<', '>', '|']) {
+            return Some("Windows cannot create that name.".into());
+        }
+        let stem = name.split('.').next().unwrap_or("").trim_end_matches(' ').to_uppercase();
+        let device_number = stem.strip_prefix("COM").or_else(|| stem.strip_prefix("LPT"));
+        if matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
+            || device_number.map(|n| ["1", "2", "3", "4", "5", "6", "7", "8", "9", "¹", "²", "³"].contains(&n)).unwrap_or(false) {
+            return Some("Windows reserves that device name.".into());
+        }
     }
     None
 }
@@ -156,10 +159,14 @@ mod tests {
         assert!(name_problem("plan v2.md").is_none());
         assert!(name_problem("").is_some());
         assert!(name_problem("a/b").is_some());
-        assert!(name_problem("what?").is_some());
-        assert!(name_problem(".hidden").is_some());
-        assert!(name_problem("trailing.").is_some());
-        assert!(name_problem(" padded").is_some());
+        assert_eq!(name_problem("what?").is_some(), cfg!(windows));
+        assert!(name_problem(".hidden").is_none());
+        assert_eq!(name_problem("trailing.").is_some(), cfg!(windows));
+        assert!(name_problem(" padded").is_none());
+        assert!(name_problem("Café 📄 [draft].md").is_none());
+        assert_eq!(name_problem("CON.txt").is_some(), cfg!(windows));
+        assert!(name_problem("bad\nname").is_some());
+        assert!(name_problem(".git .").is_some());
     }
 
     #[test]
@@ -179,7 +186,7 @@ mod tests {
         rename_path(s("notes"), s("archive")).unwrap();
         assert!(dir.join("archive/sub").is_dir());
         assert!(rename_path(s("missing.md"), s("x.md")).is_err());
-        assert!(rename_path(s("b.md"), s("bad?.md")).is_err());
+        assert_eq!(rename_path(s("b.md"), s("bad?.md")).is_err(), cfg!(windows));
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -190,7 +197,7 @@ mod tests {
         create_folder(s(""), "ideas".into()).unwrap();
         assert!(dir.join("ideas").is_dir());
         assert!(create_folder(s(""), "ideas".into()).is_err());
-        assert!(create_folder(s(""), "a:b".into()).is_err());
+        assert_eq!(create_folder(s(""), "a:b".into()).is_err(), cfg!(windows));
 
         fs::write(dir.join("plan.md"), "# Plan\n").unwrap();
         assert!(duplicate_file(s("plan.md"), false).unwrap().ends_with("plan copy.md"));
