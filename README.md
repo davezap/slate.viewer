@@ -305,7 +305,9 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
   from a web address, which the tooltip names with its refresh schedule). They open in their own app. A linked file
   that is text opens read-only, since Metatrash Sync puts the space's version back after a local change. Right-click a
   virtual PDF, Word or HTML file and choose **Convert to Markdown** to save the space's Markdown of it as `<name>.md`
-  beside it (asking before it replaces one), which then opens. A file put in a synced folder shows dimmed until Sync
+  (asking before it replaces one), which then opens; the original moves into `assets/` beside it (keeping its history)
+  and the Markdown starts with an **Open original PDF** link to it (0.28.0). An original already in an `assets/`
+  folder stays there and its Markdown goes in the folder above. A file put in a synced folder shows dimmed until Sync
   has uploaded it, then turns virtual (0.20.2: the Viewer re-reads the space's virtual files after each Sync pass).
   Opening a conflict copy of a linked file, or of one locked for everyone, says the original can't be changed here and
   that the edit is kept in the copy (0.20.1); there is no merge. Clicking a picture opens the system's viewer; showing it in

@@ -2133,24 +2133,62 @@
     return extra.length ? [...folderFiles, ...extra] : folderFiles;
   });
 
-  /** Saves the space's Markdown for a PDF, Word or HTML file as `<name>.md` beside it, then opens it. */
+  /** What Convert to Markdown calls the original in its link back to it. */
+  const ORIGINAL_KIND: Record<string, string> = {
+    'application/pdf': 'PDF',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'Word file',
+    'text/html': 'web page',
+    'application/xhtml+xml': 'web page',
+  };
+
+  /**
+   * Convert to Markdown: saves the space's Markdown for a PDF, Word or HTML file as `<name>.md`
+   * and moves the original into `assets/` beside it, linked from the top of the Markdown, then
+   * opens the Markdown. mtsync sends the rename as a move, so the original keeps its history. An
+   * original already in an `assets/` folder stays there and its Markdown goes in the folder above.
+   */
   async function convertToMarkdown(relative: string) {
     if (!root) return;
+    const space = root;
     const v = virtualFiles[relative];
     if (!v) return;
-    const target = joinPath(root, relative.replace(/\.[^./]+$/, '') + '.md');
+    const name = basename(relative);
+    const parentOf = (p: string) => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '');
+    const folder = parentOf(relative);
+    const inAssets = folder === 'assets' || folder.endsWith('/assets');
+    const docFolder = inAssets ? parentOf(folder) : folder;
+    const assetFolder = inAssets ? folder : (folder ? `${folder}/assets` : 'assets');
+    const markdown = (docFolder ? `${docFolder}/` : '') + name.replace(/\.[^./]+$/, '') + '.md';
+    const target = joinPath(space, markdown);
     const exists = await backend.files.read(target).then(() => true, () => false);
     if (exists) {
-      const choice = await message(`${basename(target)} already exists. Replace it with the Markdown of ${basename(relative)}?`, {
+      const choice = await message(`${basename(target)} already exists. Replace it with the Markdown of ${name}?`, {
         title: 'Slate Viewer',
         kind: 'warning',
         buttons: { ok: 'Replace', cancel: 'Cancel' },
       });
       if (choice !== 'Replace') return;
     }
+    let text: string;
     try {
-      const text = await mtsync.text(v.file);
-      await backend.files.write(target, text, false);
+      text = await mtsync.text(v.file);
+    } catch (error) {
+      await showError(error);
+      return;
+    }
+    if (!inAssets) {
+      await backend.files.createFolder(joinPath(space, folder), 'assets').catch(() => undefined); // there already
+      try {
+        await backend.files.rename(joinPath(space, relative), joinPath(space, `${assetFolder}/${name}`));
+      } catch (error) {
+        await showError(error);
+        return;
+      }
+    }
+    const link = 'assets/' + name.replace(/[ ()<>%]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0'));
+    const kind = ORIGINAL_KIND[v.type] ?? 'file';
+    try {
+      await backend.files.write(target, `> [Open original ${kind}](${link})\n\n${text}`, false);
     } catch (error) {
       await showError(error);
       return;
