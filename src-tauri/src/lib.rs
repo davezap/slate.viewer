@@ -173,6 +173,7 @@ pub fn run_with_context(context: tauri::Context<tauri::Wry>, viewer_update_manif
             documents::read_document,
             documents::write_document,
             documents::save_attachment,
+            documents::upload_file,
             documents::delete_conflict_copy,
             watcher::watch_document,
             watcher::watch_folder,

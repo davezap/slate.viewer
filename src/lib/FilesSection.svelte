@@ -55,13 +55,15 @@
     virtualFiles?: Record<string, VirtualFile>;
     /** Saves a virtual PDF, Word or HTML file's Markdown beside it. Spaces only. */
     onConvert?: (path: string) => void;
+    /** Stores files dropped from outside or picked with Upload Files in `folder` (relative, "" for the root). */
+    onUpload?: (folder: string, files: File[]) => Promise<void>;
   }
 
   let {
     root, files, truncated, current, recentFolders, rootKind = 'folder', onOpen, onCreate, onCloseFolder, onChooseFolder, onOpenFolder,
     descriptions = [], reveal = null, onOpenSpace, emptyFolders = [], editable = true, locked = [],
     onCreateFolder, onRename, onMove, onDuplicate, onDelete, onProperties, unread = [], onPublish,
-    virtualFiles = {}, onConvert,
+    virtualFiles = {}, onConvert, onUpload,
   }: Props = $props();
 
   // ---- Space descriptions ------------------------------------------------------
@@ -321,21 +323,34 @@
     return !(dragging.folder && (folder === dragging.path || folder.startsWith(dragging.path + '/')));
   }
 
+  /** Files dragged in from outside (Explorer, Finder, the desktop): they are uploaded where they drop. */
+  const bringsFiles = (event: DragEvent) => !dragging && editable && !!onUpload && !!event.dataTransfer?.types.includes('Files');
+
   /** Over a folder row the target is that folder; over a file, the file's folder; elsewhere, the root. */
   function onDragOver(event: DragEvent, folder: string, hovered: Node | null = null) {
-    if (!dragging) return;
+    const upload = bringsFiles(event);
+    if (!dragging && !upload) return;
     event.stopPropagation();
-    if (!canDropInto(folder)) {
+    if (!upload && !canDropInto(folder)) {
       if (dropTarget !== null) dropTarget = null;
       return;
     }
     event.preventDefault();
-    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    if (event.dataTransfer) event.dataTransfer.dropEffect = upload ? 'copy' : 'move';
     if (dropTarget !== folder) {
       dropTarget = folder;
       clearTimeout(expandTimer);
       // Resting on a closed folder opens it, to drop deeper.
       if (hovered?.folder && !expanded.has(hovered.path)) expandTimer = setTimeout(() => expandTo(hovered.path), 700);
+    }
+  }
+
+  /** Leaving the list with files from outside: no drop target any more (no dragend comes for them). */
+  function onDragLeave(event: DragEvent) {
+    const into = event.relatedTarget as globalThis.Node | null;
+    if (!dragging && !(into && (event.currentTarget as HTMLElement).contains(into))) {
+      dropTarget = null;
+      clearTimeout(expandTimer);
     }
   }
 
@@ -345,11 +360,37 @@
     const moving = dragging;
     const folder = dropTarget;
     onDragEnd();
+    const dropped = Array.from(event.dataTransfer?.files ?? []);
+    if (!moving && folder !== null && dropped.length && onUpload && editable) {
+      expandTo(folder);
+      await onUpload(folder, dropped);
+      return;
+    }
     if (!moving || folder === null) return;
     const moved = await onMove?.(moving.path, moving.folder, folder);
     if (moved == null) return;
     expandTo(folder);
     if (moving.folder) followFolder(moving.path, moved);
+  }
+
+  // ---- Upload Files… -----------------------------------------------------------------
+
+  let picker = $state<HTMLInputElement>();
+  /** The folder the file picker's files go to. */
+  let pickFor = '';
+
+  function pickFiles(folder: string) {
+    if (!picker) return;
+    pickFor = folder;
+    picker.value = '';
+    picker.click();
+  }
+
+  async function picked() {
+    const chosen = Array.from(picker?.files ?? []);
+    if (!chosen.length || !onUpload) return;
+    expandTo(pickFor);
+    await onUpload(pickFor, chosen);
   }
 
   // ---- Right-click menu ------------------------------------------------------------
@@ -373,6 +414,11 @@
       }
       items.push({ text: 'New File in &Root…', action: () => void startCreate('') });
       if (onCreateFolder) items.push({ text: 'New Folder in Roo&t…', action: () => void startCreate('', 'folder') });
+      if (onUpload) {
+        separate();
+        if (folder) items.push({ text: `Up&load Files to ${here}…`, action: () => pickFiles(folder) });
+        items.push({ text: 'Upload Files to Root…', action: () => pickFiles('') });
+      }
     }
     if (node && !node.folder) {
       separate();
@@ -445,8 +491,10 @@
     class:drop-root={dropTarget === ''}
     oncontextmenu={event => showMenu(event, null)}
     ondragover={event => onDragOver(event, '')}
+    ondragleave={onDragLeave}
     ondrop={event => void onDrop(event)}
   >
+    <input class="upload-picker" type="file" multiple hidden bind:this={picker} onchange={() => void picked()} />
     {#if !root}
       <p class="empty">No folder is open.</p>
       <button class="open-folder" onclick={onChooseFolder}>Open Folder…</button>

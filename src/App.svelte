@@ -6,6 +6,7 @@
   import SettingsDialog from './lib/SettingsDialog.svelte';
   import type { SlateChangesEndDetail, SlateCompareEndDetail, SlateEditorApi, SlateFillEndDetail, SlateForm, SlateFormAnswers, SlateFormSubmitDetail, SlateModeChangeDetail, SlateOutline, SlateOutlineHeading, SlateUploadedAttachment, SlateWorkspaceMode } from '../public/slate/slate-editor';
   import { basename, dirname, extname, joinPath, toLocalPath } from './lib/paths';
+  import { storageNameProblem, storagePathProblem } from './lib/filenames';
   import { detectFormat, toFileText, NEW_FILE_FORMAT, type FileFormat } from './lib/document';
   import { recentFileList, recentFolderList, byDate, type RecentEntry } from './lib/recent';
   import {
@@ -792,6 +793,37 @@
     }
     await refreshFolder();
     return target;
+  }
+
+  /** Stores files dropped on the Files list or picked with Upload Files in `folder` (relative, "" for the root).
+   *  A name already there gets " (2)", " (3)"… so nothing is replaced. In a space, a converted upload
+   *  later becomes name.md with the original in assets/ (Metatrash 0.95.8). */
+  async function uploadFiles(folder: string, files: File[]) {
+    if (!root) return;
+    if (!canManageFiles) { await refuseReadOnly(); return; }
+    const taken = new Set(folderFiles.map(f => f.toLowerCase()));
+    const failed: string[] = [];
+    for (const file of files) {
+      const problem = storageNameProblem(file.name);
+      if (problem) { failed.push(`${file.name || 'A file'}: ${problem}`); continue; }
+      const dot = file.name.lastIndexOf('.');
+      const stem = dot > 0 ? file.name.slice(0, dot) : file.name;
+      const ext = dot > 0 ? file.name.slice(dot) : '';
+      let relative = folder ? `${folder}/${file.name}` : file.name;
+      for (let n = 2; taken.has(relative.toLowerCase()) && n < 1000; n++) {
+        relative = `${folder ? `${folder}/` : ''}${stem} (${n})${ext}`;
+      }
+      const pathProblem = rootInSpace() ? storagePathProblem(relative) : null;
+      if (pathProblem) { failed.push(`${file.name}: ${pathProblem}`); continue; }
+      try {
+        await backend.files.upload(joinPath(root, relative), file);
+        taken.add(relative.toLowerCase());
+      } catch (error) {
+        failed.push(`${file.name}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    await refreshFolder();
+    if (failed.length) await showError(`Couldn't upload ${failed.length === 1 ? 'a file' : `${failed.length} files`}.\n\n${failed.join('\n')}`);
   }
 
   /** Copies a note beside itself ("plan copy.md", or "plan-copy.md" in a space). */
@@ -3107,6 +3139,7 @@
               files={sidebarFiles}
               {virtualFiles}
               onConvert={openedSpace ? (relative => void convertToMarkdown(relative)) : undefined}
+              onUpload={uploadFiles}
               {emptyFolders}
               truncated={folderTruncated}
               current={currentRelative}

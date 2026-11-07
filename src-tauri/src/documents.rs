@@ -98,6 +98,42 @@ pub fn save_attachment(document_path: String, folder: String, name: String, byte
     Ok(format!("{}/{}", folder.trim_matches(['/', '\\']), file_name))
 }
 
+/// Stores a file the person dropped on the Files list or picked with Upload
+/// Files: the bytes are the request body, its full path the hex of its UTF-8
+/// in `x-path` (headers carry ASCII only). Never replaces a file.
+#[tauri::command(async)]
+pub fn upload_file(request: tauri::ipc::Request<'_>) -> Result<(), String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("The file's content is missing.".into());
+    };
+    let hex = request
+        .headers()
+        .get("x-path")
+        .and_then(|v| v.to_str().ok())
+        .ok_or("The file's place is missing.")?;
+    let path = PathBuf::from(from_hex(hex).ok_or("The file's place is not readable.")?);
+    let folder = path.parent().ok_or("The file has no folder.")?;
+    if !folder.is_dir() {
+        return Err(format!("{} is not a folder.", folder.display()));
+    }
+    if path.exists() {
+        return Err(format!("{} already exists.", path.display()));
+    }
+    write_atomically(&path, bytes).map_err(|e| format!("Could not save {}: {e}", path.display()))
+}
+
+/// The text whose UTF-8 bytes `hex` spells.
+fn from_hex(hex: &str) -> Option<String> {
+    if hex.len() % 2 != 0 {
+        return None;
+    }
+    let bytes: Option<Vec<u8>> = (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(hex.get(i..i + 2)?, 16).ok())
+        .collect();
+    String::from_utf8(bytes?).ok()
+}
+
 fn write_atomically(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let folder = path.parent().unwrap_or(Path::new("."));
     let file_name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -139,6 +175,15 @@ fn unique_path(folder: &Path, name: &str) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn upload_path_from_hex() {
+        let hex: String = "C:\\a\\Ünï.pdf".bytes().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(super::from_hex(&hex).as_deref(), Some("C:\\a\\Ünï.pdf"));
+        assert_eq!(super::from_hex("4"), None);
+        assert_eq!(super::from_hex("zz"), None);
+        assert_eq!(super::from_hex("ff"), None);
+    }
+
     use super::*;
 
     #[test]

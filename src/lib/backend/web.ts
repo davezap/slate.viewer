@@ -224,6 +224,10 @@ function refusal(error: unknown): SubmitRefusal {
   return { code: '', message: String((error as Error).message) };
 }
 
+/** What a space keeps in one file (a virtual file), and the uploads that become ordinary text files. */
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+const TEXT_UPLOAD = /\.(md|markdown|txt)$/i;
+
 const notOnTheSite = (what: string) => Promise.reject(new Error(`${what} isn't available on the website.`));
 
 export const backend: Backend = {
@@ -295,6 +299,26 @@ export const backend: Backend = {
     },
     deleteConflictCopy: () => notOnTheSite('Conflict copies'),
     saveAttachment: () => notOnTheSite('Adding pictures'),
+    upload: async (path, file) => {
+      if (file.size > MAX_UPLOAD_BYTES) throw new Error(`${file.name} is over 100 MB, the most a space keeps in one file.`);
+      // A small Markdown or text file becomes an ordinary file, as if it was written here.
+      if (TEXT_UPLOAD.test(path) && file.size <= 1 << 20) {
+        const text = await file.text().then(t => (t.includes('\uFFFD') ? null : t));
+        if (text !== null) {
+          await writeFile(path, text.replace(/^\uFEFF/, ''), true);
+          return;
+        }
+      }
+      const { space, rel } = locate(path);
+      const { csrf } = await siteSession();
+      const headers: Record<string, string> = { 'Content-Type': file.type || 'application/octet-stream' };
+      if (csrf) headers['X-Metatrash-CSRF'] = csrf;
+      const res = await fetch(spaceUrl(space, 'content', { path: rel, ifInState: await stateFor(path) }),
+        { method: 'PUT', headers, body: file, credentials: 'same-origin' });
+      const data = await res.json().catch(() => null) as { newState?: string; error?: SubmitRefusal } | null;
+      if (!res.ok) throw new SiteError(data?.error?.message ?? `The site answered ${res.status}.`, res.status, data?.error?.code ?? '', data?.error);
+      if (data?.newState) fileStates.set(path, data.newState);
+    },
     folderDescriptions: async () => [],
     watchDocument: async path => { watchedDoc = path; },
     watchFolder: async root => {

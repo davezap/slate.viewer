@@ -300,6 +300,13 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
   Opening the copy or its original offers to compare them: the original opens with your copy shown
   inline (Slate's Compare), you take or keep each difference, and **Done** asks to save the original
   and delete the copy (it is never deleted without asking).
+- **Upload files** (0.29.0): drag files from Explorer, Finder or the desktop onto the Files list and they go into
+  the folder they land on (a folder row, a file's folder, or the top), or right-click and choose **Upload Files to
+  <folder>…** / **Upload Files to Root…**. A name already taken gets ` (2)`, ` (3)`… so nothing is replaced. On the
+  desktop the files are copied into the synced folder and Metatrash Sync uploads them; on the website the space
+  keeps them at once (small `.md` and `.txt` files as ordinary files, others as virtual files, up to 100 MB). On a
+  Metatrash server with Docling (0.95.8), an uploaded PDF, Word, PowerPoint or Excel file then becomes `name.md` in
+  its place with the original in `assets/`.
 - **Virtual files** (0.20.0, with mtsync 0.61.0 and Metatrash 0.60.0): PDFs, pictures, Word files and other files a
   space keeps outside Git show in Files without Show Hidden Files, with a **virtual** badge (**linked** for one fetched
   from a web address, which the tooltip names with its refresh schedule). They open in their own app. A linked file

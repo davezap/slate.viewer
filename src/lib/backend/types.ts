@@ -70,6 +70,10 @@ export interface Backend {
     deleteConflictCopy(path: string): Promise<void>;
     /** Stores `bytes` as `folder/name` beside `documentPath`; returns the path relative to the document. */
     saveAttachment(documentPath: string, folder: string, name: string, bytes: number[]): Promise<string>;
+    /** Stores a file the person dropped on the Files list or picked with Upload Files at `path` (a full path,
+     *  not taken yet). On the website a space keeps it (as a virtual file unless it is a small text file);
+     *  on the desktop it is written into the folder, and mtsync sends it to the space. */
+    upload(path: string, file: File): Promise<void>;
     folderDescriptions(root: string): Promise<FolderDescription[]>;
     /** Sends 'document-changed' when this file changes (null stops). */
     watchDocument(path: string | null): Promise<void>;

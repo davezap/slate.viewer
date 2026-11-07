@@ -58,6 +58,11 @@ export const backend: Backend = {
     trash: path => invoke('trash_path', { path }),
     deleteConflictCopy: path => invoke('delete_conflict_copy', { path }),
     saveAttachment: (documentPath, folder, name, bytes) => invoke('save_attachment', { documentPath, folder, name, bytes }),
+    upload: async (path, file) => {
+      // The bytes go as the raw request body; the path as hex, since headers carry ASCII only.
+      const hex = Array.from(new TextEncoder().encode(path), b => b.toString(16).padStart(2, '0')).join('');
+      await invoke('upload_file', new Uint8Array(await file.arrayBuffer()), { headers: { 'x-path': hex } });
+    },
     folderDescriptions: root => invoke('folder_descriptions', { root }),
     watchDocument: path => invoke('watch_document', { path }),
     watchFolder: root => invoke('watch_folder', { root }),
