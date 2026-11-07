@@ -9,6 +9,7 @@ import type { HistoryEntry, HistoryPage } from '../history';
 import type { Receipt, SubmitRefusal, SubmitResult } from '../forms';
 import type { Policies, ReaderReport } from '../policies';
 import type { SpaceRow } from '../space';
+import type { ActivityResult } from '../activity';
 import type { Backend, BackendEvents, FileFilter, MessageOptions, Unlisten } from './types';
 import { createPoller, retryAfterMilliseconds } from './polling';
 
@@ -299,24 +300,36 @@ export const backend: Backend = {
     },
     deleteConflictCopy: () => notOnTheSite('Conflict copies'),
     saveAttachment: () => notOnTheSite('Adding pictures'),
-    upload: async (path, file) => {
+    upload: async (path, file, progress) => {
       if (file.size > MAX_UPLOAD_BYTES) throw new Error(`${file.name} is over 100 MB, the most a space keeps in one file.`);
       // A small Markdown or text file becomes an ordinary file, as if it was written here.
       if (TEXT_UPLOAD.test(path) && file.size <= 1 << 20) {
         const text = await file.text().then(t => (t.includes('\uFFFD') ? null : t));
         if (text !== null) {
           await writeFile(path, text.replace(/^\uFEFF/, ''), true);
+          progress?.(file.size, file.size);
           return;
         }
       }
       const { space, rel } = locate(path);
       const { csrf } = await siteSession();
-      const headers: Record<string, string> = { 'Content-Type': file.type || 'application/octet-stream' };
-      if (csrf) headers['X-Metatrash-CSRF'] = csrf;
-      const res = await fetch(spaceUrl(space, 'content', { path: rel, ifInState: await stateFor(path) }),
-        { method: 'PUT', headers, body: file, credentials: 'same-origin' });
-      const data = await res.json().catch(() => null) as { newState?: string; error?: SubmitRefusal } | null;
-      if (!res.ok) throw new SiteError(data?.error?.message ?? `The site answered ${res.status}.`, res.status, data?.error?.code ?? '', data?.error);
+      const url = spaceUrl(space, 'content', { path: rel, ifInState: await stateFor(path) });
+      // XMLHttpRequest, not fetch: only it reports how much of the body has gone.
+      const { status, text } = await new Promise<{ status: number; text: string }>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('PUT', url);
+        xhr.withCredentials = true;
+        xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+        if (csrf) xhr.setRequestHeader('X-Metatrash-CSRF', csrf);
+        xhr.upload.onprogress = event => progress?.(event.loaded, event.lengthComputable ? event.total : file.size);
+        xhr.onload = () => resolve({ status: xhr.status, text: xhr.responseText });
+        xhr.onerror = () => reject(new Error('The upload was cut off. Check your connection and try again.'));
+        xhr.onabort = () => reject(new Error('The upload was stopped.'));
+        xhr.send(file);
+      });
+      let data: { newState?: string; error?: SubmitRefusal } | null = null;
+      try { data = text ? JSON.parse(text) : null; } catch { /* not JSON */ }
+      if (status < 200 || status >= 300) throw new SiteError(data?.error?.message ?? `The site answered ${status}.`, status, data?.error?.code ?? '', data?.error ?? undefined);
       if (data?.newState) fileStates.set(path, data.newState);
     },
     folderDescriptions: async () => [],
@@ -361,6 +374,12 @@ export const backend: Backend = {
     log: async () => '',
     syncNow: async () => { await watcher.refresh(); },
     virtual: async () => [],
+    activity: async (folder, viewing) => {
+      const { space } = locate(folder);
+      // Only owned spaces have activity; the public space answers nothing.
+      if (space === 'public') return null;
+      return call<ActivityResult>('GET', spaceUrl(space, 'activity', { viewing }));
+    },
     text: async file => (await readFile(file)).file.text,
     login: async () => { location.href = '/login'; },
     cancelLogin: async () => {},

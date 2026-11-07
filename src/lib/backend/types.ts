@@ -5,6 +5,7 @@
 import type { MenuEntry } from '../menu';
 import type { SearchMatch } from '../types';
 import type { FolderDescription, MtsyncInfo, MtsyncOutput, Registration, SpaceRow, VirtualFile } from '../space';
+import type { ActivityResult } from '../activity';
 import type { HistoryPage } from '../history';
 import type { Receipt, SubmitResult } from '../forms';
 import type { Policies, ReaderReport } from '../policies';
@@ -73,7 +74,7 @@ export interface Backend {
     /** Stores a file the person dropped on the Files list or picked with Upload Files at `path` (a full path,
      *  not taken yet). On the website a space keeps it (as a virtual file unless it is a small text file);
      *  on the desktop it is written into the folder, and mtsync sends it to the space. */
-    upload(path: string, file: File): Promise<void>;
+    upload(path: string, file: File, progress?: (sent: number, total: number) => void): Promise<void>;
     folderDescriptions(root: string): Promise<FolderDescription[]>;
     /** Sends 'document-changed' when this file changes (null stops). */
     watchDocument(path: string | null): Promise<void>;
@@ -99,6 +100,10 @@ export interface Backend {
     log(lines: number): Promise<string>;
     syncNow(folder: string): Promise<void>;
     virtual(folder: string): Promise<VirtualFile[]>;
+    /** What is happening in the space at `folder` (Metatrash 0.95.9): conversions, agent jobs and who else
+     *  has it open, with `viewing` the open file (relative) or ''. Null where it isn't available yet
+     *  (the desktop, until mtsync can ask). */
+    activity(folder: string, viewing: string): Promise<ActivityResult | null>;
     /** The space's text for a synced file (a PDF's Markdown). */
     text(file: string): Promise<string>;
     login(server: string | null): Promise<void>;

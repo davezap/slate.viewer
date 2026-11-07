@@ -10,6 +10,7 @@
   import type { MenuEntry } from './menu';
   import type { RecentEntry } from './recent';
   import { displayName, isHiddenFile, isNewWindowClick, type OpenOptions } from './types';
+  import { chipLabel, chipTitle, initials, isRunning, summary, tone, type ActivityItem } from './activity';
 
   interface Props {
     root: string | null;
@@ -57,14 +58,45 @@
     onConvert?: (path: string) => void;
     /** Stores files dropped from outside or picked with Upload Files in `folder` (relative, "" for the root). */
     onUpload?: (folder: string, files: File[]) => Promise<void>;
+    /** What is happening: this page's uploads, conversions, agent jobs and who else is here. */
+    activity?: ActivityItem[];
+    /** A failed upload's row was clicked. */
+    onDismissUpload?: (path: string) => void;
   }
 
   let {
     root, files, truncated, current, recentFolders, rootKind = 'folder', onOpen, onCreate, onCloseFolder, onChooseFolder, onOpenFolder,
     descriptions = [], reveal = null, onOpenSpace, emptyFolders = [], editable = true, locked = [],
     onCreateFolder, onRename, onMove, onDuplicate, onDelete, onProperties, unread = [], onPublish,
-    virtualFiles = {}, onConvert, onUpload,
+    virtualFiles = {}, onConvert, onUpload, activity = [], onDismissUpload,
   }: Props = $props();
+
+  // ---- Activity --------------------------------------------------------------------
+
+  /** Activity by path; a scheduled agent job (no file) goes on its folder's row. */
+  const activityByPath = $derived.by(() => {
+    const map = new Map<string, ActivityItem[]>();
+    for (const item of activity) {
+      const key = item.path || (item.kind === 'agent' ? (item.folder ?? '').replace(/\/$/, '') : null);
+      if (key === null || key === '') continue;
+      map.set(key, [...(map.get(key) ?? []), item]);
+    }
+    return map;
+  });
+  const uploadAt = (path: string) => activity.find(i => i.kind === 'upload' && i.path === path);
+  const busyIn = (folder: string) => activity.some(i => isRunning(i) && (i.path ?? i.folder ?? '').startsWith(folder + '/'));
+  /** People here with no file open, or in the top of the space. */
+  const here = $derived(activity.filter(i => i.kind === 'presence'));
+  // A clock for "converting 0:42", ticking only while something is under way.
+  let now = $state(Date.now());
+  const summaryParts = $derived(summary(activity, now));
+  const ticking = $derived(activity.some(i => isRunning(i) && !!i.since));
+  $effect(() => {
+    if (!ticking) return;
+    now = Date.now();
+    const timer = setInterval(() => (now = Date.now()), 1000);
+    return () => clearInterval(timer);
+  });
 
   // ---- Space descriptions ------------------------------------------------------
 
@@ -509,10 +541,31 @@
         {/each}
       {/if}
     {:else}
+      {#if summaryParts.length || here.length}
+        <div class="activity" role="status" aria-live="polite">
+          {#if summaryParts.length}<span class="what-now">{#if activity.some(isRunning)}<span class="spinner" aria-hidden="true"></span>{/if}{summaryParts.join(' · ')}</span>{/if}
+          {#if here.length}
+            <span class="people">
+              {#each here as person (person.who)}
+                <span class="who" title={person.message}>{initials(person.who ?? '')}</span>
+              {/each}
+            </span>
+          {/if}
+        </div>
+      {/if}
       {#if files.length === 0 && emptyFolders.length === 0}
         <p class="empty">No Markdown files in this folder yet.</p>
       {/if}
       <ul class="tree">
+        {#snippet chips(path: string)}
+          {#each activityByPath.get(path) ?? [] as item, i (i)}
+            {#if item.kind === 'presence'}
+              <span class="who small" title={item.message}>{initials(item.who ?? '')}</span>
+            {:else}
+              <span class="chip {tone(item)}" title={chipTitle(item)}>{chipLabel(item, now)}</span>
+            {/if}
+          {/each}
+        {/snippet}
         {#snippet newEntry(depth: number)}
           <li>
             <input
@@ -568,10 +621,22 @@
                   {#if isGithub(node.path)}<span class="badge" title="Mirrors a GitHub repository">GitHub</span>{/if}
                   {#if publishedVersion(node.path)}<span class="badge published" title="Publishes its files as versions: version {publishedVersion(node.path)} is the official one">v{publishedVersion(node.path)}</span>{/if}
                   {#if unreadIn(node.path)}<span class="unread" title="{unreadIn(node.path)} published {unreadIn(node.path) === 1 ? 'file' : 'files'} to read in here">●</span>{/if}
+                  {@render chips(node.path)}
+                  {#if !expanded.has(node.path) && busyIn(node.path)}<span class="spinner" title="Something is under way in here"></span>{/if}
                 </button>
                 {#if expanded.has(node.path)}
                   <ul>{@render branch(node.children, depth + 1, node.path)}</ul>
                 {/if}
+              {:else}
+{#if uploadAt(node.path)}
+                {@const up = uploadAt(node.path)!}
+                <button
+                  class="row file uploading"
+                  class:failed={up.state === 'failed'}
+                  style:padding-left="{22 + depth * 14}px"
+                  title={up.message}
+                  onclick={() => { if (up.state === 'failed') onDismissUpload?.(node.path); }}
+                ><span class="label">{node.name}</span>{@render chips(node.path)}</button>
               {:else}
                 <button
                   class="row file"
@@ -591,7 +656,8 @@
                   ondragend={onDragEnd}
                   ondragover={event => onDragOver(event, parentOf(node.path))}
                   ondrop={event => void onDrop(event)}
-                >{#if unreadSet.has(node.path)}<span class="unread before" aria-label="To read">●</span>{/if}{#if conflictOriginal(node.name) !== null}<span class="warn">⚠</span>{/if}{isHiddenFile(node.path) ? node.name : displayName(node.name)}{#if virtualFiles[node.path]}<span class="badge virtual" aria-label="Virtual file">{virtualFiles[node.path].source ? 'linked' : 'virtual'}</span>{/if}</button>
+                >{#if unreadSet.has(node.path)}<span class="unread before" aria-label="To read">●</span>{/if}<span class="label">{#if conflictOriginal(node.name) !== null}<span class="warn">⚠</span>{/if}{isHiddenFile(node.path) ? node.name : displayName(node.name)}{#if virtualFiles[node.path]}<span class="badge virtual" aria-label="Virtual file">{virtualFiles[node.path].source ? 'linked' : 'virtual'}</span>{/if}</span>{@render chips(node.path)}</button>
+              {/if}
               {/if}
             </li>
           {/each}
@@ -642,6 +708,42 @@
   .unread { margin-left: 6px; font-size: 9px; vertical-align: 1px; color: #d93025; }
   .unread.before { margin: 0 5px 0 -12px; }
   .row.file.to-read { font-weight: 600; }
+  /* Activity (0.30.0): chips after a file's name, a line at the top of the list. */
+  .row.file { display: flex; align-items: center; gap: 4px; }
+  .row.file .label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .row.file.uploading { cursor: default; color: var(--side-muted); }
+  .row.file.uploading.failed { cursor: pointer; }
+  .chip {
+    flex: none; padding: 0 5px; font-size: 10px; font-weight: 400; line-height: 15px; border-radius: 8px;
+    color: var(--side-accent); background: var(--side-accent-soft); white-space: nowrap;
+  }
+  .chip.good { color: #1e7e34; background: rgba(30, 126, 52, .12); }
+  .chip.warn { color: #9a5b00; background: rgba(178, 106, 0, .14); }
+  .chip.bad { color: #c5221f; background: rgba(217, 48, 37, .12); }
+  :global([data-theme="dark"]) .chip.good { color: #7fd18f; }
+  :global([data-theme="dark"]) .chip.warn { color: #f0b45a; }
+  :global([data-theme="dark"]) .chip.bad { color: #f28b82; }
+  .who {
+    display: inline-flex; align-items: center; justify-content: center; flex: none;
+    width: 18px; height: 18px; border-radius: 50%; font-size: 9px; font-weight: 700;
+    color: #fff; background: var(--side-accent);
+  }
+  :global([data-theme="dark"]) .who { color: #1d1a22; }
+  .who.small { width: 15px; height: 15px; font-size: 8px; }
+  .activity {
+    display: flex; align-items: center; gap: 8px; margin: 0 8px 6px; padding: 5px 8px;
+    font-size: 11px; color: var(--side-fg); background: var(--side-hover); border-radius: 5px;
+  }
+  .activity .what-now { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 6px; }
+  .activity .people { display: flex; gap: 2px; margin-left: auto; }
+  .spinner {
+    display: inline-block; flex: none; width: 9px; height: 9px; margin-left: 6px; vertical-align: -1px;
+    border: 1.5px solid var(--side-accent-soft); border-top-color: var(--side-accent); border-radius: 50%;
+    animation: spin .9s linear infinite;
+  }
+  .activity .spinner { margin-left: 0; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
   .row.conflict { color: #b26a00; }
   .warn { margin-right: 4px; }
   .open-folder.secondary, :global([data-theme="dark"]) .open-folder.secondary { color: var(--side-fg); background: var(--side-hover); }

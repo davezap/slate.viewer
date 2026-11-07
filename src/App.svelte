@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { isRunning, uploadItem, type ActivityItem, type UploadRow } from './lib/activity';
   import { onMount, tick, untrack } from 'svelte';
   import { backend, capabilities, type FolderListing, type LoadedDocument } from './lib/backend';
   import { showAddress, siteLink } from './lib/site';
@@ -487,6 +488,7 @@
     openedSpace = null;
     descriptions = [];
     virtualFiles = {};
+    uploads = [];
     policies = null;
     propertiesFor = null;
     quickOpen = false;
@@ -797,15 +799,17 @@
 
   /** Stores files dropped on the Files list or picked with Upload Files in `folder` (relative, "" for the root).
    *  A name already there gets " (2)", " (3)"… so nothing is replaced. In a space, a converted upload
-   *  later becomes name.md with the original in assets/ (Metatrash 0.95.8). */
+   *  later becomes name.md with the original in assets/ (Metatrash 0.95.8). Each file shows as a row
+   *  in Files from the start (waiting, uploading with its percentage, storing), and a failed one stays
+   *  there in red until it is clicked (0.30.0). */
   async function uploadFiles(folder: string, files: File[]) {
     if (!root) return;
     if (!canManageFiles) { await refuseReadOnly(); return; }
-    const taken = new Set(folderFiles.map(f => f.toLowerCase()));
-    const failed: string[] = [];
+    const space = root;
+    const taken = new Set([...folderFiles, ...uploads.map(u => u.path)].map(f => f.toLowerCase()));
+    const queue: { file: File; relative: string }[] = [];
+    const rows: UploadRow[] = [];
     for (const file of files) {
-      const problem = storageNameProblem(file.name);
-      if (problem) { failed.push(`${file.name || 'A file'}: ${problem}`); continue; }
       const dot = file.name.lastIndexOf('.');
       const stem = dot > 0 ? file.name.slice(0, dot) : file.name;
       const ext = dot > 0 ? file.name.slice(dot) : '';
@@ -813,18 +817,105 @@
       for (let n = 2; taken.has(relative.toLowerCase()) && n < 1000; n++) {
         relative = `${folder ? `${folder}/` : ''}${stem} (${n})${ext}`;
       }
-      const pathProblem = rootInSpace() ? storagePathProblem(relative) : null;
-      if (pathProblem) { failed.push(`${file.name}: ${pathProblem}`); continue; }
+      taken.add(relative.toLowerCase());
+      const problem = storageNameProblem(file.name) ?? (rootInSpace() ? storagePathProblem(relative) : null);
+      if (problem) {
+        rows.push({ path: relative, state: 'failed', sent: 0, total: file.size, error: problem });
+        continue;
+      }
+      rows.push({ path: relative, state: 'waiting', sent: 0, total: file.size });
+      queue.push({ file, relative });
+    }
+    uploads = [...uploads, ...rows];
+    const update = (relative: string, change: Partial<UploadRow>) => {
+      uploads = uploads.map(u => (u.path === relative ? { ...u, ...change } : u));
+    };
+    for (const { file, relative } of queue) {
+      if (root !== space) break;
+      update(relative, { state: 'uploading' });
       try {
-        await backend.files.upload(joinPath(root, relative), file);
-        taken.add(relative.toLowerCase());
+        await backend.files.upload(joinPath(space, relative), file, (sent, total) => {
+          update(relative, { sent, total, state: sent >= total ? 'storing' : 'uploading' });
+        });
+        // Keep the row until the listing has the file, so it never blinks out.
+        await refreshFolder();
+        uploads = uploads.filter(u => u.path !== relative);
+        kickActivity();
       } catch (error) {
-        failed.push(`${file.name}: ${error instanceof Error ? error.message : String(error)}`);
+        update(relative, { state: 'failed', error: error instanceof Error ? error.message : String(error) });
       }
     }
-    await refreshFolder();
-    if (failed.length) await showError(`Couldn't upload ${failed.length === 1 ? 'a file' : `${failed.length} files`}.\n\n${failed.join('\n')}`);
+    if (root !== space) uploads = [];
   }
+
+  /** A failed upload's row was clicked: say why, then take the row away. */
+  async function dismissUpload(relative: string) {
+    const row = uploads.find(u => u.path === relative);
+    uploads = uploads.filter(u => u.path !== relative);
+    if (row?.state === 'failed') await showError(`Couldn't upload ${basename(relative)}.\n\n${row.error ?? ''}`);
+  }
+
+  // ---- Activity: uploads, conversions, agent jobs and who else is here (Metatrash 0.95.9) ----
+
+  /** This page's uploads (waiting, going, failed), shown as rows in Files until the space lists them. */
+  let uploads = $state<UploadRow[]>([]);
+  /** What the space says is happening; empty where the backend can't say (the desktop for now). */
+  let activity = $state<ActivityItem[]>([]);
+  const shownActivity = $derived([...uploads.map(uploadItem), ...activity]);
+  let kickActivity: () => void = () => {};
+
+  // Asks every 3 s while something is under way, else every 15 s (presence), only while the page
+  // is visible. When work finishes the listing is refreshed at once, so the new name.md appears
+  // without waiting for the next poll.
+  $effect(() => {
+    const dir = root;
+    if (!dir || !openedSpace) { activity = []; return; }
+    let stopped = false, busy = false, again = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let running = new Set<string>();
+    const run = async () => {
+      if (stopped) return;
+      if (busy) { again = true; return; }
+      busy = true;
+      clearTimeout(timer);
+      let delay = 15000;
+      try {
+        if (document.visibilityState === 'visible') {
+          const out = await backend.sync.activity(dir, untrack(() => currentRelative) ?? '');
+          if (stopped) return;
+          if (out === null) { activity = []; stopped = true; return; }
+          activity = out.items;
+          const now = new Set(out.items.filter(isRunning).map(i => `${i.kind}:${i.path ?? ''}:${i.action ?? ''}`));
+          if ([...running].some(key => !now.has(key))) void refreshFolder();
+          running = now;
+          if (now.size || untrack(() => uploads.length)) delay = 3000;
+        }
+      } catch {
+        delay = 30000;
+      } finally {
+        busy = false;
+      }
+      if (stopped) return;
+      if (again) { again = false; void run(); return; }
+      timer = setTimeout(() => void run(), delay);
+    };
+    const onVisible = () => { if (document.visibilityState === 'visible') void run(); };
+    document.addEventListener('visibilitychange', onVisible);
+    kickActivity = () => void run();
+    void run();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+      kickActivity = () => {};
+    };
+  });
+
+  // Say which file is open, so others see it.
+  $effect(() => {
+    void currentRelative;
+    untrack(() => kickActivity());
+  });
 
   /** Copies a note beside itself ("plan copy.md", or "plan-copy.md" in a space). */
   async function duplicateEntry(relative: string) {
@@ -2159,10 +2250,12 @@
     virtualFiles = next;
   }
 
-  /** The listing plus the space's virtual files, which a listing of notes alone would hide. */
+  /** The listing plus the space's virtual files, which a listing of notes alone would hide, and the
+   *  uploads still on their way. */
   const sidebarFiles = $derived.by(() => {
-    const extra = Object.keys(virtualFiles).filter(f => !folderFiles.includes(f));
-    return extra.length ? [...folderFiles, ...extra] : folderFiles;
+    const listed = new Set(folderFiles);
+    const extra = [...Object.keys(virtualFiles), ...uploads.map(u => u.path)].filter(f => !listed.has(f));
+    return extra.length ? [...folderFiles, ...new Set(extra)] : folderFiles;
   });
 
   /** What Convert to Markdown calls the original in its link back to it. */
@@ -3140,6 +3233,8 @@
               {virtualFiles}
               onConvert={openedSpace ? (relative => void convertToMarkdown(relative)) : undefined}
               onUpload={uploadFiles}
+              activity={shownActivity}
+              onDismissUpload={relative => void dismissUpload(relative)}
               {emptyFolders}
               truncated={folderTruncated}
               current={currentRelative}

@@ -307,6 +307,14 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
   keeps them at once (small `.md` and `.txt` files as ordinary files, others as virtual files, up to 100 MB). On a
   Metatrash server with Docling (0.95.8), an uploaded PDF, Word, PowerPoint or Excel file then becomes `name.md` in
   its place with the original in `assets/`.
+- **Activity** (0.30.0, website, with Metatrash 0.95.9): Files shows what is happening in the space. Each upload is a
+  row from the start (waiting, uploading with its percentage, storing, or **upload failed** in red until clicked,
+  which says why). Chips on rows follow Docling conversions (queued, converting with a timer, moving…, ✓ converted
+  on the new page, not converted or kept as is with the reason on hover) and folder action jobs (agent waiting,
+  running, done, failed, skipped). A collapsed folder with work inside shows a spinner, a line at the top of Files
+  sums it up, and the initials of other people with the space open show there and on the file they are viewing. It
+  asks every 3 seconds while something is under way and every 15 otherwise, only while the page is visible. The
+  desktop app doesn't show it yet (it needs mtsync to ask).
 - **Virtual files** (0.20.0, with mtsync 0.61.0 and Metatrash 0.60.0): PDFs, pictures, Word files and other files a
   space keeps outside Git show in Files without Show Hidden Files, with a **virtual** badge (**linked** for one fetched
   from a web address, which the tooltip names with its refresh schedule). They open in their own app. A linked file

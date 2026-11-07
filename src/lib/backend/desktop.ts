@@ -80,6 +80,7 @@ export const backend: Backend = {
     start: () => invoke('mtsync_start'),
     log: lines => invoke('mtsync_log', { lines }),
     syncNow: folder => invoke('mtsync_sync', { folder }),
+    activity: async () => null,
     virtual: async folder => JSON.parse(await invoke<string>('mtsync_virtual', { folder })) as VirtualFile[],
     text: file => invoke('mtsync_text', { file }),
     login: server => invoke('mtsync_login', { server }),
