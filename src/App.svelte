@@ -44,7 +44,7 @@
   import SubmissionsDialog from './lib/SubmissionsDialog.svelte';
   import {
     answerKeyName, answerKeyText, clearDraft, fetchReceipt, fetchReceipts, loadDraft, parseFiledCopy, reviewCopy, saveDraft, submitForm,
-    type FiledCopy, type FormDraft, type Receipt, type Review } from './lib/forms';
+    type FiledCopy, type FormDraft, type Receipt, type Review, needsInfo } from './lib/forms';
   import ReviewBanner from './lib/ReviewBanner.svelte';
   import { SETTINGS_FILE, effectiveSettings, folderChain, frozenKeys, pageFooter, printImage, publishText, toSavedVersion } from './lib/folderSettings';
   import { renderFooter } from './lib/footer';
@@ -1715,6 +1715,11 @@
   /** The answers were sent, so ending fill mode keeps no draft. */
   let fillSent = false;
   let submissionsDialog = $state<{ id?: string } | null>(null);
+  /**
+   * The person's copy of the open form that a reviewer sent back for more information, with the
+   * answers sent (Metatrash 0.95.10). Sending the form while there is one replaces that copy.
+   */
+  let sentBack = $state<{ path: string; receipt: Receipt } | null>(null);
   let formTimer: ReturnType<typeof setTimeout> | undefined;
   let draftTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -1741,6 +1746,30 @@
     if (!openedSpace || spaceRelative(path) === null) return 'Open it from its Metatrash space (File > Open Metatrash Space) to fill it in and send it.';
     return null;
   });
+
+  /** Which form to ask about a sent-back copy: its synced folder and path in the space, or ''. */
+  const sentBackKey = $derived(currentForm && !currentForm.error && path && openedSpace && currentRelative !== null && !formUnavailable
+    ? `${openedSpace.folder}\n${currentRelative}\n${path}` : '');
+
+  $effect(() => {
+    const key = sentBackKey;
+    untrack(() => void loadSentBack(key));
+  });
+
+  /** Asks the space whether the person's newest copy of the open form was sent back. */
+  async function loadSentBack(key: string) {
+    if (sentBack && sentBack.path !== path) sentBack = null;
+    if (!key) return;
+    const [folder, relative, file] = key.split('\n');
+    let receipt: Receipt | null = null;
+    try {
+      receipt = await needsInfo(folder, relative);
+    } catch {
+      return; // Older servers and mtsync have no such state; the form works as before.
+    }
+    if (sentBackKey !== key) return;
+    sentBack = receipt ? { path: file, receipt } : null;
+  }
 
   /** Why the open form shows greyed out instead of ready to fill in, or null. */
   function fillBlocked(): string | null {
@@ -1860,9 +1889,10 @@
     const relative = spaceRelative(file);
     const published = relative !== null ? policyFor(policies, relative) : null;
     const version = published?.file && !(published.file.draft && publishedView?.path !== file) ? published.folder.version : undefined;
+    const resends = sentBack?.path === file ? sentBack.receipt.id : undefined;
     let result;
     try {
-      result = await submitForm(file, detail.answers, version);
+      result = await submitForm(file, detail.answers, version, resends);
     } catch (error) {
       editor.setFormStatus(String(error), { kind: 'error', busy: false });
       return;
@@ -1872,6 +1902,7 @@
       fillSent = true;
       clearDraft(file);
       sentForm = { path: file, receipt: result.receipt };
+      if (sentBack?.path === file) sentBack = null;
       editor.endFill();
       // Sending it counted as reading it, or a quiz was marked: the dot and the bars catch up.
       if (result.receipt.acknowledged || result.receipt.quiz) void loadPolicies();
@@ -1886,6 +1917,10 @@
         ? 'A new version of this form was published since it was opened. Wait for it to sync, check your answers and send again.'
         : 'This form was changed in the space since it was opened. Wait for it to sync, check your answers and send again.', { kind: 'error', busy: false });
       void loadPolicies();
+    } else if (code === 'not_needs_info') {
+      // The reviewer changed their mind, or it was sent again from elsewhere: send it as a new copy.
+      if (sentBack?.path === file) sentBack = null;
+      editor.setFormStatus(`${text} Choose Send to send it as a new copy.`, { kind: 'error', busy: false });
     } else if (['quiz_passed', 'quiz_waiting', 'retry_later', 'not_published', 'read_first'].includes(code)) {
       editor.setFormStatus(text, { kind: 'error', busy: false });
       void loadPolicies();
@@ -1935,6 +1970,21 @@
     const wrong = Object.entries(last.marks ?? {}).filter(([, m]) => m === false).map(([name]) => ({ name, message: 'This answer was not right.' }));
     editor.setFormProblems(wrong);
     editor.setFormStatus(wrong.length === 1 ? 'Your last answers: 1 was not right.' : `Your last answers: ${wrong.length} were not right.`);
+  }
+
+  /** A form sent back for more information: the answers as sent, to change and send again. */
+  async function fixSentBack() {
+    const back = sentBack;
+    if (!editor || !path || !back || back.path !== path || !editor.isFilling() || fillReadOnly) return;
+    if (!back.receipt.answers) {
+      editor.setFormStatus('The answers you sent could not be found. Fill the form in again and choose Send.', { kind: 'error' });
+      return;
+    }
+    await editor.setFormAnswers(back.receipt.answers);
+    saveDraft(path, editor.getFormAnswers());
+    formDraft = loadDraft(path);
+    editor.setFormProblems([]);
+    editor.setFormStatus('Your answers as you sent them. Change what the reviewer asked for, then choose Send.');
   }
 
   /** After a failed quiz: an empty form. */
@@ -3344,6 +3394,9 @@
         canRetry={currentQuiz?.quiz.status === 'failed' && filling && !fillReadOnly}
         onFixAnswers={() => void fixAnswers()}
         onStartAgain={() => void startAgain()}
+        sentBack={sentBack?.path === path ? sentBack.receipt : null}
+        canFixSentBack={filling && !fillReadOnly}
+        onFixSentBack={() => void fixSentBack()}
       />
     {:else if shownCopy && canReview}
       <ReviewBanner

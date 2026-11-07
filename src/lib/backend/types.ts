@@ -111,7 +111,8 @@ export interface Backend {
     history(file: string, limit: number, offset: number): Promise<HistoryPage>;
     /** The file's text at a revision, as stored in the space. */
     show(file: string, revision: string): Promise<string>;
-    submit(file: string, answers: unknown, version: number | null): Promise<SubmitResult>;
+    /** `resends`: the person's needs-info copy these answers replace (Metatrash 0.95.10). */
+    submit(file: string, answers: unknown, version: number | null, resends: string | null): Promise<SubmitResult>;
     review(file: string, review: unknown): Promise<SubmitResult>;
     submissions(folder: string): Promise<Receipt[]>;
     submission(folder: string, id: string): Promise<Receipt>;

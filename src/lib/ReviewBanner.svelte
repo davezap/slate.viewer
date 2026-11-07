@@ -1,7 +1,8 @@
 <script lang="ts">
   // The bar above a copy of a form filed in a review space (Metatrash 0.50.0), for someone who can
   // write to that space: who sent it and its review so far. A form is approved or declined, with an
-  // optional note. A quiz is marked by its answer key; written answers wait here for a tick or a
+  // optional note, or sent back for more information with a note saying what is missing (Metatrash
+  // 0.95.10); the person's fixed copy arrives as a new file, and this one then says it was resent. A quiz is marked by its answer key; written answers wait here for a tick or a
   // cross. Use This as Answers makes a quiz copy the key that marks everyone's answers.
   import { formatWhen } from './history';
   import { reviewText, type FiledCopy, type Review } from './forms';
@@ -44,9 +45,19 @@
     onReview({ marks: ticks, ...(note.trim() ? { note: note.trim() } : {}) });
   }
 
-  function sendStatus(status: 'approved' | 'declined') {
+  /** needs-info without a note: the box says what to write. */
+  let askNote = $state(false);
+  $effect(() => { if (note.trim()) askNote = false; });
+
+  function sendStatus(status: 'approved' | 'declined' | 'needs-info') {
+    if (status === 'needs-info' && !note.trim()) {
+      askNote = true;
+      return;
+    }
     onReview({ status, ...(note.trim() ? { note: note.trim() } : {}) });
   }
+
+  const resent = $derived(copy.status === 'resent');
 </script>
 
 <div class="bar" class:done={reviewed} role="status">
@@ -61,6 +72,8 @@
         <span class:ask={!reviewed} class:ok={copy.status === 'approved'}>{reviewText(copy)}{copy.quiz && copy.passMark !== undefined && reviewed ? `, pass mark ${copy.passMark}%` : ''}{copy.reviewedBy ? ` · ${copy.reviewedBy}, ${formatWhen(copy.reviewedAt ?? '')}` : ''}.</span>
       {/if}
       {#if copy.note}<span class="note">“{copy.note}”</span>{/if}
+      {#if resent}<span>{copy.submittedBy || 'They'} sent a fixed copy, which is in this folder to review.</span>{/if}
+      {#if copy.resends && !resent}<span>This is a fixed copy, sent again after a reviewer asked for more.</span>{/if}
     </div>
     {#if problem}<div class="error">{problem}</div>{/if}
     {#if copy.quiz && toTick.length}
@@ -75,14 +88,17 @@
         {/each}
       </div>
     {/if}
-    {#if !copy.quiz || toTick.length}
+    {#if !resent && (!copy.quiz || toTick.length)}
       <div class="actions">
-        <input type="text" maxlength="2000" placeholder="Note for {copy.submittedBy || 'them'} (optional)" bind:value={note} disabled={busy} />
+        <input type="text" maxlength="2000" class:wanted={askNote} placeholder={askNote ? `What should ${copy.submittedBy || 'they'} add or change?` : `Note for ${copy.submittedBy || 'them'} (optional)`} bind:value={note} disabled={busy} />
         {#if copy.quiz}
           <button class="primary" disabled={busy || !allTicked} onclick={sendMarks} title={allTicked ? 'Save the marks; the score follows from them' : 'Tick or cross every written answer first'}>{busy ? 'Saving…' : 'Reviewed'}</button>
         {:else}
           <button class="primary" disabled={busy} onclick={() => sendStatus('approved')}>{busy ? 'Saving…' : reviewed ? 'Approve Instead' : 'Approve'}</button>
           <button disabled={busy} onclick={() => sendStatus('declined')}>{reviewed ? 'Decline Instead' : 'Decline'}</button>
+          {#if copy.status !== 'needs-info'}
+            <button disabled={busy} onclick={() => sendStatus('needs-info')} title="Send it back with your note; they fix the form and send it again">Ask for More</button>
+          {/if}
         {/if}
       </div>
     {/if}
@@ -109,6 +125,7 @@
   .ticks { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; color: var(--side-muted); }
   .tick { display: inline-flex; align-items: center; gap: 4px; color: var(--side-fg); }
   .actions { display: flex; gap: 8px; align-items: center; }
+  input.wanted { border-color: var(--side-accent); outline: 1px solid var(--side-accent); }
   input {
     flex: 1; min-width: 0; padding: 4px 8px; font: inherit; color: inherit;
     background: var(--side-input); border: 1px solid var(--side-border); border-radius: 6px;

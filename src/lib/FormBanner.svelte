@@ -3,7 +3,8 @@
   // in (Slate Viewer 0.16.0); in Edit and Source, Fill In goes to Preview. Also My Submissions,
   // Discard Draft and what happened to the last answers sent. A quiz (Metatrash 0.50.0) also
   // says where this person is with it, what to read first (0.51.0), and after a fail offers Fix My
-  // Answers and Start Again.
+  // Answers and Start Again. A form a reviewer sent back for more information (Metatrash 0.95.10)
+  // shows their note and Fix My Answers; sending it again replaces that copy.
   import { formatWhen } from './history';
   import type { FormDraft, Receipt } from './forms';
   import type { PolicyFile, PolicyQuiz } from './policies';
@@ -27,9 +28,14 @@
     canRetry?: boolean;
     onFixAnswers?: () => void;
     onStartAgain?: () => void;
+    /** The person's copy of this form that a reviewer sent back for more information. */
+    sentBack?: Receipt | null;
+    /** The form is open to fill in, so the answers sent can come back. */
+    canFixSentBack?: boolean;
+    onFixSentBack?: () => void;
   }
 
-  let { form, unavailable, editing, draft, sent, onFill, onDiscardDraft, onSubmissions, quiz = null, canRetry = false, onFixAnswers, onStartAgain }: Props = $props();
+  let { form, unavailable, editing, draft, sent, onFill, onDiscardDraft, onSubmissions, quiz = null, canRetry = false, onFixAnswers, onStartAgain, sentBack = null, canFixSentBack = false, onFixSentBack }: Props = $props();
 
   /** Where the copies go, without the person's own folder: owner/space. */
   const reviewSpace = $derived(form.submitTo.split('/').slice(0, 2).join('/'));
@@ -55,6 +61,12 @@
       <span>{unavailable}</span>
     {:else if editing}
       <span>You're changing the form itself. Fill In (or Preview) shows it ready to fill in.</span>
+    {:else if sentBack && !sent}
+      <span class="ask">A reviewer asked for more{sentBack.reviewedAt ? ` on ${formatWhen(sentBack.reviewedAt)}` : ''}:</span>
+      {#if sentBack.note}<span class="note">“{sentBack.note}”</span>{/if}
+      <span>{canFixSentBack ? 'Fix My Answers brings back what you sent. ' : ''}When you send the form again, it replaces the copy you sent on {formatWhen(sentBack.submittedAt)}.</span>
+    {:else if sent?.resends}
+      <span class="done">✓ Sent again on {formatWhen(sent.submittedAt)}. It replaces the copy the reviewer sent back, and waits for review in {filedIn}.</span>
     {:else if sent?.quiz && sent.status === 'approved'}
       <span class="done">✓ Passed{sent.score !== undefined ? ` with ${sent.score}%` : ''}.</span>
     {:else if sent?.quiz && sent.status === 'declined'}
@@ -88,7 +100,12 @@
     <button onclick={() => onSubmissions(sent?.id)} title="The forms you sent from this space">My Submissions</button>
   {/if}
   {#if !form.error && !unavailable}
-    {#if canRetry && !editing}
+    {#if sentBack && !sent && canFixSentBack && !editing && !draft}
+      <button class="primary" onclick={() => onFixSentBack?.()} title="Fill the form in with the answers you sent, to change what the reviewer asked for">Fix My Answers</button>
+    {:else if sentBack && !sent && canFixSentBack && !editing}
+      <button onclick={() => onFixSentBack?.()} title="Replace your draft with the answers you sent">Fix My Answers</button>
+      <button onclick={onDiscardDraft} title="Forget the answers saved on this computer">Discard Draft</button>
+    {:else if canRetry && !editing}
       <button onclick={() => onFixAnswers?.()} title="Your last answers, with the ones that were not right marked">Fix My Answers</button>
       <button onclick={() => onStartAgain?.()} title="Clear the answers">Start Again</button>
     {:else if draft}
@@ -112,6 +129,7 @@
   .text span { color: var(--side-muted); }
   .text .done { color: var(--side-accent); }
   .text .ask { color: var(--side-fg); font-weight: 600; }
+  .text .note { color: var(--side-fg); font-style: italic; }
   .text .error { color: #c0392b; }
   button {
     flex: none; padding: 4px 12px; font: inherit; color: inherit; cursor: pointer;

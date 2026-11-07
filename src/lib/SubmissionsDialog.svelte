@@ -110,6 +110,9 @@
                 <dt>Note</dt><dd class="note">{detail.note}</dd>
               {/if}
             </dl>
+            {#if detail.status === 'needs-info'}
+              <p class="muted">Open {detail.template.split('/').pop()} to fix your answers and send it again; the new copy replaces this one.</p>
+            {/if}
             {#if answers.length}
               <table>
                 <thead><tr><th>Field</th><th>Answer</th>{#if marks}<th></th>{/if}</tr></thead>

@@ -445,16 +445,30 @@ pub struct SubmitOutcome {
 
 /// Sends `answers` (a JSON object of field name to answer) to the form `file`: `mtsync -json
 /// submit FILE -` (mtsync 0.49.0). With `version`, the answers are to the form as published in
-/// that version of its folder (`-published N`, mtsync 0.50.0). A refusal comes back as ok: false
-/// with the server's error.
+/// that version of its folder (`-published N`, mtsync 0.50.0). With `resends`, they replace the
+/// person's copy a reviewer marked needs-info (`-resends ID`, mtsync 0.95.10). A refusal comes back
+/// as ok: false with the server's error.
 #[tauri::command]
-pub async fn mtsync_submit(file: String, answers: String, version: Option<u32>) -> Result<SubmitOutcome, String> {
-    if version.is_some() { require_reviews().await? } else { require_forms().await? }
+pub async fn mtsync_submit(file: String, answers: String, version: Option<u32>, resends: Option<String>) -> Result<SubmitOutcome, String> {
+    let resends = resends.filter(|id| !id.is_empty());
+    if let Some(id) = &resends {
+        if id.len() != 32 || !id.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err("That copy can't be sent again: its ID is not valid.".into());
+        }
+        require_resends().await?
+    } else if version.is_some() {
+        require_reviews().await?
+    } else {
+        require_forms().await?
+    }
     let out = tauri::async_runtime::spawn_blocking(move || {
         let version = version.map(|v| v.to_string());
         let mut args = vec!["-json"];
         if let Some(v) = &version {
             args.extend(["-published", v.as_str()]);
+        }
+        if let Some(id) = &resends {
+            args.extend(["-resends", id.as_str()]);
         }
         args.extend(["submit", file.as_str(), "-"]);
         run_with_input_blocking(&args, answers.as_bytes())
@@ -470,6 +484,17 @@ fn outcome(out: Output) -> SubmitOutcome {
     SubmitOutcome { ok: out.ok, json: if json.starts_with('{') { json } else { String::new() }, message }
 }
 
+/// Sending a copy back for more information needs mtsync 0.95.10 (`submit -resends`).
+const RESENDS_VERSION: (u32, u32, u32) = (0, 95, 10);
+
+async fn require_resends() -> Result<(), String> {
+    let out = run(None, vec!["version".into()]).await?;
+    match parse_version(&out.stdout) {
+        Some(v) if out.ok && v >= RESENDS_VERSION => Ok(()),
+        _ => Err("Sending a form again after a reviewer asked for more needs mtsync 0.95.10 or later. Update mtsync and try again.".into()),
+    }
+}
+
 /// Reviews and quizzes need mtsync 0.50.0 (`review`, `submit -published`).
 const REVIEWS_VERSION: (u32, u32, u32) = (0, 50, 0);
 
@@ -482,7 +507,8 @@ async fn require_reviews() -> Result<(), String> {
 }
 
 /// Reviews the filed copy `file` (in a review space this person can write to): `review` is
-/// `{"status": "approved"|"declined", "note"}` for a form, or `{"marks": {...}, "note"}` for a
+/// `{"status": "approved"|"declined"|"needs-info", "note"}` for a form (needs-info, with a note,
+/// needs Metatrash 0.95.10), or `{"marks": {...}, "note"}` for a
 /// quiz. `mtsync -json review FILE -` (mtsync 0.50.0); a refusal comes back as ok: false.
 #[tauri::command]
 pub async fn mtsync_review(file: String, review: String) -> Result<SubmitOutcome, String> {
@@ -625,5 +651,7 @@ mod tests {
         assert!(parse_version("mtsync 0.48.0").unwrap() >= POLICIES_VERSION);
         assert!(parse_version("mtsync 0.48.0").unwrap() < FORMS_VERSION);
         assert!(parse_version("mtsync 0.49.0").unwrap() >= FORMS_VERSION);
+        assert!(parse_version("mtsync 0.95.9").unwrap() < RESENDS_VERSION);
+        assert!(parse_version("mtsync 0.95.10").unwrap() >= RESENDS_VERSION);
     }
 }

@@ -394,10 +394,10 @@ export const backend: Backend = {
       const { space, rel } = locate(file);
       return (await call<ReadResult>('GET', spaceUrl(space, 'file', { path: rel, revision }))).file.text;
     },
-    submit: async (file, answers, version): Promise<SubmitResult> => {
+    submit: async (file, answers, version, resends): Promise<SubmitResult> => {
       const { space, rel } = locate(file);
       try {
-        const receipt = await call<Receipt>('POST', spaceUrl(space, 'submissions'), { path: rel, answers, ...(version ? { version } : {}) });
+        const receipt = await call<Receipt>('POST', spaceUrl(space, 'submissions'), { path: rel, answers, ...(version ? { version } : {}), ...(resends ? { resends } : {}) });
         return { ok: true, receipt };
       } catch (error) {
         return { ok: false, error: refusal(error) };

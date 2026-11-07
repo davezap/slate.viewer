@@ -403,7 +403,10 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
   **Decline** with a note for a form, a tick or cross for each written answer of a quiz, then **Reviewed** (`mtsync
   review`). **Use This as Answers** on a quiz copy saves it, without its submission, as `<space>-<form>-answers.md`
   beside it: the answer key.
-  Logic: `ReviewBanner.svelte`, `parseFiledCopy` and `answerKeyText` in `src/lib/forms.ts`, `quizFor` and `quizzesCovering` in
+  **Ask for More** (Metatrash and mtsync 0.95.10) sends a form's copy back with the note saying what is missing
+  (`needs-info`). When the sender opens the form again, its bar shows the reviewer's note and **Fix My Answers** (the
+  answers as sent); Send then replaces that copy (`resends`), and the old copy says it was sent again (`resent`).
+  Logic: `ReviewBanner.svelte`, `needsInfo`, `parseFiledCopy` and `answerKeyText` in `src/lib/forms.ts`, `quizFor` and `quizzesCovering` in
   `src/lib/policies.ts`.
 - **Accounts.** mtsync signs a computer in as one Metatrash account, and every space syncs as it. Open Space names the
   account (`mtsync whoami`, mtsync and Metatrash 0.49.1) and offers **Switch Account…**, which runs `mtsync login` again

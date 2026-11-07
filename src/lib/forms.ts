@@ -21,8 +21,14 @@ export interface Receipt {
   text?: string;
   /** After sending: the published version sending it confirmed reading, in a folder that asks people to read it (Metatrash 0.49.4). */
   acknowledged?: number;
-  /** Every copy is reviewed (Metatrash 0.50.0): submitted (waiting), approved or declined. */
+  /**
+   * Every copy is reviewed (Metatrash 0.50.0): submitted (waiting), approved or declined. Since
+   * Metatrash 0.95.10 a reviewer may ask for more (needs-info, with a note): the person fixes the
+   * form and sends it again, and this copy becomes resent.
+   */
   status?: ReviewStatus;
+  /** After sending again: the needs-info copy this one replaced (Metatrash 0.95.10). */
+  resends?: string;
   /** The reviewer's note. */
   note?: string;
   reviewedAt?: string;
@@ -36,7 +42,9 @@ export interface Receipt {
   answers?: SlateFormAnswers;
 }
 
-export type ReviewStatus = 'submitted' | 'approved' | 'declined';
+export type ReviewStatus = 'submitted' | 'approved' | 'declined' | 'needs-info' | 'resent';
+
+const reviewStatuses: ReviewStatus[] = ['submitted', 'approved', 'declined', 'needs-info', 'resent'];
 
 /** What the review of a receipt says, in a few words. */
 export function reviewText(r: Pick<Receipt, 'status' | 'quiz' | 'score'>): string {
@@ -47,6 +55,8 @@ export function reviewText(r: Pick<Receipt, 'status' | 'quiz' | 'score'>): strin
   }
   if (r.status === 'approved') return 'Approved';
   if (r.status === 'declined') return 'Declined';
+  if (r.status === 'needs-info') return 'Needs more information';
+  if (r.status === 'resent') return 'Sent again';
   return r.status ? 'Waiting for review' : '';
 }
 
@@ -60,15 +70,27 @@ export type SubmitResult = { ok: true; receipt: Receipt } | { ok: false; error: 
 
 /**
  * Sends `answers` to the form `file` (a full path in a synced folder). With `version`, they are
- * answers to the form as published in that version of its folder (Metatrash 0.50.0).
+ * answers to the form as published in that version of its folder (Metatrash 0.50.0). With
+ * `resends`, they replace the person's copy a reviewer marked needs-info (Metatrash 0.95.10).
  */
-export async function submitForm(file: string, answers: SlateFormAnswers, version?: number): Promise<SubmitResult> {
-  return backend.sync.submit(file, answers, version ?? null);
+export async function submitForm(file: string, answers: SlateFormAnswers, version?: number, resends?: string): Promise<SubmitResult> {
+  return backend.sync.submit(file, answers, version ?? null, resends ?? null);
+}
+
+/**
+ * The person's newest copy of the form at `template` (its path in the space) when a reviewer sent
+ * it back for more information, with its answers; otherwise null. A form, not a quiz.
+ */
+export async function needsInfo(folder: string, template: string): Promise<Receipt | null> {
+  const newest = (await fetchReceipts(folder)).find(r => r.template === template && !r.quiz);
+  if (newest?.status !== 'needs-info') return null;
+  return fetchReceipt(folder, newest.id);
 }
 
 /** A review of a filed copy: a form's status, or a quiz's marks for the answers still to tick. */
 export interface Review {
-  status?: 'approved' | 'declined';
+  /** needs-info takes a note saying what is missing (Metatrash 0.95.10). */
+  status?: 'approved' | 'declined' | 'needs-info';
   marks?: Record<string, boolean>;
   note?: string;
 }
@@ -125,6 +147,9 @@ export interface FiledCopy {
   reviewedBy?: string;
   reviewedAt?: string;
   note?: string;
+  /** The needs-info copy this one replaces, and for a resent copy the one that replaced it (Metatrash 0.95.10). */
+  resends?: string;
+  resentAs?: string;
 }
 
 /** The open document as a copy filed from Metatrash 0.50.0 on (front matter names its submission), or null. */
@@ -148,7 +173,8 @@ export function parseFiledCopy(text: string): FiledCopy | null {
   }
   if (!keys.form || !keys.submittedAt || !/^[0-9a-f]{32}$/.test(keys.submission ?? '')) return null;
   const number = (v?: string) => (v && /^\d+$/.test(v) ? Number(v) : undefined);
-  const status = keys.status === 'approved' || keys.status === 'declined' ? keys.status : 'submitted';
+  const status = reviewStatuses.find(s => s === keys.status) ?? 'submitted';
+  const id = (v?: string) => (v && /^[0-9a-f]{32}$/.test(v) ? v : undefined);
   return {
     form: keys.form,
     title: keys.title ?? '',
@@ -164,6 +190,8 @@ export function parseFiledCopy(text: string): FiledCopy | null {
     reviewedBy: keys.reviewedBy,
     reviewedAt: keys.reviewedAt,
     note: keys.note,
+    resends: id(keys.resends),
+    resentAs: id(keys.resentAs),
   };
 }
 
@@ -193,7 +221,7 @@ export function answerKeyText(text: string): string {
   for (; i < lines.length; i++) {
     const line = lines[i];
     if (line === '---' || line === '...') break;
-    if (!line.startsWith(' ')) skipping = /^(submission|status|score|marks|reviewedBy|reviewedAt|note):/.test(line);
+    if (!line.startsWith(' ')) skipping = /^(submission|resends|resentAs|status|score|marks|reviewedBy|reviewedAt|note):/.test(line);
     if (!skipping) out.push(line);
   }
   return [...out, ...lines.slice(i)].join('\n');

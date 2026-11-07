@@ -87,8 +87,8 @@ export const backend: Backend = {
     cancelLogin: () => invoke('mtsync_cancel_login'),
     history: async (file, limit, offset) => JSON.parse(await invoke<string>('mtsync_history', { file, limit, offset })) as HistoryPage,
     show: (file, revision) => invoke('mtsync_show', { file, revision }),
-    submit: async (file, answers, version) =>
-      outcome(await invoke<Outcome>('mtsync_submit', { file, answers: JSON.stringify(answers), version })),
+    submit: async (file, answers, version, resends) =>
+      outcome(await invoke<Outcome>('mtsync_submit', { file, answers: JSON.stringify(answers), version, resends })),
     review: async (file, review) => outcome(await invoke<Outcome>('mtsync_review', { file, review: JSON.stringify(review) })),
     submissions: async folder => {
       const out = JSON.parse(await invoke<string>('mtsync_submissions', { folder })) as { submissions?: Receipt[] };
