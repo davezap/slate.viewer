@@ -32,6 +32,8 @@ jobs:
           sudo apt-get install -y -q libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev patchelf
 
       - run: npm ci
+      - name: Browser polling lifecycle regression
+        run: npm run test:polling
       - name: svelte-check
         run: npm run check
       # Also makes dist/, which the Rust build embeds.

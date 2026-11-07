@@ -10,6 +10,7 @@ import type { Receipt, SubmitRefusal, SubmitResult } from '../forms';
 import type { Policies, ReaderReport } from '../policies';
 import type { SpaceRow } from '../space';
 import type { Backend, BackendEvents, FileFilter, MessageOptions, Unlisten } from './types';
+import { createPoller, retryAfterMilliseconds } from './polling';
 
 const API = '/api/v1/site';
 const SPACES = '/spaces/';
@@ -34,23 +35,24 @@ function locate(path: string): { space: string; root: string; rel: string } {
 }
 
 class SiteError extends Error {
-  constructor(message: string, readonly status: number, readonly code: string, readonly detail?: SubmitRefusal) { super(message); }
+  constructor(message: string, readonly status: number, readonly code: string, readonly detail?: SubmitRefusal, readonly retryAfterMs = 0) { super(message); }
 }
 
-async function call<T>(method: string, url: string, body?: unknown): Promise<T> {
+async function call<T>(method: string, url: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   const headers: Record<string, string> = {};
   if (method !== 'GET') {
     const { csrf } = await siteSession();
     if (csrf) headers['X-Metatrash-CSRF'] = csrf;
   }
   if (body !== undefined) headers['Content-Type'] = 'application/json';
-  const res = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), credentials: 'same-origin' });
+  const res = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), credentials: 'same-origin', signal });
   const text = await res.text();
   let data: unknown = null;
   try { data = text ? JSON.parse(text) : null; } catch { /* not JSON */ }
   if (!res.ok) {
     const error = (data as { error?: SubmitRefusal } | null)?.error;
-    throw new SiteError(error?.message ?? `The site answered ${res.status}.`, res.status, error?.code ?? '', error);
+    throw new SiteError(error?.message ?? `The site answered ${res.status}.`, res.status, error?.code ?? '', error,
+      retryAfterMilliseconds(res.headers.get('Retry-After')));
   }
   return data as T;
 }
@@ -117,23 +119,45 @@ function emit<K extends keyof BackendEvents>(event: K, payload?: BackendEvents[K
 let watchedRoot: string | null = null;
 let watchedState: string | null = null;
 let watchedDoc: string | null = null;
-let timer: ReturnType<typeof setInterval> | undefined;
+let watchGeneration = 0;
+let watchListening = false;
+const watcher = createPoller(poll, { intervalMs: POLL_MS });
 
-async function poll() {
-  if (!watchedRoot || !watchedState || document.visibilityState !== 'visible') return;
+function watchAvailable() {
+  return !!watchedRoot && document.visibilityState === 'visible' && navigator.onLine !== false;
+}
+
+function updateWatchAvailability() {
+  if (watchAvailable()) watcher.resume(); else watcher.pause();
+}
+
+function pauseWatch() { watcher.pause(); }
+
+function watchLifecycle(listen: boolean) {
+  if (listen === watchListening) return;
+  watchListening = listen;
+  const method = listen ? 'addEventListener' : 'removeEventListener';
+  document[method]('visibilitychange', updateWatchAvailability);
+  window[method]('online', updateWatchAvailability);
+  window[method]('offline', updateWatchAvailability);
+  window[method]('pagehide', pauseWatch);
+  window[method]('pageshow', updateWatchAvailability);
+}
+
+async function poll(signal: AbortSignal) {
+  if (!watchAvailable() || !watchedRoot) return;
   const root = watchedRoot;
+  const generation = watchGeneration;
+  const state = watchedState;
   const { space } = locate(root);
-  try {
-    const out = await call<ListResult>('GET', spaceUrl(space, 'files', { since: watchedState }));
-    if (root !== watchedRoot) return;
-    watchedState = out.state;
-    const changed = [...out.files.map(f => f.path), ...(out.removed ?? [])];
-    if (!changed.length) return;
-    emit('folder-changed');
-    if (watchedDoc && changed.some(p => `${root}/${p}` === watchedDoc)) emit('document-changed');
-  } catch {
-    // Signed out or offline for a moment: try again next time.
-  }
+  const out = await call<ListResult>('GET', spaceUrl(space, 'files', state ? { since: state } : { limit: 1 }), undefined, signal);
+  if (signal.aborted || root !== watchedRoot || generation !== watchGeneration || state !== watchedState) return;
+  watchedState = out.state;
+  if (!state) return; // Initial baseline; the normal file listing supplies UI data.
+  const changed = [...out.files.map(f => f.path), ...(out.removed ?? [])];
+  if (!changed.length) return;
+  emit('folder-changed');
+  if (watchedDoc && changed.some(p => `${root}/${p}` === watchedDoc)) emit('document-changed');
 }
 
 // ---- In-page dialogs (the site has no native ones) ---------------------------------
@@ -212,6 +236,8 @@ export const backend: Backend = {
     },
     write: async (path, text) => { await writeFile(path, text); },
     list: async (root, hidden) => {
+      const generation = watchGeneration;
+      const baseline = watchedState;
       const { space } = locate(root);
       const files: string[] = [];
       let cursor: string | undefined;
@@ -225,7 +251,9 @@ export const backend: Backend = {
         if (page >= 99) { truncated = true; break; }
         cursor = out.nextCursor;
       }
-      if (root === watchedRoot) watchedState = state;
+      // A file-list refresh supplies the initial baseline only. Advancing an
+      // established watch here could hide document edits from its next since=.
+      if (root === watchedRoot && generation === watchGeneration && baseline === null && watchedState === null) watchedState = state;
       const shown = hidden ? files : files.filter(f => !f.split('/').some(part => part.startsWith('.')));
       return { files: shown, emptyFolders: [], truncated };
     },
@@ -270,13 +298,13 @@ export const backend: Backend = {
     folderDescriptions: async () => [],
     watchDocument: async path => { watchedDoc = path; },
     watchFolder: async root => {
+      if (root) locate(root); // Validate before replacing the current watcher.
+      watchGeneration++;
       watchedRoot = root;
       watchedState = null;
-      clearInterval(timer);
-      if (!root) return;
-      const { space } = locate(root);
-      watchedState = (await call<ListResult>('GET', spaceUrl(space, 'files', { limit: 1 }))).state;
-      timer = setInterval(() => void poll(), POLL_MS);
+      watchLifecycle(!!root);
+      watcher.restart(watchAvailable());
+      await watcher.refresh();
     },
     url: path => {
       const { root, rel } = locate(path);
@@ -307,7 +335,7 @@ export const backend: Backend = {
     add: () => notOnTheSite('Adding a space'),
     start: async () => {},
     log: async () => '',
-    syncNow: async () => { await poll(); },
+    syncNow: async () => { await watcher.refresh(); },
     virtual: async () => [],
     text: async file => (await readFile(file)).file.text,
     login: async () => { location.href = '/login'; },
