@@ -1,17 +1,19 @@
 import { storageNameProblem } from './filenames';
+import { actionProblems, actionsValue, toActionForm, writerProblems, type ActionForm, type ActionWriter } from './folderActions';
 
 // A folder's settings in a Metatrash space: its .metatrash.json, read into a form the Properties
 // dialog can edit and written back. The rules mirror Metatrash's own checks (folder_config.go and
 // locks.go, 0.46.0+), so a change Metatrash would refuse is caught here instead of failing quietly
 // in Metatrash Sync. Writes from Slate Viewer go through Sync, so Metatrash counts them as a person's.
 // Publishing (publishedVersion and the acknowledge service) follows Metatrash 0.48.0, and the
-// printout image (print.image) Metatrash 0.57.6, and the page footer (footer) Metatrash 0.88.0.
+// printout image (print.image) Metatrash 0.57.6, and the page footer (footer) Metatrash 0.88.0. Actions
+// (Metatrash 0.54.0 to 0.57.x) are in folderActions.ts.
 
 export const SETTINGS_FILE = '.metatrash.json';
 
 export type LockLevel = '' | 'agents' | 'everyone';
-export type LockKey = 'purpose' | 'children' | 'services' | 'inherit' | 'readOnly' | 'publishedVersion' | 'print' | 'footer' | 'locked';
-export const LOCK_KEYS: LockKey[] = ['purpose', 'children', 'readOnly', 'services', 'publishedVersion', 'print', 'footer', 'inherit', 'locked'];
+export type LockKey = 'purpose' | 'children' | 'services' | 'inherit' | 'readOnly' | 'publishedVersion' | 'print' | 'footer' | 'actions' | 'locked';
+export const LOCK_KEYS: LockKey[] = ['purpose', 'children', 'readOnly', 'services', 'publishedVersion', 'print', 'footer', 'actions', 'inherit', 'locked'];
 export type PushMode = 'agent' | 'auto' | 'review';
 
 /** What each lockable key is, in the dialog's words. */
@@ -23,6 +25,7 @@ export const LOCK_KEY_LABELS: Record<LockKey, { title: string; about: string }> 
   publishedVersion: { title: 'Published version', about: 'Who can publish a new version of this folder.' },
   print: { title: 'Printout image', about: 'The image at the top of printed documents.' },
   footer: { title: 'Page footer', about: 'The line below every page on the website.' },
+  actions: { title: 'Actions', about: 'The agents on the Automation page. Agents can never change them; locked for everyone, people can\'t either.' },
   inherit: { title: 'Use the parent folder\'s settings', about: 'Whether this folder takes its parent\'s settings.' },
   locked: { title: 'This list of locked settings', about: 'Agents can never change it; people always can, so every lock can be lifted.' },
 };
@@ -63,6 +66,8 @@ export interface FolderSettings {
   footer: string;
   /** This folder turns the footer off (footer: ""), for itself and the folders under it. */
   footerOff: boolean;
+  /** The folder's actions (never inherited). */
+  actions: ActionForm[];
 }
 
 /** One folder's settings file: `folder` is "" for the root or "notes/" style. */
@@ -119,7 +124,7 @@ export function lockMap(value: unknown): Record<string, string> {
   return {};
 }
 
-const emptyLocks = (): Record<LockKey, LockLevel> => ({ purpose: '', children: '', services: '', inherit: '', readOnly: '', publishedVersion: '', print: '', footer: '', locked: '' });
+const emptyLocks = (): Record<LockKey, LockLevel> => ({ purpose: '', children: '', services: '', inherit: '', readOnly: '', publishedVersion: '', print: '', footer: '', actions: '', locked: '' });
 
 /** The form for a settings object. */
 export function toSettings(raw: Record<string, unknown>): FolderSettings {
@@ -150,6 +155,9 @@ export function toSettings(raw: Record<string, unknown>): FolderSettings {
     printImage: raw.print && typeof raw.print === 'object' && typeof (raw.print as Record<string, unknown>).image === 'string' ? (raw.print as Record<string, string>).image : '',
     footer: typeof raw.footer === 'string' ? raw.footer : '',
     footerOff: raw.footer === '',
+    actions: Array.isArray(raw.actions)
+      ? (raw.actions as unknown[]).filter((a): a is Record<string, unknown> => !!a && typeof a === 'object' && !Array.isArray(a)).map(toActionForm)
+      : [],
   };
 }
 
@@ -183,6 +191,7 @@ function keyValues(s: FolderSettings, isRoot: boolean): Record<string, unknown> 
   if (s.printImage.trim()) out.print = { image: s.printImage.trim() };
   if (s.footerOff) out.footer = '';
   else if (s.footer.trim()) out.footer = s.footer.trim();
+  if (s.actions.length) out.actions = actionsValue(s.actions);
   return out;
 }
 
@@ -200,11 +209,11 @@ export function toObject(s: FolderSettings, original: Record<string, unknown>, i
   const values = keyValues(s, isRoot);
   const out: Record<string, unknown> = {};
   for (const key of Object.keys(original)) {
-    if (!KNOWN_KEYS.includes(key) || key === 'actions') { out[key] = original[key]; continue; }
+    if (!KNOWN_KEYS.includes(key)) { out[key] = original[key]; continue; }
     if (!(key in values)) continue;
     out[key] = comparable(key, values[key]) === comparable(key, original[key]) ? original[key] : values[key];
   }
-  for (const key of ['inherit', 'purpose', 'children', 'locked', 'readOnly', 'publishedVersion', 'print', 'footer', 'services']) {
+  for (const key of ['inherit', 'purpose', 'children', 'locked', 'readOnly', 'publishedVersion', 'print', 'footer', 'services', 'actions']) {
     if (key in values && !(key in out)) out[key] = values[key];
   }
   return out;
@@ -228,7 +237,7 @@ export interface Effective { keys: Record<string, string>; from: Record<string, 
 /**
  * A folder's settings with inherited ones filled in, as Metatrash's effectiveSettings: `texts` maps
  * a folder to its settings text (missing folders start as Metatrash makes them). Services,
- * readOnly, publishedVersion and inherit itself are never inherited.
+ * readOnly, publishedVersion, actions and inherit itself are never inherited.
  */
 export function effectiveSettings(texts: Map<string, string | null>, folder: string): Effective {
   const own = texts.get(folder) ?? defaultSettingsText(folder);
@@ -237,7 +246,7 @@ export function effectiveSettings(texts: Map<string, string | null>, folder: str
   if (folder === '' || keys.inherit !== 'true') return { keys, from };
   const parent = effectiveSettings(texts, parentFolder(folder));
   for (const [k, v] of Object.entries(parent.keys)) {
-    if (!(k in keys) && k !== 'services' && k !== 'readOnly' && k !== 'publishedVersion' && k !== 'inherit') {
+    if (!(k in keys) && k !== 'services' && k !== 'readOnly' && k !== 'publishedVersion' && k !== 'actions' && k !== 'inherit') {
       keys[k] = v;
       from[k] = parent.from[k];
     }
@@ -323,10 +332,14 @@ export interface SpaceContext {
   files: string[];
   /** The public space can't have services (only account-owned spaces can). */
   publicSpace: boolean;
+  /** A space owned by an account (owner/slug): only those can have actions. */
+  ownedSpace: boolean;
+  /** Who is saving, for the rules on whose actions they may change. */
+  writer: ActionWriter;
 }
 
 /** One problem with the form, and the dialog page it is on. */
-export interface Problem { page: 'general' | 'security' | 'connections' | 'publishing'; text: string }
+export interface Problem { page: 'general' | 'security' | 'connections' | 'publishing' | 'automation'; text: string }
 
 /** Every reason Metatrash would refuse the settings `text` for `folder` written by a person. */
 export function check(s: FolderSettings, text: string, folder: string, ctx: SpaceContext): Problem[] {
@@ -401,6 +414,11 @@ export function check(s: FolderSettings, text: string, folder: string, ctx: Spac
 
   if (!s.footerOff) problems.push(...footerProblems(s.footer.trim()).map(text => ({ page: 'publishing' as const, text })));
 
+  problems.push(...actionProblems(s.actions, ctx.ownedSpace).map(text => ({ page: 'automation' as const, text })));
+  const savedRaw = parseObject(ctx.texts.get(folder) ?? defaultSettingsText(folder));
+  const savedActions = typeof savedRaw !== 'string' && Array.isArray(savedRaw.actions) ? savedRaw.actions as Record<string, unknown>[] : [];
+  problems.push(...writerProblems(savedActions, actionsValue(s.actions), ctx.writer).map(text => ({ page: 'automation' as const, text })));
+
   // Locks for everyone guard the values the folder sees, inherited ones included.
   const after = new Map(ctx.texts);
   after.set(folder, text);
@@ -410,7 +428,7 @@ export function check(s: FolderSettings, text: string, folder: string, ctx: Spac
     if (before.keys[key] === now.keys[key]) continue;
     const label = key in LOCK_KEY_LABELS ? LOCK_KEY_LABELS[key as LockKey].title : key;
     problems.push({
-      page: key === 'services' ? 'connections' : key === 'publishedVersion' || key === 'print' || key === 'footer' ? 'publishing' : key === 'readOnly' || key === 'inherit' ? 'security' : 'general',
+      page: key === 'services' ? 'connections' : key === 'actions' ? 'automation' : key === 'publishedVersion' || key === 'print' || key === 'footer' ? 'publishing' : key === 'readOnly' || key === 'inherit' ? 'security' : 'general',
       text: where === folder
         ? `"${label}" is locked for everyone, so it can't change. Set its lock to Unlocked or Agents on the Security page, save, and change it once that has synced.`
         : `"${label}" is locked for everyone by ${where || 'the top of the space'}, so this folder can't change it. Lift the lock in that folder's properties first.`,

@@ -1,8 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { backend } from './backend';
+  import { backend, capabilities } from './backend';
   import { joinPath } from './paths';
-  import type { FolderDescription } from './space';
+  import { mtsync, type FolderDescription } from './space';
+  import {
+    DEFAULT_STEPS, MAX_DO, PROVIDERS, RUNNER_LOG, TOOLS, WEEKDAYS, describeSchedule, describeTrigger, isOwner, matchingFiles, newAction,
+    parseSchedule, scheduleText, type ActionForm, type ActionWriter, type Schedule, type ScheduleKind,
+  } from './folderActions';
+  import { account as siteAccount, type Agent } from './siteAccount';
   import {
     SETTINGS_FILE, LOCK_KEYS, LOCK_KEY_LABELS, MAX_FOOTER, check, defaultSettingsText, effectiveLocks, effectiveSettings, folderChain,
     footerFrom, frozenKeys, lockedBy, parentFolder, parseObject, stableJson, toObject, toSavedVersion, toSettings, toText,
@@ -34,7 +39,7 @@
     { id: 'security', title: 'Security', about: 'Read-only files and locks' },
     { id: 'connections', title: 'Connections', about: 'GitHub repository' },
     { id: 'publishing', title: 'Publishing', about: 'Versions, readers, printouts and the page footer' },
-    { id: 'automation', title: 'Automation', about: 'Triggers and actions' },
+    { id: 'automation', title: 'Automation', about: 'Agents that work here by themselves' },
     { id: 'file', title: 'Settings File', about: SETTINGS_FILE },
   ];
 
@@ -69,6 +74,10 @@
   let files = $state<string[]>([]);
   let agentsFile = $state<string | null>(null);
   let agentsExcerpt = $state('');
+  /** Who is signed in, for whose actions they may change ('' account: not known, so nothing is held back). */
+  let writer = $state<ActionWriter>({ account: '', owner: '' });
+  /** The signed-in person's agents (the website only), for choosing an action's model. */
+  let myAgents = $state<Agent[]>([]);
 
   const ownPath = $derived(folder + SETTINGS_FILE);
   const readText = (relative: string) =>
@@ -89,6 +98,13 @@
         }
         original = parsed;
         form = toSettings(parsed);
+        const owner = space.space.includes('/') ? space.space.split('/')[0] : '';
+        void mtsync.whoami(space.server).then(who => {
+          if (who?.signedIn && who.account) writer = { account: who.account, owner };
+        }, () => {});
+        if (capabilities.kind === 'web' && space.space.includes('/')) {
+          void siteAccount.services().then(s => { myAgents = s.agents?.list ?? []; }, () => {});
+        }
         agentsFile = files.find(f => f.toLowerCase() === (folder + 'agents.md').toLowerCase()) ?? null;
         if (agentsFile) {
           const text = await readText(agentsFile);
@@ -107,7 +123,8 @@
   const outputText = $derived(toText(output));
   const changed = $derived(form !== null && stableJson(output) !== stableJson(original));
   const githubFolders = $derived(descriptions.filter(d => d.github).map(d => d.folder));
-  const context = $derived<SpaceContext>({ texts, githubFolders, files, publicSpace: space.space === 'public' });
+  const ownedSpace = $derived(space.space.includes('/'));
+  const context = $derived<SpaceContext>({ texts, githubFolders, files, publicSpace: space.space === 'public', ownedSpace, writer });
   const problems = $derived<Problem[]>(form && changed ? check(form, outputText, folder, context) : []);
   const problemsOn = (p: Page) => problems.filter(x => x.page === p);
 
@@ -250,6 +267,126 @@
     if (!hits.length) return entry.endsWith('/') ? 'No files in a subfolder of that name yet.' : 'No file matches yet.';
     const shown = hits.slice(0, 3).map(h => h.slice(folder.length)).join(', ');
     return `Locks ${hits.length === 1 ? '' : `${hits.length} files: `}${shown}${hits.length > 3 ? ', …' : ''}`;
+  }
+
+  // ---- Automation (folder actions) ---------------------------------------------------------------
+
+  const owning = $derived(isOwner(writer));
+  /** The action whose details are open, by its place in the list. */
+  let openAction = $state<number | null>(null);
+  /** Actions whose model is typed rather than picked. */
+  let typedModel = $state(new Set<number>());
+
+  const savedActionNames = $derived(new Set(toSettings(original).actions.map(a => a.name)));
+  const canEditAction = (a: ActionForm) => !readOnlySpace && !frozen.has('actions') && ownedSpace && (owning ? !a.member : a.member === writer.account);
+  const canRemoveAction = (a: ActionForm) => !readOnlySpace && !frozen.has('actions') && (owning || a.member === writer.account);
+  const runnerLog = $derived(files.includes(folder + RUNNER_LOG) ? folder + RUNNER_LOG : null);
+
+  /** Markdown files in this folder and below, relative to it, for instructions kept in a file. */
+  const instructionFiles = $derived(
+    files.filter(f => f.startsWith(folder) && /\.md$/i.test(f) && !/\s/.test(f.slice(folder.length)))
+      .map(f => f.slice(folder.length))
+      .filter(f => f !== RUNNER_LOG && !/(^|\/)agents\.md$/i.test(f))
+      .sort((a, b) => a.localeCompare(b)),
+  );
+
+  /** Subfolders of this folder (relative, ending in /), offered as patterns. */
+  const subfolders = $derived.by(() => {
+    const out = new Set<string>();
+    for (const f of files) {
+      if (!f.startsWith(folder)) continue;
+      const parts = f.slice(folder.length).split('/');
+      for (let i = 1; i < parts.length; i++) out.add(parts.slice(0, i).join('/') + '/');
+    }
+    return [...out].sort((a, b) => a.localeCompare(b));
+  });
+  const patternSuggestions = $derived([...new Set([...subfolders.flatMap(d => [d, `${d}*.md`]), '*.md', '*.pdf', ...entries.filter(e => !e.endsWith('/'))])]);
+
+  /** The models to choose from: the person's own agents (website), then each provider's suggested model. */
+  const modelChoices = $derived.by(() => {
+    const out: { value: string; label: string }[] = [];
+    for (const agent of myAgents) {
+      const value = `${agent.provider}/${agent.model}`;
+      if (!out.some(c => c.value === value)) out.push({ value, label: `${agent.name}: ${agent.providerName} ${agent.model}${agent.default ? ' (your default)' : ''}` });
+    }
+    for (const p of PROVIDERS) {
+      const value = `${p.value}/${p.model}`;
+      if (!out.some(c => c.value === value)) out.push({ value, label: `${p.name} ${p.model}` });
+    }
+    return out;
+  });
+  const defaultAgent = $derived(myAgents.find(a => a.default) ?? myAgents[0] ?? null);
+  const agentLabel = (a: ActionForm) => {
+    const who = a.member ? `${a.member}'s` : a.pays === 'contributor' ? 'the contributor\'s' : owning ? 'your' : 'the owner\'s';
+    return a.model ? `${a.model} on ${who} agent` : `${who} default agent`;
+  };
+
+  function addAction() {
+    if (!form) return;
+    form.actions.push(newAction(owning ? '' : writer.account, form.actions.map(a => a.name)));
+    openAction = form.actions.length - 1;
+  }
+
+  function removeAction(i: number) {
+    if (!form) return;
+    form.actions.splice(i, 1);
+    openAction = null;
+    typedModel = new Set([...typedModel].filter(x => x !== i).map(x => (x > i ? x - 1 : x)));
+  }
+
+  function setTrigger(a: ActionForm, trigger: 'files' | 'schedule') {
+    a.trigger = trigger;
+    if (trigger === 'files' && !a.on.some(p => p.trim())) a.on = ['inbound/*.md'];
+    if (trigger === 'schedule') {
+      if (!parseSchedule(a.every)) a.every = 'day 06:00';
+      if (a.pays === 'contributor') a.pays = '';
+    }
+  }
+
+  function setSchedule(a: ActionForm, change: Partial<Schedule>) {
+    const now = parseSchedule(a.every) ?? { kind: 'day' as ScheduleKind, hour: 6, minute: 0, weekday: 'monday', monthDay: 1 };
+    a.every = scheduleText({ ...now, ...change });
+  }
+
+  function setTime(a: ActionForm, value: string) {
+    const m = /^(\d{1,2}):(\d{2})/.exec(value);
+    if (m) setSchedule(a, { hour: Number(m[1]), minute: Number(m[2]) });
+  }
+
+  const clock = (s: Schedule) => `${String(s.hour).padStart(2, '0')}:${String(s.minute).padStart(2, '0')}`;
+
+  function setModel(i: number, a: ActionForm, value: string) {
+    if (value === '\u0000other') { typedModel = new Set([...typedModel, i]); return; }
+    a.model = value;
+    if (!value && a.pays === 'contributor') a.pays = '';
+  }
+
+  function setTools(a: ActionForm, name: string, on: boolean) {
+    const list = a.tools ?? TOOLS.map(t => t.name);
+    a.tools = on ? TOOLS.map(t => t.name).filter(t => t === name || list.includes(t)) : list.filter(t => t !== name);
+  }
+
+  function setWeb(a: ActionForm, on: boolean) {
+    a.web = on ? (a.raw?.web === true ? true : null) : false;
+  }
+
+  function setChange(a: ActionForm, on: boolean) {
+    a.when = on ? 'change' : a.raw?.when === 'arrive' ? 'arrive' : '';
+  }
+
+  function setPays(a: ActionForm, contributor: boolean) {
+    a.pays = contributor ? 'contributor' : a.raw?.pays === 'owner' ? 'owner' : '';
+  }
+
+  function matchNote(a: ActionForm): string {
+    const hits = matchingFiles(a.on, folder, files);
+    if (!hits.length) return 'No files here match yet. Only files that arrive after you save start a job.';
+    const shown = hits.slice(0, 3).map(h => h.slice(folder.length)).join(', ');
+    return `${hits.length === 1 ? 'One file matches' : `${hits.length} files match`} now (${shown}${hits.length > 3 ? ', …' : ''}). They don't start a job: only files that arrive after you save do.`;
+  }
+
+  function openAgentsSettings() {
+    void backend.opener.url(`${capabilities.kind === 'web' ? location.origin : space.server}/#settings/services/agents`);
   }
 
   // ---- Save -------------------------------------------------------------------------------
@@ -619,13 +756,199 @@
 
           {:else if page === 'automation'}
             <section>
-              <h3>Triggers and actions</h3>
-              <p class="hint">Coming later: rules for what happens when files in this folder change, such as pushing to GitHub, telling an agent, or tidying up. Metatrash keeps an <code>actions</code> setting reserved for them, and refuses it until they exist, so there is nothing to set here yet.</p>
+              <h3>Actions</h3>
+              <p class="hint">An action is an agent that works in this folder by itself: when files arrive (tidy every draft dropped in <code>inbound/</code>, say), or on a schedule (a news summary every morning). It follows your instructions with Metatrash's file tools, sees only this folder and the folders inside it, and notes each job in <code>{RUNNER_LOG}</code> here. Jobs run on an agent from <button class="link" onclick={openAgentsSettings}>Settings → Services → Agents</button> and use its tokens.</p>
+              {#if !ownedSpace}
+                <div class="card"><p class="hint">Actions run only in your own spaces, the ones under your name on {space.server.replace(/^https?:\/\//, '')}, not in the public space.</p></div>
+              {:else}
+                {#if !owning}
+                  <p class="note">You're a member of this space. Actions you add are your own: they run on your agent and only for files you bring. The owner's and other members' actions are shown, but only they can change them.</p>
+                {/if}
+
+                {#each form.actions as action, i (i)}
+                  {@const editable = canEditAction(action)}
+                  {@const isOpen = openAction === i}
+                  <div class="action" class:open={isOpen}>
+                    <div class="action-head">
+                      <button class="action-toggle" aria-expanded={isOpen} onclick={() => (openAction = isOpen ? null : i)}>
+                        <span class="chevron" aria-hidden="true">{isOpen ? '▾' : '▸'}</span>
+                        <span class="action-text">
+                          <span class="action-name">{action.name.trim() || 'Unnamed action'}{#if !action.raw}<span class="tag new">New</span>{/if}{#if action.member}<span class="tag">{action.member === writer.account ? 'Yours' : `${action.member}'s`}</span>{/if}</span>
+                          <span class="hint">{describeTrigger(action)} · {agentLabel(action)}</span>
+                        </span>
+                      </button>
+                      {#if canRemoveAction(action)}
+                        <button class="remove" aria-label="Remove {action.name}" title="Remove this action" onclick={() => removeAction(i)}>×</button>
+                      {/if}
+                    </div>
+
+                    {#if isOpen && owning && action.member}
+                      <div class="card adopt">
+                        <p class="hint">This is {action.member}'s own action: it runs on their agent, only for files they bring, so you can't change it. You can remove it, or adopt it to run it for everyone's files on your agent.</p>
+                        <button class="small" disabled={readOnlySpace || frozen.has('actions')} onclick={() => (action.member = '')}>Adopt It</button>
+                      </div>
+                    {/if}
+                    {#if isOpen}
+                      <fieldset class="action-body" disabled={!editable}>
+                        <label class="field">
+                          <span>Name</span>
+                          <input bind:value={action.name} spellcheck="false" maxlength="40" placeholder="tidy-draft" />
+                          <span class="hint">Lowercase letters, digits and hyphens. {RUNNER_LOG} and notice emails use it.{' '}{#if action.raw && savedActionNames.has(action.raw.name as string) && action.name !== action.raw.name} Renaming starts it afresh: its schedule and anyone who agreed to pay for it start over.{/if}</span>
+                        </label>
+
+                        <h4>When it runs</h4>
+                        <div class="choice">
+                          <label><input type="radio" name="trigger-{i}" checked={action.trigger === 'files'} onchange={() => setTrigger(action, 'files')} /> <span><b>When files arrive</b> <span class="hint">A job for each file that is added or moved in, matching the patterns below.</span></span></label>
+                          <label><input type="radio" name="trigger-{i}" checked={action.trigger === 'schedule'} onchange={() => setTrigger(action, 'schedule')} /> <span><b>On a schedule</b> <span class="hint">A job at set times, whatever has changed.</span></span></label>
+                        </div>
+
+                        {#if action.trigger === 'files'}
+                          <datalist id="action-patterns">{#each patternSuggestions as p (p)}<option value={p}></option>{/each}</datalist>
+                          {#each action.on as _, j (j)}
+                            <div class="pair">
+                              <input class="name wide" list="action-patterns" bind:value={action.on[j]} placeholder="inbound/*.md, *.pdf or inbound/" spellcheck="false" />
+                              <button class="remove" aria-label="Remove" title="Remove" disabled={action.on.length === 1} onclick={() => action.on.splice(j, 1)}>×</button>
+                            </div>
+                          {/each}
+                          <p class="matches">{matchNote(action)}</p>
+                          <button class="small" onclick={() => action.on.push('')}>Add a Pattern</button>
+                          <p class="hint small-print">A name or pattern relative to this folder (<code>*.md</code>, <code>inbound/*.pdf</code>), or a subfolder ending in <code>/</code> for every file in it. AGENTS.md, {SETTINGS_FILE} and {RUNNER_LOG} never start a job.</p>
+                          <label class="check">
+                            <input type="checkbox" checked={action.when === 'change'} onchange={event => setChange(action, event.currentTarget.checked)} />
+                            <span>Also when a matching file is edited <span class="hint">Every saved change starts a job, so keep the instructions from editing the file it works on.</span></span>
+                          </label>
+                        {:else}
+                          {@const sched = parseSchedule(action.every)}
+                          {#if sched}
+                            <div class="schedule">
+                              <select value={sched.kind} onchange={event => setSchedule(action, { kind: event.currentTarget.value as ScheduleKind })}>
+                                <option value="hour">Every hour</option>
+                                <option value="day">Every day</option>
+                                <option value="weekday">Every weekday (Mon to Fri)</option>
+                                <option value="week">Once a week</option>
+                                <option value="month">Once a month</option>
+                              </select>
+                              {#if sched.kind === 'week'}
+                                <select value={sched.weekday} onchange={event => setSchedule(action, { weekday: event.currentTarget.value })}>
+                                  {#each WEEKDAYS as d (d)}<option value={d}>on {d.charAt(0).toUpperCase() + d.slice(1)}</option>{/each}
+                                </select>
+                              {:else if sched.kind === 'month'}
+                                <select value={sched.monthDay} onchange={event => setSchedule(action, { monthDay: Number(event.currentTarget.value) })}>
+                                  {#each Array.from({ length: 28 }, (_, d) => d + 1) as d (d)}<option value={d}>on day {d}</option>{/each}
+                                </select>
+                              {/if}
+                              {#if sched.kind === 'hour'}
+                                <select value={sched.minute} onchange={event => setSchedule(action, { minute: Number(event.currentTarget.value) })}>
+                                  {#each Array.from({ length: 12 }, (_, m) => m * 5) as m (m)}<option value={m}>{m === 0 ? 'on the hour' : `at ${String(m).padStart(2, '0')} past`}</option>{/each}
+                                  {#if sched.minute % 5}<option value={sched.minute}>at {String(sched.minute).padStart(2, '0')} past</option>{/if}
+                                </select>
+                              {:else}
+                                <span>at</span>
+                                <input type="time" value={clock(sched)} onchange={event => setTime(action, event.currentTarget.value)} />
+                              {/if}
+                            </div>
+                            <p class="matches">{describeSchedule(action.every)}, in the space's time zone (set under Settings → Spaces).</p>
+                          {:else}
+                            <input class="address" bind:value={action.every} spellcheck="false" />
+                            <p class="matches">Metatrash doesn't understand this schedule. <button class="link" onclick={() => (action.every = 'day 06:00')}>Start from every day at 06:00</button></p>
+                          {/if}
+                        {/if}
+
+                        <h4>What to do</h4>
+                        <div class="choice row">
+                          <label><input type="radio" name="do-{i}" checked={action.doMode === 'text'} onchange={() => (action.doMode = 'text')} /> Instructions written here</label>
+                          <label><input type="radio" name="do-{i}" checked={action.doMode === 'file'} onchange={() => { action.doMode = 'file'; if (!action.doFile && instructionFiles.length) action.doFile = instructionFiles[0]; }} /> Instructions kept in a file</label>
+                        </div>
+                        {#if action.doMode === 'text'}
+                          <textarea rows="5" bind:value={action.doText} placeholder={action.trigger === 'files' ? 'For example: Rewrite this draft in plain English, keep its headings, save it in completed/ with the same name, then delete the draft.' : 'For example: Search the web for this week\'s news about our industry and write a one-page summary in news/ named by today\'s date.'}></textarea>
+                          <p class="meta"><span>Write it as you would brief a colleague: what to do{action.trigger === 'files' ? ' with the file' : ''}, where results go, and when to stop.</span><span class="grow"></span><span class:over={[...action.doText].length > MAX_DO}>{[...action.doText].length} / {MAX_DO}</span></p>
+                        {:else}
+                          <select class="address" bind:value={action.doFile}>
+                            {#if !instructionFiles.includes(action.doFile)}<option value={action.doFile}>{action.doFile || 'Choose a file'}</option>{/if}
+                            {#each instructionFiles as f (f)}<option value={f}>{f}</option>{/each}
+                          </select>
+                          <p class="hint small-print">A Markdown file in this folder holds longer instructions; editing it changes what the next job does.{#if action.doFile && !instructionFiles.includes(action.doFile)} This file isn't in the folder yet.{/if}</p>
+                        {/if}
+
+                        <h4>Agent</h4>
+                        {#if typedModel.has(i)}
+                          <div class="pair">
+                            <input class="name wide" bind:value={action.model} placeholder="provider/model, such as minimax/MiniMax-M3" spellcheck="false" />
+                            <button class="small" onclick={() => { typedModel = new Set([...typedModel].filter(x => x !== i)); }}>Pick from List</button>
+                          </div>
+                        {:else}
+                          <select class="address" value={action.model} onchange={event => setModel(i, action, event.currentTarget.value)}>
+                            <option value="">{action.member ? `${action.member}'s default agent` : owning ? `Your default agent${defaultAgent ? ` (${defaultAgent.name})` : ''}` : 'The owner\'s default agent'}</option>
+                            {#each modelChoices as c (c.value)}<option value={c.value}>{c.label}</option>{/each}
+                            {#if action.model && !modelChoices.some(c => c.value === action.model)}<option value={action.model}>{action.model}</option>{/if}
+                            <option value={'\u0000other'}>Another model…</option>
+                          </select>
+                        {/if}
+                        <p class="hint small-print">A model picks which of the payer's agents runs the job, by its provider and model; the default agent is used when none is chosen. {#if capabilities.kind === 'web' && !myAgents.length && ownedSpace}You have no agents yet: <button class="link" onclick={openAgentsSettings}>add one</button> with your provider's API key.{/if}</p>
+
+                        {#if !action.member}
+                          <h4>Who pays</h4>
+                          {#if action.trigger === 'schedule'}
+                            <p class="hint">The space owner pays for scheduled jobs.</p>
+                          {:else}
+                            <div class="choice">
+                              <label><input type="radio" name="pays-{i}" checked={action.pays !== 'contributor'} onchange={() => setPays(action, false)} /> <span><b>The space owner</b> <span class="hint">Every file's job runs on the owner's agent.</span></span></label>
+                              <label><input type="radio" name="pays-{i}" checked={action.pays === 'contributor'} disabled={!action.model} onchange={() => setPays(action, true)} /> <span><b>Whoever brings the file</b> <span class="hint">Each person pays for the files they add, once they agree: Metatrash emails them a link to choose their agent, and holds their files until then. Needs a model above.</span></span></label>
+                            </div>
+                          {/if}
+                        {/if}
+
+                        <details class="advanced">
+                          <summary>Limits and tools</summary>
+                          <label class="field">
+                            <span>Most tool calls per job</span>
+                            <input type="number" min="1" max="200" value={action.steps ?? ''} placeholder={String(DEFAULT_STEPS)} oninput={event => { const v = event.currentTarget.value; action.steps = v === '' ? null : Number(v); }} />
+                            <span class="hint">Stops a job that goes round in circles. Empty is {DEFAULT_STEPS}; up to 200.</span>
+                          </label>
+                          <label class="check">
+                            <input type="checkbox" checked={action.agentsMd} onchange={event => (action.agentsMd = event.currentTarget.checked)} />
+                            <span>Give the agent this folder's AGENTS.md <span class="hint">It is written for general work here, so a job with set instructions does without it unless it helps. It can still read it.</span></span>
+                          </label>
+                          <label class="check">
+                            <input type="checkbox" checked={action.web !== false} onchange={event => setWeb(action, event.currentTarget.checked)} />
+                            <span>Allow the web tools <span class="hint">Search the web and read pages it found; copies are kept for 29 days.</span></span>
+                          </label>
+                          <h4>Tools</h4>
+                          <div class="choice row">
+                            <label><input type="radio" name="tools-{i}" checked={action.tools === null} onchange={() => (action.tools = null)} /> All tools</label>
+                            <label><input type="radio" name="tools-{i}" checked={action.tools !== null} onchange={() => (action.tools = TOOLS.map(t => t.name))} /> Only these</label>
+                          </div>
+                          {#if action.tools !== null}
+                            <div class="tools">
+                              {#each TOOLS as t (t.name)}
+                                <label class:off={action.web === false && t.name.startsWith('web_')}><input type="checkbox" checked={action.tools.includes(t.name)} onchange={event => setTools(action, t.name, event.currentTarget.checked)} /> {t.title}</label>
+                              {/each}
+                            </div>
+                            <p class="hint small-print">Fewer tools cost fewer tokens per step. Leave out Write, Move and Delete for an agent that should only read and report.</p>
+                          {/if}
+                        </details>
+                      </fieldset>
+                    {/if}
+                  </div>
+                {/each}
+
+                <div class="buttons">
+                  <button class="small" disabled={readOnlySpace || frozen.has('actions') || form.actions.length >= 20 || (!owning && !writer.account)} onclick={addAction}>Add an Action</button>
+                  {#if runnerLog}<button class="small" onclick={() => { onOpenFile(runnerLog!); onClose(); }}>Open the Run Log</button>{/if}
+                </div>
+                {#if !form.actions.length}
+                  <p class="hint small-print">No actions here yet. Saving writes them to {SETTINGS_FILE}; a subfolder never runs this folder's actions.</p>
+                {/if}
+              {/if}
+              {#if lockNote('actions')}<p class="lock-note">{lockNote('actions')}</p>{/if}
+            </section>
+
+            <section>
               <div class="card">
-                <p class="hint"><b>What happens automatically today</b></p>
+                <p class="hint"><b>Also automatic in this folder</b></p>
                 <ul class="levels">
                   <li>Every folder gets an AGENTS.md and a {SETTINGS_FILE} when it gets its first file, and loses them with its last one.</li>
-                  <li>Metatrash Sync keeps this folder and the space in step, both ways.</li>
+                  {#if capabilities.kind === 'desktop'}<li>Metatrash Sync keeps this folder and the space in step, both ways.</li>{/if}
                   {#if form.publishedVersion !== null}<li>Version {form.publishedVersion} of this folder's files is what people open by default{form.acknowledge ? ', and everyone is asked to confirm they read it' : ''} (Publishing).</li>{/if}
                   {#if form.github}<li>Pushing to GitHub: {PUSH_MODES.find(m => m.mode === (form!.github!.push || 'agent'))!.title.toLowerCase()} (Connections).</li>{/if}
                 </ul>
@@ -653,7 +976,7 @@
           <button onclick={() => (confirmDiscard = false)}>Keep Editing</button>
           <button class="primary" onclick={onClose}>Discard</button>
         {:else}
-          <span class="grow footer-note" class:error={!!saveError || !!footerProblem}>{saveError || footerProblem || (changed ? 'Save writes the settings; Metatrash Sync sends them to the space.' : '')}</span>
+          <span class="grow footer-note" class:error={!!saveError || !!footerProblem}>{saveError || footerProblem || (changed ? (capabilities.kind === 'web' ? 'Save writes the settings to the space.' : 'Save writes the settings; Metatrash Sync sends them to the space.') : '')}</span>
           <button onclick={close}>{readOnlySpace ? 'Close' : 'Cancel'}</button>
           {#if !readOnlySpace}
             <button class="primary" disabled={!changed || problems.length > 0 || saving} title="Save (Ctrl+Enter)" onclick={() => void save()}>{saving ? 'Saving…' : 'Save'}</button>
@@ -771,6 +1094,34 @@
   .remove:hover:not(:disabled) { background: var(--side-hover); color: var(--side-fg); }
   .buttons { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
   .link { padding: 0; font: inherit; color: var(--side-accent); background: none; border: 0; text-decoration: underline; cursor: pointer; }
+  .action { margin-bottom: 8px; border: 1px solid var(--side-border); border-radius: 8px; background: var(--side-bg); }
+  .action.open { border-color: var(--side-accent); }
+  .action-head { display: flex; align-items: center; gap: 4px; padding-right: 6px; }
+  .action-toggle { flex: 1; min-width: 0; display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; text-align: left; font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  .action-toggle:hover .action-name { color: var(--side-accent); }
+  .chevron { width: 10px; color: var(--side-muted); }
+  .action-text { min-width: 0; }
+  .action-text .hint { font-size: 12px; overflow-wrap: anywhere; }
+  .action-name { font-weight: 600; }
+  .tag { margin-left: 8px; padding: 0 6px; border-radius: 9px; font-size: 11px; font-weight: 500; color: var(--side-accent); background: var(--side-accent-soft); }
+  .tag.new { color: var(--side-muted); background: var(--side-hover); }
+  fieldset.action-body { margin: 0; padding: 4px 12px 12px 28px; border: 0; min-width: 0; }
+  .card.adopt { margin: 0 12px 6px 28px; background: var(--side-input); }
+  .field { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; font-weight: 600; font-size: 12px; }
+  .field input { font-weight: 400; max-width: 260px; }
+  .field .hint { font-size: 12px; }
+  .choice.row { flex-direction: row; flex-wrap: wrap; gap: 16px; }
+  .schedule { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 6px 0 8px; }
+  input[type="time"], input[type="number"] {
+    box-sizing: border-box; padding: 5px 8px; font: inherit; color: inherit;
+    background: var(--side-bg); border: 1px solid var(--side-border); border-radius: 6px; outline: none;
+  }
+  .field input[type="number"] { width: 110px; }
+  details.advanced { margin-top: 14px; }
+  details.advanced summary { cursor: pointer; font-weight: 600; font-size: 12px; }
+  .tools { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 4px 12px; margin: 4px 0 6px; }
+  .tools label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+  .tools label.off { opacity: .55; }
   @media (max-width: 620px) {
     .main { flex-direction: column; }
     nav { width: auto; display: flex; gap: 4px; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--side-border); }

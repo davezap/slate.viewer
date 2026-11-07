@@ -1,6 +1,6 @@
 import { mount } from 'svelte';
 import { backend } from './lib/backend';
-import { applySiteConfig } from './lib/site';
+import { applySiteConfig, restoreLastPlace } from './lib/site';
 import App from './App.svelte';
 import './app.css';
 
@@ -14,6 +14,8 @@ window.addEventListener('unhandledrejection', event => {
   logFault('promise', reason instanceof Error ? reason.stack ?? reason.message : String(reason));
 });
 
-if (backend.capabilities.kind === 'web') applySiteConfig();
+// metatrash.com/ opens where the person left off: the page moves on before the app starts.
+const leaving = backend.capabilities.kind === 'web' && restoreLastPlace();
+if (backend.capabilities.kind === 'web' && !leaving) applySiteConfig();
 
-export default mount(App, { target: document.getElementById('app')! });
+export default leaving ? null : mount(App, { target: document.getElementById('app')! });

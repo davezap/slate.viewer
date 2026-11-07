@@ -5,6 +5,7 @@
   import MenuBar from './MenuBar.svelte';
   import SpacePicker from './SpacePicker.svelte';
   import { pickerSession } from './siteSpaces';
+  import { forgetPlace, goingHome } from './site';
   import { customTitleBar, type MenuItem } from './menu';
   import type { ThemePref } from './prefs';
 
@@ -62,6 +63,7 @@
     try {
       const { csrf } = await pickerSession();
       const res = await fetch('/api/v1/site/logout', { method: 'POST', headers: csrf ? { 'X-Metatrash-CSRF': csrf } : {}, credentials: 'same-origin' });
+      if (res.ok) forgetPlace();
       location.href = res.ok ? '/' : '/account';
     } catch {
       location.href = '/account';
@@ -102,7 +104,7 @@
 <header class="titlebar" class:custom={customTitleBar && capabilities.windows} class:web={!capabilities.menuBar} data-tauri-drag-region>
   {#if !capabilities.menuBar}
     <!-- metatrash.com: the site's own wordmark, home, instead of the app's icon and menus. -->
-    <a class="brand" href="/">metatrash<span>.</span></a>
+    <a class="brand" href="/" onclick={goingHome}>metatrash<span>.</span></a>
   {:else if customTitleBar}
     <img class="logo" src="/app-icon.png" alt="" data-tauri-drag-region />
     <MenuBar bind:this={menuBar} menus={menu} />

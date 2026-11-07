@@ -221,6 +221,9 @@ and the package manager updates and removes it.
 - Reopening a folder (Open Folder, Open Recent, Explorer) does the same for that folder. The first time
   a folder opens, it shows its `README.md` (or its only note) in Preview.
 - Up to 50 folders and files are remembered. New Window starts empty and doesn't change the session.
+- On metatrash.com (0.31.0), going to the site's home page (metatrash.com/) opens the document you had open last
+  in this browser instead. The home page still shows when you click the metatrash logo, reload it, or come back to it
+  with Back; signing out forgets the place.
 
 ### Opening from Explorer
 
@@ -333,11 +336,21 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
   edits the folder's `.metatrash.json` as a guided dialog instead of raw JSON: **General** (use the parent folder's
   settings, the folder's AGENTS.md, a summary and descriptions of what's inside), **Security** (read-only files and
   patterns with a preview of the files they lock, and which settings are locked for agents or for everyone),
-  **Connections** (the GitHub repository the folder mirrors, branch and push mode), **Automation** (reserved: Metatrash has
-  folder actions since 0.54.0, but the Viewer doesn't edit them yet) and **Settings File** (the exact JSON Save writes, and the settings the folder sees
+  **Connections** (the GitHub repository the folder mirrors, branch and push mode), **Automation** (the folder's actions,
+  0.31.0: see below) and **Settings File** (the exact JSON Save writes, and the settings the folder sees
   with inherited ones). It checks the same rules Metatrash does (lengths, names, patterns, no nested GitHub folders, locks
   for everyone, inherited ones included) before saving, so a change is never quietly refused by Sync. Keys left alone keep
   how they were written. Read-only spaces show the settings without Save. Logic: `src/lib/folderSettings.ts`.
+- **Automation** (Properties, 0.31.0) lists the folder's actions (Metatrash 0.54.0 to 0.57.x) as cards and edits each as a
+  form: its name; when it runs (files arriving that match patterns, with a preview of the files that match now and
+  "also when edited", or a schedule built from every hour / day / weekday / one day a week / one day a month and a
+  time); the instructions written in place or kept in a `.md` file of the folder; the model (on the website, picked from
+  your own agents); who pays (the owner, or whoever brings the file, which needs a model); and, under Limits and tools,
+  the most tool calls per job, the web tools, the folder's AGENTS.md and which tools the agent gets. It applies
+  Metatrash's checks before saving, and its rules on who may change what: the owner changes their own actions and may
+  remove or adopt a member's; a member adds and changes only their own (marked with their username), and sees the rest
+  read-only. Actions are only in owned spaces, never inherited, and can be locked on the Security page. **Open the Run
+  Log** opens the folder's `runner.md`. Logic: `src/lib/folderActions.ts`.
 - **Published versions and read tracking** (Metatrash 0.48.0 and mtsync 0.48.0). A folder whose `.metatrash.json` sets
   `"publishedVersion"` has an official version: its files as they were when the number was last raised. Publish a folder
   from its right-click menu (**Publish Version N…**) or its Properties (**Publishing**); unsaved edits are saved and synced

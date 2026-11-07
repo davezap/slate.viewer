@@ -1,0 +1,7 @@
+# Slate Viewer 0.31.0
+
+- **Set up folder actions in Properties.** The Automation page of a folder's Properties now lists its actions and lets you add, change and remove them with a form instead of editing `.metatrash.json` by hand. An action is an agent that works in the folder by itself: when files arrive, or on a schedule.
+- **When it runs.** Pick the files that start it (such as `inbound/*.md`, with a preview of the files that match now), and whether an edit starts it too; or build a schedule: every hour, every day, every weekday, once a week or once a month, at a time.
+- **What it does.** Write the instructions in place, or keep them in a Markdown file in the folder. Choose the model (on the website, from your own agents), who pays (you, or whoever brings the file once they agree), and under *Limits and tools* the most tool calls per job, the web tools, the folder's AGENTS.md and which tools it gets.
+- **Mistakes show before you save.** The page checks everything Metatrash checks, so a setting is never quietly refused. Members of a space can add their own actions, which run on their own agent; the owner can remove or adopt them. **Open the Run Log** shows what the folder's actions did.
+- **metatrash.com opens where you left off.** Going to metatrash.com takes you back to the document you had open last in that browser. Click the metatrash logo for the home page; signing out forgets the place.
