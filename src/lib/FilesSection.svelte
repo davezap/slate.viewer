@@ -260,6 +260,13 @@
     if (event.key === 'Escape') { creating = false; return; }
     if (event.key !== 'Enter' || !newName.trim()) return;
     if (createKind === 'file') {
+      // Every folder of a space already has its .metatrash.json: naming a new file that opens the
+      // folder's settings instead of making ".metatrash.json.md" (0.33.0).
+      if (onProperties && /^\.?metatrash\.json$/i.test(newName.trim())) {
+        creating = false;
+        onProperties(createIn);
+        return;
+      }
       if (await onCreate(newName, createIn)) creating = false;
       return;
     }
@@ -472,8 +479,9 @@
         items.push({ text: revealLabel, action: () => void backend.opener.reveal(target).catch(console.error) });
         items.push({ text: 'Copy &Path', action: () => void navigator.clipboard.writeText(target).catch(console.error) });
       } else {
-        // On the website a file's place is its address.
-        const address = location.origin + siteAddress(target);
+        // On the website a file's place is its address. A folder's ends in a slash: without one
+        // the site looked for a file of that name (Metatrash before 0.95.11 answered not found).
+        const address = location.origin + siteAddress(target) + (node.folder ? '/' : '');
         items.push({ text: 'Copy &Address', action: () => void navigator.clipboard.writeText(address).catch(console.error) });
       }
     }
@@ -598,7 +606,7 @@
                   onblur={() => (renaming = null)}
                 />
                 {#if node.folder && expanded.has(node.path)}
-                  <ul>{@render branch(node.children, depth + 1, node.path)}</ul>
+                  <ul class="children" style:--guide="{15 + depth * 14}px">{@render branch(node.children, depth + 1, node.path)}</ul>
                 {/if}
               {:else if node.folder}
                 <button
@@ -625,7 +633,7 @@
                   {#if !expanded.has(node.path) && busyIn(node.path)}<span class="spinner" title="Something is under way in here"></span>{/if}
                 </button>
                 {#if expanded.has(node.path)}
-                  <ul>{@render branch(node.children, depth + 1, node.path)}</ul>
+                  <ul class="children" style:--guide="{15 + depth * 14}px">{@render branch(node.children, depth + 1, node.path)}</ul>
                 {/if}
               {:else}
 {#if uploadAt(node.path)}
@@ -689,6 +697,13 @@
   .field::placeholder { color: var(--side-muted); }
   svg { width: 16px; height: 16px; vertical-align: middle; fill: none; stroke: currentColor; stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; }
   ul { list-style: none; margin: 0; padding: 0; }
+  /* An open folder's contents hang from a line under its arrow (0.33.0), so it is clear which
+     folder a file such as .metatrash.json belongs to however deep the tree goes. */
+  ul.children { position: relative; }
+  ul.children::before {
+    content: ''; position: absolute; top: 0; bottom: 4px; left: var(--guide);
+    border-left: 1px solid var(--side-border); pointer-events: none;
+  }
   .row {
     display: block; width: 100%; text-align: left; padding: 3px 10px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
