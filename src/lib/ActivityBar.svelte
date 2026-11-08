@@ -43,6 +43,7 @@
   {#each items as item (item.id)}
     <button
       class="item"
+      data-section={item.id}
       class:on={sections[item.id]}
       aria-pressed={sections[item.id]}
       title="{sections[item.id] ? 'Hide' : 'Show'} {item.label} ({item.keys})"

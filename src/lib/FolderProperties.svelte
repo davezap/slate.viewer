@@ -28,20 +28,25 @@
     onSaved: () => void;
     /** Opens a file of the space (relative) in the editor. */
     onOpenFile: (relative: string) => void;
+    /** The page to open on, by its guide's name (general, security, … settings-file); General if unknown. */
+    initialPage?: string;
   }
 
-  let { root, folder, space, descriptions, onClose, onSaved, onOpenFile }: Props = $props();
+  let { root, folder, space, descriptions, onClose, onSaved, onOpenFile, initialPage = 'general' }: Props = $props();
 
   type Page = 'general' | 'security' | 'connections' | 'publishing' | 'automation' | 'file';
 
-  const PAGES: { id: Page; title: string; about: string }[] = [
-    { id: 'general', title: 'General', about: 'What the folder is for' },
-    { id: 'security', title: 'Security', about: 'Read-only files and locks' },
-    { id: 'connections', title: 'Connections', about: 'GitHub repository' },
-    { id: 'publishing', title: 'Publishing', about: 'Versions, readers, printouts and the page footer' },
-    { id: 'automation', title: 'Automation', about: 'Agents that work here by themselves' },
-    { id: 'file', title: 'Settings File', about: SETTINGS_FILE },
+  const PAGES: { id: Page; title: string; about: string; help: string }[] = [
+    { id: 'general', title: 'General', about: 'What the folder is for', help: 'general.md' },
+    { id: 'security', title: 'Security', about: 'Read-only files and locks', help: 'security.md' },
+    { id: 'connections', title: 'Connections', about: 'GitHub repository', help: 'connections.md' },
+    { id: 'publishing', title: 'Publishing', about: 'Versions, readers, printouts and the page footer', help: 'publishing.md' },
+    { id: 'automation', title: 'Automation', about: 'Agents that work here by themselves', help: 'automation.md' },
+    { id: 'file', title: 'Settings File', about: SETTINGS_FILE, help: 'settings-file.md' },
   ];
+
+  /** The Folder properties guides in the Metatrash docs: one page per page here. */
+  const HELP_ROOT = 'https://metatrash.com/docs/guides/folder-properties/';
 
   const LEVELS: { level: LockLevel; title: string; about: string }[] = [
     { level: '', title: 'Unlocked', about: 'Anyone with write access can, agents included.' },
@@ -63,7 +68,9 @@
   const folderLabel = (f: string) => (f ? f : 'the top of the space');
   const title = $derived(isRoot ? space.space : folder.replace(/\/$/, ''));
 
-  let page = $state<Page>('general');
+  let page = $state<Page>(PAGES.find(p => p.help === `${initialPage}.md`)?.id ?? 'general');
+  const currentPage = $derived(PAGES.find(p => p.id === page)!);
+  const openHelp = () => void backend.opener.url(HELP_ROOT + currentPage.help);
   let loading = $state(true);
   let loadError = $state('');
   let saveError = $state('');
@@ -477,6 +484,7 @@
         </nav>
 
         <div class="content">
+          <button class="help" aria-label="Help with the {currentPage.title} page" title="Help with the {currentPage.title} page (opens the guide)" onclick={openHelp}>?</button>
           {#if readOnlySpace}
             <p class="note">You can read these settings, but this space is read-only for you, so they can't be changed here.</p>
           {/if}
@@ -1030,6 +1038,13 @@
   .nav-about { display: block; font-size: 11px; color: var(--side-muted); }
   .dot { margin-left: 6px; font-size: 9px; color: #c0392b; vertical-align: middle; }
   .content { flex: 1; min-width: 0; overflow: auto; padding: 14px 20px 18px; }
+  .help {
+    float: right; position: sticky; top: 0; z-index: 1; margin: 0 0 6px 10px;
+    width: 22px; height: 22px; padding: 0; border-radius: 50%; border: 1px solid var(--side-border);
+    font: inherit; font-size: 12px; font-weight: 700; line-height: 20px; text-align: center;
+    color: var(--side-muted); background: var(--side-bg); cursor: pointer;
+  }
+  .help:hover, .help:focus-visible { color: var(--side-accent); border-color: var(--side-accent); }
   section { margin-bottom: 18px; }
   h3 { margin: 0 0 4px; font-size: 13px; }
   h4 { margin: 14px 0 4px; font-size: 12px; }

@@ -72,3 +72,53 @@ export function savePlaceView(path: string, view: PlaceView): void {
   const kept = Object.entries(all).sort(([, a], [, b]) => (b.at ?? 0) - (a.at ?? 0)).slice(0, PLACE_LIMIT);
   writeJson(PLACES_KEY, Object.fromEntries(kept));
 }
+
+// ---- Each document's own place (0.34.1) ---------------------------------------------
+//
+// Every document reopens where it was left (the line at the top and the cursor), whichever way it
+// is opened: a link, the Files list, Back and Forward. Kept in this computer's (or browser's) own
+// storage, for the most recent DOCUMENT_LIMIT documents, until Forget Document Positions.
+
+/** Where a document was left: the line at the top of the view and the cursor or selection. */
+export interface DocumentView { topLine: number; selection: [number, number] | null }
+
+const DOCUMENTS_KEY = 'slate-viewer.documents';
+const DOCUMENT_LIMIT = 1000;
+
+type StoredDocuments = Record<string, DocumentView & { at: number }>;
+
+function documents(): StoredDocuments {
+  const stored = readJson(DOCUMENTS_KEY);
+  return stored && typeof stored === 'object' && !Array.isArray(stored) ? (stored as StoredDocuments) : {};
+}
+
+/** Where `path` was left, or null the first time it is opened (or after Forget). */
+export function documentView(path: string): DocumentView | null {
+  const stored = documents()[placeKey(path)];
+  if (!stored || typeof stored !== 'object') return null;
+  const selection = Array.isArray(stored.selection) && stored.selection.length === 2 && stored.selection.every(n => Number.isInteger(n) && n >= 0)
+    ? [stored.selection[0], stored.selection[1]] as [number, number]
+    : null;
+  return { topLine: Number.isInteger(stored.topLine) && stored.topLine >= 0 ? stored.topLine : 0, selection };
+}
+
+export function saveDocumentView(path: string, view: DocumentView): void {
+  const all = documents();
+  const key = placeKey(path);
+  const before = all[key];
+  // The top of an untouched document needn't be kept.
+  if (!before && view.topLine === 0 && (!view.selection || (view.selection[0] === 0 && view.selection[1] === 0))) return;
+  all[key] = { ...view, at: Date.now() };
+  const entries = Object.entries(all);
+  const kept = entries.length > DOCUMENT_LIMIT
+    ? entries.sort(([, a], [, b]) => (b.at ?? 0) - (a.at ?? 0)).slice(0, DOCUMENT_LIMIT)
+    : entries;
+  writeJson(DOCUMENTS_KEY, Object.fromEntries(kept));
+}
+
+/** Forgets every document's place; returns how many there were. */
+export function forgetDocumentViews(): number {
+  const count = Object.keys(documents()).length;
+  try { localStorage.removeItem(DOCUMENTS_KEY); } catch { /* storage blocked */ }
+  return count;
+}

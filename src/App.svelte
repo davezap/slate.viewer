@@ -14,7 +14,7 @@
     themePref, setThemePref, zoomPref, setZoomPref, ZOOM_MIN, ZOOM_MAX, sidebarWidthPref, setSidebarWidthPref,
     sectionsPref, setSectionsPref, sectionWeightsPref, setSectionWeightsPref, activityLabelsPref, setActivityLabelsPref,
     outlinePinnedPref, setOutlinePinnedPref, pinnedOutlineWidthPref, setPinnedOutlineWidthPref, showHiddenPref, setShowHiddenPref,
-    SECTION_IDS, type ThemePref, type SectionId,
+    SECTION_IDS, type ThemePref, type SectionId, rememberPositionsPref, setRememberPositionsPref,
   } from './lib/prefs';
   import { resolveWikiLink, noteFileName } from './lib/wiki';
   import { firstNote, isHiddenFile, isSpaceFolderFile } from './lib/types';
@@ -37,7 +37,7 @@
   import QuickOpen from './lib/QuickOpen.svelte';
   import HistoryPanel from './lib/HistoryPanel.svelte';
   import { entryLabel, fileHistory, findPublishedEntry, formatWhen, revisionText, versionLabel, type HistoryEntry } from './lib/history';
-  import { lastSession, saveSession, placeView, savePlaceView, type PlaceView } from './lib/session';
+  import { lastSession, saveSession, placeView, savePlaceView, documentView, saveDocumentView, forgetDocumentViews, type PlaceView } from './lib/session';
   import PolicyBanner from './lib/PolicyBanner.svelte';
   import { acknowledge, fetchPolicies, outstandingFiles, policyFor, quizFor, quizzesCovering, setAttentionBadge, type Policies } from './lib/policies';
   import FormBanner from './lib/FormBanner.svelte';
@@ -96,6 +96,8 @@
   let virtualFiles = $state<Record<string, VirtualFile>>({});
   /** The folder whose Properties are open (relative, "" for the top of the space), or null. */
   let propertiesFor = $state<string | null>(null);
+  /** The Properties page a #properties link asked for (its guide's name), else General. */
+  let propertiesPage = $state('general');
   let revealFolder = $state<string | null>(null);
   let docBytes = $state(0);
   /** The file's text as it was on disk when loaded or last saved, to notice changes made elsewhere. */
@@ -231,6 +233,8 @@
       await editor.setMarkdown(doc.text);
       baseline = editor.getMarkdown();
       dirty = false;
+      // A saved folder place (opening a folder, a new launch) puts its own view back after this.
+      if (!restoring) await showDocumentPlace();
       checkForm();
       recentFileList.remember(doc.path);
       recent = recentFileList.list();
@@ -357,9 +361,46 @@
   let restoring = false;
   let placeTimer: ReturnType<typeof setTimeout> | undefined;
 
+  /** Whether each document reopens where it was left (Go > Remember Position in Each Document). */
+  let rememberPositions = $state(rememberPositionsPref());
+
+  /** Saves where the open document is: the line at its top and the cursor. */
+  function rememberDocument() {
+    if (!editor || restoring || !path || !rememberPositions) return;
+    saveDocumentView(path, { topLine: editor.getTopLine(), selection: editor.getSourceSelection() });
+  }
+
+  /**
+   * Shows a document just loaded where it was left, or at its top the first time (0.34.1).
+   * Before, the view kept the last document's scroll, the same for every document.
+   */
+  async function showDocumentPlace() {
+    if (!editor || !path) return;
+    const view = rememberPositions ? documentView(path) : null;
+    const length = editor.getMarkdown().length;
+    const lines = editor.getMarkdown().split('\n').length;
+    const selection = view?.selection && view.selection[1] <= length ? view.selection : ([0, 0] as [number, number]);
+    await tick();
+    editor.restoreView({ topLine: Math.min(view?.topLine ?? 0, Math.max(0, lines - 1)), selection, focus: false });
+  }
+
+  function toggleRememberPositions() {
+    rememberPositions = !rememberPositions;
+    setRememberPositionsPref(rememberPositions);
+    if (rememberPositions) rememberDocument();
+  }
+
+  async function forgetPositions() {
+    const count = forgetDocumentViews();
+    await message(count
+      ? `Forgot where you were in ${count} document${count === 1 ? '' : 's'}. Documents open at the top until you move in them again.`
+      : 'No document positions were kept.', { title: 'Slate Viewer', kind: 'info' });
+  }
+
   /** Saves how the open folder (or, without one, the open file) is left: its file, mode, scroll and cursor. */
   function rememberPlace() {
     clearTimeout(placeTimer);
+    rememberDocument();
     const key = root ?? path;
     if (!editor || restoring || !key) return;
     savePlaceView(key, { file: path, mode: editor.getWorkspaceMode(), topLine: editor.getTopLine(), selection: editor.getSourceSelection() });
@@ -415,7 +456,10 @@
         await loadHere(joinPath(dir, target));
       }
       if (saved && savedFile && path && sameFolder(path, joinPath(dir, savedFile))) await restoreView(saved);
-      else await setMode(saved?.mode ?? 'preview');
+      else {
+        await setMode(saved?.mode ?? 'preview');
+        await showDocumentPlace();
+      }
     });
   }
 
@@ -2785,6 +2829,9 @@
           separator,
           { text: '&Back', keys: 'Alt+Left', enabled: history.length > 0, action: () => void once('nav', goBack) },
           { text: 'For&ward', keys: 'Alt+Right', enabled: forward.length > 0, action: () => void once('nav', goForward) },
+          separator,
+          { text: 'Remember &Position in Each Document', checked: rememberPositions, action: toggleRememberPositions },
+          { text: 'Forget &Document Positions', action: () => void forgetPositions() },
         ],
       },
       {
@@ -2833,12 +2880,119 @@
     return results;
   }
 
+  // ---- Links that work the app ------------------------------------------------------
+  //
+  // A document can link to a part of the app (0.34.1): #panel/<files|search|outline|history>[/open|/close],
+  // #properties/<folder>/<page>, #command/<name>. They only open or show things, never change
+  // a file or the account: anyone can put a link in a shared document. The button the link
+  // stands for flashes, so the reader learns where it is.
+
+  /** Properties pages by their guide's name (guides/folder-properties/<page>.md). */
+  const PROPERTIES_PAGES = ['general', 'security', 'connections', 'publishing', 'automation', 'settings-file'];
+
+  function flash(element: Element | null | undefined) {
+    if (!element) return;
+    element.classList.remove('link-flash');
+    void (element as HTMLElement).offsetWidth; // restart the animation
+    element.classList.add('link-flash');
+    setTimeout(() => element.classList.remove('link-flash'), 1600);
+  }
+
+  function linkProblem(text: string) {
+    void message(text, { title: 'Slate Viewer', kind: 'info' });
+  }
+
+  /** Follows #panel/…, #properties/… and #command/…; false for any other anchor. */
+  async function followAppLink(anchor: string): Promise<boolean> {
+    const [kind, ...parts] = anchor.split('/');
+    if (kind === 'panel' && parts.length) {
+      const id = parts[0] as SectionId;
+      if (!SECTION_IDS.includes(id)) { linkProblem(`There is no ${parts[0]} panel. The panels are ${SECTION_IDS.join(', ')}.`); return true; }
+      const want = parts[1] === 'open' ? true : parts[1] === 'close' ? false : null;
+      if (narrow) drawer = want === false ? (drawer === id ? null : drawer) : want === true ? id : drawer === id ? null : id;
+      else setSection(id, want ?? !sections[id]);
+      if (id === 'search' && (narrow ? drawer === id : sections[id])) { await tick(); await searchSection?.focus(); }
+      flash(document.querySelector(`[data-section="${id}"]`));
+      return true;
+    }
+    if (kind === 'properties') {
+      if (!openedSpace || !root) { linkProblem('Folder Properties opens for a folder of a space. Open a space first.'); return true; }
+      const segments = parts.filter(Boolean);
+      const page = segments.length && PROPERTIES_PAGES.includes(segments[segments.length - 1]) ? segments.pop()! : 'general';
+      const base = root.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase() + '/';
+      const inSpace = (file: string) => { const f = file.replace(/\\/g, '/'); return f.toLowerCase().startsWith(base) ? f.slice(base.length) : f; };
+      // No folder: the open document's folder. "." (#properties/./security) or an empty folder
+      // (#properties//security) is the top of the space.
+      const top = parts[0] === '' || segments[0] === '.';
+      let folder: string;
+      if (top) folder = segments.filter(s => s !== '.').join('/');
+      else if (!segments.length) {
+        const here = path ? inSpace(path) : '';
+        folder = here.includes('/') ? here.slice(0, here.lastIndexOf('/')) : '';
+      } else folder = segments.filter(s => s !== '.').join('/');
+      const want = folder.toLowerCase() + '/';
+      if (folder && !folderTruncated && ![...folderFiles, ...emptyFolders.map(f => f + '/')].some(f => inSpace(f).toLowerCase().startsWith(want))) {
+        linkProblem(`This space has no folder ${folder}.`);
+        return true;
+      }
+      propertiesFor = null;
+      await tick();
+      propertiesPage = page;
+      propertiesFor = folder;
+      return true;
+    }
+    if (kind === 'command' && parts.length) {
+      const name = parts.join('/');
+      const button = (selector: string) => document.querySelector<HTMLElement>(selector);
+      switch (name) {
+        case 'change-space': {
+          const picker = button('[data-space-picker]');
+          // The desktop app's equivalent is File > Open Metatrash Space.
+          if (!picker) { spaceDialog = true; return true; }
+          flash(picker);
+          picker.click();
+          return true;
+        }
+        case 'find': flash(button('.titlebar [aria-label="Find in document"]')); await findBar?.open(); return true;
+        case 'search': await showSearch(); flash(button('[data-section="search"]')); return true;
+        case 'print': flash(button('.titlebar .print')); await once('print', print); return true;
+        case 'back': await once('nav', goBack); return true;
+        case 'forward': await once('nav', goForward); return true;
+        case 'edit-on':
+        case 'edit-off':
+          if (!web || !openedSpace || openedSpace.access === 'read only') { linkProblem('Editing can only be switched on metatrash.com, in a space you can change.'); return true; }
+          setEditing(name === 'edit-on');
+          flash(button('.titlebar [role="switch"]'));
+          return true;
+        case 'theme/light': case 'theme/dark': case 'theme/system': case 'theme/paper':
+          chooseTheme(name.slice(6) as ThemePref);
+          flash(button('.titlebar .theme'));
+          return true;
+        default:
+          linkProblem(`Slate Viewer doesn't know the link #command/${name}.`);
+          return true;
+      }
+    }
+    return false;
+  }
+
   /** Links never navigate the webview: web links go to the browser, .md links open here. */
   async function followLink(url: string, newWindow: boolean) {
     const hash = url.indexOf('#');
     let anchor = hash < 0 ? '' : url.slice(hash + 1);
     try { anchor = decodeURIComponent(anchor); } catch { /* keep it as written */ }
     if (hash === 0) {
+      // #settings/<tab>/<page> in a document opens that Settings page: here on the site,
+      // in the browser on the desktop (the dialog lives on the site).
+      if (await followAppLink(anchor)) return;
+      if (anchor === 'settings' || anchor.startsWith('settings/')) {
+        if (web && !newWindow) location.hash = url;
+        else {
+          const site = web ? location.origin : (openedSpace?.server ?? DEFAULT_SERVER);
+          await backend.opener.url(`${site}/spaces/${url}`).catch(showError);
+        }
+        return;
+      }
       revealAnchor(anchor);
       return;
     }
@@ -3264,6 +3418,9 @@
   {signedIn}
   {account}
   space={web ? spaceOfPath(root) : null}
+  {rememberPositions}
+  onRememberPositions={toggleRememberPositions}
+  onForgetPositions={() => void forgetPositions()}
 />
 <div class="layout" class:narrow>
   <ActivityBar sections={shownSections} expanded={activityLabels && !narrow} onToggle={toggleSection} onToggleExpanded={toggleActivityLabels} />
@@ -3299,7 +3456,7 @@
               onMove={moveEntry}
               onDuplicate={relative => void duplicateEntry(relative)}
               onDelete={(relative, isFolder) => void deleteEntry(relative, isFolder)}
-              onProperties={openedSpace ? (relative => (propertiesFor = relative)) : undefined}
+              onProperties={openedSpace ? (relative => { propertiesPage = 'general'; propertiesFor = relative; }) : undefined}
               unread={unreadFiles}
               onPublish={openedSpace ? (relative => void publishFolder(relative)) : undefined}
               onCloseFolder={closeFolder}
@@ -3426,6 +3583,7 @@
     onClose={() => (propertiesFor = null)}
     onSaved={() => { syncPendingSince = Date.now(); void loadDescriptions(); }}
     onOpenFile={relative => void openFromFolder(relative)}
+    initialPage={propertiesPage}
   />
 {/if}
 
@@ -3505,5 +3663,11 @@
   .policy-notice {
     margin: 0; padding: 7px 14px; font: 13px/1.4 Inter, "Segoe UI", system-ui, sans-serif;
     color: var(--side-muted); background: var(--side-bg); border-bottom: 1px solid var(--side-border);
+  }
+  /* A button a link in the document stands for (#panel/…, #command/…): two pulses. */
+  :global(.link-flash) { animation: link-flash 0.8s ease-in-out 2; border-radius: 6px; }
+  @keyframes link-flash {
+    0%, 100% { box-shadow: 0 0 0 0 transparent; }
+    50% { box-shadow: 0 0 0 3px var(--accent, #3b82f6); }
   }
 </style>

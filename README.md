@@ -341,7 +341,9 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
   0.31.0: see below) and **Settings File** (the exact JSON Save writes, and the settings the folder sees
   with inherited ones). It checks the same rules Metatrash does (lengths, names, patterns, no nested GitHub folders, locks
   for everyone, inherited ones included) before saving, so a change is never quietly refused by Sync. Keys left alone keep
-  how they were written. Read-only spaces show the settings without Save. Logic: `src/lib/folderSettings.ts`.
+  how they were written. Read-only spaces show the settings without Save. Each page's **?** button (0.34.1) opens its
+  guide in the browser: `https://metatrash.com/docs/guides/folder-properties/<page>.md` (`general`, `security`,
+  `connections`, `publishing`, `automation`, `settings-file`). Logic: `src/lib/folderSettings.ts`.
 - **Automation** (Properties, 0.31.0) lists the folder's actions (Metatrash 0.54.0 to 0.57.x) as cards and edits each as a
   form: its name; when it runs (files arriving that match patterns, with a preview of the files that match now and
   "also when edited", or a schedule built from every hour / day / weekday / one day a week / one day a month and a

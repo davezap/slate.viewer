@@ -130,3 +130,16 @@ export function pinnedOutlineWidthPref(): number {
 export function setPinnedOutlineWidthPref(width: number): void {
   write(PINNED_WIDTH_KEY, String(Math.round(width)));
 }
+
+// ---- Each document's own place ----------------------------------------------------
+
+const POSITIONS_KEY = 'slate-viewer.remember-positions';
+
+/** Whether each document reopens where it was left (on unless turned off). */
+export function rememberPositionsPref(): boolean {
+  return read(POSITIONS_KEY) !== 'false';
+}
+
+export function setRememberPositionsPref(on: boolean): void {
+  write(POSITIONS_KEY, String(on));
+}

@@ -41,11 +41,16 @@
     account?: string;
     /** metatrash.com: the open space (owner/slug or public), ticked in the space picker. */
     space?: string | null;
+    /** metatrash.com: the account menu's Remember Position in Each Document (the desktop app has it in Go). */
+    rememberPositions?: boolean;
+    onRememberPositions?: () => void;
+    onForgetPositions?: () => void;
   }
 
   let {
     menu, title, detail, dirty, backTo, forwardTo, onBack, onForward, onFind, sync = null, onSync, syncOpen = false,
     editing = null, onEditing, theme = 'system', onTheme, onPrint, signedIn = true, account = '', space = null,
+    rememberPositions = true, onRememberPositions, onForgetPositions,
   }: Props = $props();
 
   /** metatrash.com: the space picker's anchor while it is open. */
@@ -196,6 +201,14 @@
             <div class="account-menu" role="menu">
               {#if account}<div class="signed">Signed in as <strong>{account}</strong></div>{/if}
               <a role="menuitem" href="#settings/spaces" onclick={() => (accountOpen = false)}>Settings</a>
+              {#if onRememberPositions}
+                <button role="menuitemcheckbox" aria-checked={rememberPositions} title="Each document opens where you left it, in this browser" onclick={() => { accountOpen = false; onRememberPositions?.(); }}>
+                  <span class="tick" aria-hidden="true">{rememberPositions ? '✓' : ''}</span>Remember position in each document
+                </button>
+              {/if}
+              {#if onForgetPositions}
+                <button role="menuitem" onclick={() => { accountOpen = false; onForgetPositions?.(); }}>Forget document positions</button>
+              {/if}
               <button role="menuitem" onclick={() => void signOut()}>Sign out</button>
             </div>
           {/if}
@@ -308,6 +321,7 @@
     color: inherit; font: inherit; font-size: 13px; text-align: left; text-decoration: none; border-radius: 4px; cursor: pointer;
   }
   .account-menu a:hover, .account-menu button:hover { background: var(--side-accent-soft); }
+  .tick { display: inline-block; width: 1.2em; }
   .phone { display: none; }
   /* A phone on the website: the title and the switches that matter, nothing else. */
   @media (max-width: 800px) {
