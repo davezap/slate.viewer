@@ -46,6 +46,24 @@ export const TOOLS: { name: string; title: string }[] = [
   { name: 'web_fetch', title: 'Read web pages' },
 ];
 const TOOL_NAMES = TOOLS.map(t => t.name);
+/** submit (Metatrash 0.95.12): send forms in the folder. Never part of "all tools": an action lists it. */
+export const SUBMIT_TOOL = 'submit';
+
+/** Whether the action's agent may send forms (its tools list submit). */
+export const sendsForms = (a: { tools: string[] | null }) => !!a.tools?.includes(SUBMIT_TOOL);
+
+/**
+ * Lets the action's agent send forms, or stops it. "All tools" with submit is every tool listed,
+ * then submit; taking submit out of that list goes back to leaving tools out.
+ */
+export function setSendsForms(a: { tools: string[] | null }, on: boolean) {
+  const others = (a.tools ?? TOOL_NAMES).filter(t => t !== SUBMIT_TOOL);
+  if (on) a.tools = [...others, SUBMIT_TOOL];
+  else a.tools = a.tools === null || others.length === TOOL_NAMES.length && TOOL_NAMES.every(t => others.includes(t)) ? null : others;
+}
+
+/** Whether the action has every ordinary tool (with or without submit). */
+export const allTools = (a: { tools: string[] | null }) => a.tools === null || TOOL_NAMES.every(t => a.tools!.includes(t));
 
 /** One action as the Automation page edits it. Empty text means "left out". */
 export interface ActionForm {
@@ -342,7 +360,7 @@ export function actionProblems(forms: ActionForm[], ownedSpace: boolean): string
     }
     if (a.pays === 'contributor' && !model) say('when whoever brings a file pays, choose a model, so the same model runs whoever brings it.');
     if (a.tools !== null && !a.tools.length) say('choose at least one tool, or allow all of them.');
-    if (a.tools?.some(t => !TOOL_NAMES.includes(t))) say(`the tools are ${TOOL_NAMES.join(', ')}.`);
+    if (a.tools?.some(t => !TOOL_NAMES.includes(t) && t !== SUBMIT_TOOL)) say(`the tools are ${[...TOOL_NAMES, SUBMIT_TOOL].join(', ')}.`);
     if (a.steps !== null && (!Number.isInteger(a.steps) || a.steps < 1 || a.steps > MAX_STEPS)) say(`the most tool calls per job is a whole number from 1 to ${MAX_STEPS} (${DEFAULT_STEPS} if left empty).`);
     if (a.member) {
       if (a.member.length < 3 || a.member.length > 32 || !USERNAME.test(a.member)) say(`"${a.member}" isn't a username.`);

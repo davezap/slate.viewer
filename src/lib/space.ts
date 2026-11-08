@@ -122,7 +122,8 @@ function globRegex(pattern: string): RegExp {
 
 /**
  * The lock Metatrash puts on a space file (`readOnly` in the `.metatrash.json` of a folder holding it):
- * "everyone" (nobody can change it, people included), "agents" (only agents are stopped) or null.
+ * "everyone" (nobody can change it, people included), "agents" (only agents are stopped, of either
+ * kind: Metatrash 0.95.12's "folderAgents" and "connectedAgents" count as "agents" here) or null.
  * A `.metatrash.json` is never locked for everyone, so its locks can always be lifted.
  */
 export function fileLock(descriptions: FolderDescription[], relative: string): 'agents' | 'everyone' | null {
@@ -136,7 +137,7 @@ export function fileLock(descriptions: FolderDescription[], relative: string): '
       const isFolder = entry.endsWith('/');
       if (isFolder !== slash >= 0 || !globRegex(isFolder ? entry.slice(0, -1) : entry).test(name)) continue;
       if (l === 'everyone') level = 'everyone';
-      else if (l === 'agents' && level === null) level = 'agents';
+      else if ((l === 'agents' || l === 'folderAgents' || l === 'connectedAgents') && level === null) level = 'agents';
     }
   }
   if (level === 'everyone' && relative.split('/').pop() === '.metatrash.json') level = 'agents';

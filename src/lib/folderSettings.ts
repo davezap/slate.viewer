@@ -7,13 +7,24 @@ import { actionProblems, actionsValue, toActionForm, writerProblems, type Action
 // in Metatrash Sync. Writes from Slate Viewer go through Sync, so Metatrash counts them as a person's.
 // Publishing (publishedVersion and the acknowledge service) follows Metatrash 0.48.0, and the
 // printout image (print.image) Metatrash 0.57.6, and the page footer (footer) Metatrash 0.88.0. Actions
-// (Metatrash 0.54.0 to 0.57.x) are in folderActions.ts.
+// (Metatrash 0.54.0 to 0.57.x) are in folderActions.ts. The lock levels folderAgents and
+// connectedAgents and the form locks fillForms and takeQuizzes follow Metatrash 0.95.12.
 
 export const SETTINGS_FILE = '.metatrash.json';
 
-export type LockLevel = '' | 'agents' | 'everyone';
-export type LockKey = 'purpose' | 'children' | 'services' | 'inherit' | 'readOnly' | 'publishedVersion' | 'print' | 'footer' | 'actions' | 'locked';
-export const LOCK_KEYS: LockKey[] = ['purpose', 'children', 'readOnly', 'services', 'publishedVersion', 'print', 'footer', 'actions', 'inherit', 'locked'];
+/**
+ * Whom a lock stops: the agents of folder actions, other agents (assistants connected over MCP,
+ * apps, space keys), both, or everyone, people included. '' is unlocked.
+ */
+export type LockLevel = '' | 'folderAgents' | 'connectedAgents' | 'agents' | 'everyone';
+export type FileLockLevel = Exclude<LockLevel, ''>;
+export const LOCK_LEVELS: FileLockLevel[] = ['folderAgents', 'connectedAgents', 'agents', 'everyone'];
+export const isLockLevel = (v: unknown): v is FileLockLevel => typeof v === 'string' && (LOCK_LEVELS as string[]).includes(v);
+/** Settings keys, and fillForms and takeQuizzes: who may send the folder's forms and quizzes. */
+export type LockKey = 'purpose' | 'children' | 'services' | 'inherit' | 'readOnly' | 'publishedVersion' | 'print' | 'footer' | 'actions' | 'fillForms' | 'takeQuizzes' | 'locked';
+export const LOCK_KEYS: LockKey[] = ['purpose', 'children', 'readOnly', 'services', 'publishedVersion', 'print', 'footer', 'actions', 'fillForms', 'takeQuizzes', 'inherit', 'locked'];
+/** The locks a new space starts with in its top folder (Metatrash 0.95.12). */
+export const DEFAULT_LOCKS: Partial<Record<LockKey, FileLockLevel>> = { actions: 'folderAgents', publishedVersion: 'folderAgents', readOnly: 'folderAgents', services: 'folderAgents', takeQuizzes: 'agents' };
 export type PushMode = 'agent' | 'auto' | 'review';
 
 /** What each lockable key is, in the dialog's words. */
@@ -25,7 +36,9 @@ export const LOCK_KEY_LABELS: Record<LockKey, { title: string; about: string }> 
   publishedVersion: { title: 'Published version', about: 'Who can publish a new version of this folder.' },
   print: { title: 'Printout image', about: 'The image at the top of printed documents.' },
   footer: { title: 'Page footer', about: 'The line below every page on the website.' },
-  actions: { title: 'Actions', about: 'The agents on the Automation page. Agents can never change them; locked for everyone, people can\'t either.' },
+  actions: { title: 'Actions', about: 'The actions on the Automation page. Where this allows, an agent connected as you or a member, or another action\'s agent, may change them for that person; an action never changes itself.' },
+  fillForms: { title: 'Fill in forms', about: 'Sending this folder\'s forms. An agent sends as the person it works for and never signs; a form with a signature is always the person\'s.' },
+  takeQuizzes: { title: 'Take quizzes', about: 'Sending this folder\'s quizzes. Locked for agents in new spaces, so a quiz shows what the person knows.' },
   inherit: { title: 'Use the parent folder\'s settings', about: 'Whether this folder takes its parent\'s settings.' },
   locked: { title: 'This list of locked settings', about: 'Agents can never change it; people always can, so every lock can be lifted.' },
 };
@@ -55,7 +68,7 @@ export interface FolderSettings {
   /** Whether this folder sets its own `locked`; when it inherits and doesn't, its parent's apply. */
   ownLocks: boolean;
   locked: Record<LockKey, LockLevel>;
-  readOnly: { name: string; level: 'agents' | 'everyone' }[];
+  readOnly: { name: string; level: FileLockLevel }[];
   github: GithubService | null;
   /** The published version, or null when the folder doesn't publish. Publishing raises it. */
   publishedVersion: number | null;
@@ -78,7 +91,7 @@ export interface SettingsFile {
 }
 
 /** The text a missing settings file stands for: what Metatrash gives a new folder. */
-export const defaultSettingsText = (folder: string) => (folder === '' ? '{}\n' : '{"inherit": true}\n');
+export const defaultSettingsText = (folder: string) => (folder === '' ? toText({ locked: DEFAULT_LOCKS }) : '{"inherit": true}\n');
 
 export const parentFolder = (folder: string) => {
   const trimmed = folder.replace(/\/$/, '');
@@ -124,19 +137,19 @@ export function lockMap(value: unknown): Record<string, string> {
   return {};
 }
 
-const emptyLocks = (): Record<LockKey, LockLevel> => ({ purpose: '', children: '', services: '', inherit: '', readOnly: '', publishedVersion: '', print: '', footer: '', actions: '', locked: '' });
+const emptyLocks = (): Record<LockKey, LockLevel> => ({ purpose: '', children: '', services: '', inherit: '', readOnly: '', publishedVersion: '', print: '', footer: '', actions: '', fillForms: '', takeQuizzes: '', locked: '' });
 
 /** The form for a settings object. */
 export function toSettings(raw: Record<string, unknown>): FolderSettings {
   const locked = emptyLocks();
   for (const [key, level] of Object.entries(lockMap(raw.locked))) {
-    if (key in locked && (level === 'agents' || level === 'everyone')) locked[key as LockKey] = level;
+    if (key in locked && isLockLevel(level)) locked[key as LockKey] = level;
   }
   const children = raw.children && typeof raw.children === 'object' && !Array.isArray(raw.children)
     ? Object.entries(raw.children as Record<string, unknown>).map(([name, text]) => ({ name, text: String(text ?? '') }))
     : [];
   const readOnly = Object.entries(lockMap(raw.readOnly))
-    .map(([name, level]) => ({ name, level: level === 'everyone' ? 'everyone' as const : 'agents' as const }));
+    .map(([name, level]) => ({ name, level: isLockLevel(level) ? level : 'agents' as const }));
   const services = Array.isArray(raw.services) ? raw.services as Record<string, unknown>[] : [];
   const gh = services.find(s => s && s.type === 'github');
   const ack = services.find(s => s && s.type === 'acknowledge');
@@ -258,7 +271,7 @@ export function effectiveSettings(texts: Map<string, string | null>, folder: str
 export function effectiveLocks(eff: Effective): Record<string, LockLevel> {
   if (!eff.keys.locked) return {};
   const map = lockMap(JSON.parse(eff.keys.locked));
-  return Object.fromEntries(Object.entries(map).filter(([, l]) => l === 'agents' || l === 'everyone')) as Record<string, LockLevel>;
+  return Object.fromEntries(Object.entries(map).filter(([, l]) => isLockLevel(l))) as Record<string, LockLevel>;
 }
 
 /**

@@ -65,7 +65,7 @@
   <div class="text">
     <div class="line">
       <b>{copy.title || copy.form}</b>
-      <span>from {copy.submittedBy || 'someone'}, sent {formatWhen(copy.submittedAt)}.</span>
+      <span>from {copy.submittedBy || 'someone'}{copy.submittedVia ? `, sent by ${copy.submittedVia.replace(/ \(agent\)$/, '')} (an agent)` : ', sent'} {formatWhen(copy.submittedAt)}.</span>
       {#if unmarked}
         <span class="ask">Not marked: the quiz had no answers when this was sent.</span>
       {:else}

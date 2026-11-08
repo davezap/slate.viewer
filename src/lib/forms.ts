@@ -138,6 +138,8 @@ export interface FiledCopy {
   template: string;
   submission: string;
   submittedBy: string;
+  /** The agent that sent it for submittedBy, such as "Claude (agent)" (Metatrash 0.95.12), or "". */
+  submittedVia: string;
   submittedAt: string;
   status: ReviewStatus;
   quiz: boolean;
@@ -181,6 +183,7 @@ export function parseFiledCopy(text: string): FiledCopy | null {
     template: keys.template ?? '',
     submission: keys.submission,
     submittedBy: keys.submittedBy ?? '',
+    submittedVia: keys.submittedVia ?? '',
     submittedAt: keys.submittedAt,
     status,
     quiz: keys.quiz === 'true',

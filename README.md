@@ -335,7 +335,8 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
 - **Properties** (right-click a folder, or Alt+Enter on it; right-click empty space in Files for the top of the space)
   edits the folder's `.metatrash.json` as a guided dialog instead of raw JSON: **General** (use the parent folder's
   settings, the folder's AGENTS.md, a summary and descriptions of what's inside), **Security** (read-only files and
-  patterns with a preview of the files they lock, and which settings are locked for agents or for everyone),
+  patterns with a preview of the files they lock, which settings are locked and who may fill in the folder's forms and
+  take its quizzes; 0.34.0: each lock is for folder actions, connected agents, all agents or everyone),
   **Connections** (the GitHub repository the folder mirrors, branch and push mode), **Automation** (the folder's actions,
   0.31.0: see below) and **Settings File** (the exact JSON Save writes, and the settings the folder sees
   with inherited ones). It checks the same rules Metatrash does (lengths, names, patterns, no nested GitHub folders, locks
@@ -346,7 +347,8 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
   "also when edited", or a schedule built from every hour / day / weekday / one day a week / one day a month and a
   time); the instructions written in place or kept in a `.md` file of the folder; the model (on the website, picked from
   your own agents); who pays (the owner, or whoever brings the file, which needs a model); and, under Limits and tools,
-  the most tool calls per job, the web tools, the folder's AGENTS.md and which tools the agent gets. It applies
+  the most tool calls per job, the web tools, the folder's AGENTS.md, which tools the agent gets and whether it may send
+  forms in the folder (0.34.0, Metatrash 0.95.12). It applies
   Metatrash's checks before saving, and its rules on who may change what: the owner changes their own actions and may
   remove or adopt a member's; a member adds and changes only their own (marked with their username), and sees the rest
   read-only. Actions are only in owned spaces, never inherited, and can be locked on the Security page. **Open the Run

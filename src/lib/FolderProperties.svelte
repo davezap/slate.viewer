@@ -4,13 +4,13 @@
   import { joinPath } from './paths';
   import { mtsync, type FolderDescription } from './space';
   import {
-    DEFAULT_STEPS, MAX_DO, PROVIDERS, RUNNER_LOG, TOOLS, WEEKDAYS, describeSchedule, describeTrigger, isOwner, matchingFiles, newAction,
+    DEFAULT_STEPS, MAX_DO, PROVIDERS, RUNNER_LOG, SUBMIT_TOOL, TOOLS, WEEKDAYS, allTools, sendsForms, setSendsForms, describeSchedule, describeTrigger, isOwner, matchingFiles, newAction,
     parseSchedule, scheduleText, type ActionForm, type ActionWriter, type Schedule, type ScheduleKind,
   } from './folderActions';
   import { account as siteAccount, type Agent } from './siteAccount';
   import {
     SETTINGS_FILE, LOCK_KEYS, LOCK_KEY_LABELS, MAX_FOOTER, check, defaultSettingsText, effectiveLocks, effectiveSettings, folderChain,
-    footerFrom, frozenKeys, lockedBy, parentFolder, parseObject, stableJson, toObject, toSavedVersion, toSettings, toText,
+    footerFrom, frozenKeys, isLockLevel, lockedBy, parentFolder, parseObject, stableJson, toObject, toSavedVersion, toSettings, toText,
     type FolderSettings, type LockKey, type LockLevel, type Problem, type PushMode, type SpaceContext,
   } from './folderSettings';
   import { fetchReaders, type ReaderReport } from './policies';
@@ -44,10 +44,13 @@
   ];
 
   const LEVELS: { level: LockLevel; title: string; about: string }[] = [
-    { level: '', title: 'Unlocked', about: 'Anyone with write access can change it, agents included.' },
-    { level: 'agents', title: 'Locked for agents', about: 'Agents can\'t change it. You and members can, here or through Metatrash Sync.' },
-    { level: 'everyone', title: 'Locked for everyone', about: 'Nobody can change it, people included, until a person lifts the lock.' },
+    { level: '', title: 'Unlocked', about: 'Anyone with write access can, agents included.' },
+    { level: 'folderAgents', title: 'Locked for folder actions', about: 'The agents of folder actions (Automation) can\'t. People and connected agents can.' },
+    { level: 'connectedAgents', title: 'Locked for connected agents', about: 'Agents connected over MCP, such as Claude, other apps and space keys, can\'t. People and folder actions can.' },
+    { level: 'agents', title: 'Locked for agents', about: 'No agent can. You and members can, here or through Metatrash Sync.' },
+    { level: 'everyone', title: 'Locked for everyone', about: 'Nobody can, people included, until a person lifts the lock.' },
   ];
+  const FILE_LEVELS = LEVELS.filter(l => l.level !== '');
 
   const PUSH_MODES: { mode: PushMode; title: string; about: string }[] = [
     { mode: 'agent', title: 'When an agent pushes', about: 'Changes go to GitHub only when an agent uses its push tool, with a commit message. The default.' },
@@ -136,6 +139,8 @@
     const where = frozen.get(key);
     if (where !== undefined) return `Locked for everyone${where === folder ? '' : ` by ${folderLabel(where)}`}: nobody can change it until a person lifts the lock.`;
     if (savedLocks[key] === 'agents') return 'Locked for agents: only people can change it.';
+    if (savedLocks[key] === 'folderAgents') return 'Locked for folder actions: their agents can\'t change it.';
+    if (savedLocks[key] === 'connectedAgents') return 'Locked for connected agents: they can\'t change it.';
     return '';
   };
   const disabled = (key: LockKey) => readOnlySpace || frozen.has(key);
@@ -241,7 +246,7 @@
     if (own && !form.ownLocks && inheritedLocks) {
       const map = inheritedLocks.value as Record<string, string> | string[];
       const levels = Array.isArray(map) ? Object.fromEntries(map.map(k => [k, 'agents'])) : map;
-      for (const key of LOCK_KEYS) form.locked[key] = (levels[key] === 'agents' || levels[key] === 'everyone' ? levels[key] : '') as LockLevel;
+      for (const key of LOCK_KEYS) form.locked[key] = (isLockLevel(levels[key]) ? levels[key] : '') as LockLevel;
     }
     form.ownLocks = own;
   }
@@ -361,9 +366,14 @@
     if (!value && a.pays === 'contributor') a.pays = '';
   }
 
+  /** Actions whose tools are being chosen one by one, though every tool may still be ticked. */
+  let onlyTools = $state(new Set<number>());
+  const choosingTools = (i: number, a: ActionForm) => onlyTools.has(i) || !allTools(a);
+
   function setTools(a: ActionForm, name: string, on: boolean) {
     const list = a.tools ?? TOOLS.map(t => t.name);
-    a.tools = on ? TOOLS.map(t => t.name).filter(t => t === name || list.includes(t)) : list.filter(t => t !== name);
+    const chosen = on ? TOOLS.map(t => t.name).filter(t => t === name || list.includes(t)) : TOOLS.map(t => t.name).filter(t => t !== name && list.includes(t));
+    a.tools = sendsForms(a) ? [...chosen, SUBMIT_TOOL] : chosen;
   }
 
   function setWeb(a: ActionForm, on: boolean) {
@@ -537,7 +547,7 @@
 
           {:else if page === 'security'}
             <section class="card">
-              <p class="hint"><b>People and agents.</b> A change you make here, in Files or through Metatrash Sync counts as a person's, and so does one by a member with write access. Everything else is an agent: Claude and other AI apps, space keys, and the public connection. Anything not locked can be changed by anyone with write access.</p>
+              <p class="hint"><b>People and agents.</b> A change you make here, in Files or through Metatrash Sync counts as a person's, and so does one by a member with write access. Everything else is an agent, of one of two kinds: <b>folder actions</b>, the agents on the Automation page, and <b>connected agents</b>, such as Claude and other AI apps, space keys and the public connection. Anything not locked can be changed by anyone with write access.</p>
             </section>
 
             <section>
@@ -547,8 +557,7 @@
                 <div class="pair">
                   <input class="name wide" list="folder-entries" bind:value={entry.name} placeholder="plan.md, *.pdf or archive/" spellcheck="false" disabled={disabled('readOnly')} />
                   <select bind:value={entry.level} disabled={disabled('readOnly')}>
-                    <option value="agents">Locked for agents</option>
-                    <option value="everyone">Locked for everyone</option>
+                    {#each FILE_LEVELS as l (l.level)}<option value={l.level}>{l.title}</option>{/each}
                   </select>
                   <button class="remove" aria-label="Remove" title="Remove" disabled={disabled('readOnly')} onclick={() => form!.readOnly.splice(i, 1)}>×</button>
                 </div>
@@ -562,7 +571,7 @@
 
             <section>
               <h3>Locked settings</h3>
-              <p class="hint">Stop the settings on these pages from being changed. A lock applies to subfolders that use this folder's settings, and they can't override a locked value.</p>
+              <p class="hint">Stop the settings on these pages from being changed, and choose who may fill in this folder's forms and take its quizzes. A lock applies to subfolders that use this folder's settings, and they can't override a locked value.</p>
               {#if !isRoot && form.inherit}
                 <div class="choice">
                   <label><input type="radio" name="own-locks" checked={!form.ownLocks} disabled={readOnlySpace} onchange={() => setOwnLocks(false)} /> Use the locks of {folderLabel(inheritedLocks?.from ?? parentFolder(folder))}</label>
@@ -915,10 +924,10 @@
                           </label>
                           <h4>Tools</h4>
                           <div class="choice row">
-                            <label><input type="radio" name="tools-{i}" checked={action.tools === null} onchange={() => (action.tools = null)} /> All tools</label>
-                            <label><input type="radio" name="tools-{i}" checked={action.tools !== null} onchange={() => (action.tools = TOOLS.map(t => t.name))} /> Only these</label>
+                            <label><input type="radio" name="tools-{i}" checked={!choosingTools(i, action)} onchange={() => { onlyTools = new Set([...onlyTools].filter(n => n !== i)); action.tools = sendsForms(action) ? [...TOOLS.map(t => t.name), SUBMIT_TOOL] : null; }} /> All tools</label>
+                            <label><input type="radio" name="tools-{i}" checked={choosingTools(i, action)} onchange={() => { onlyTools = new Set([...onlyTools, i]); action.tools = [...TOOLS.map(t => t.name), ...(sendsForms(action) ? [SUBMIT_TOOL] : [])]; }} /> Only these</label>
                           </div>
-                          {#if action.tools !== null}
+                          {#if action.tools !== null && choosingTools(i, action)}
                             <div class="tools">
                               {#each TOOLS as t (t.name)}
                                 <label class:off={action.web === false && t.name.startsWith('web_')}><input type="checkbox" checked={action.tools.includes(t.name)} onchange={event => setTools(action, t.name, event.currentTarget.checked)} /> {t.title}</label>
@@ -926,6 +935,10 @@
                             </div>
                             <p class="hint small-print">Fewer tools cost fewer tokens per step. Leave out Write, Move and Delete for an agent that should only read and report.</p>
                           {/if}
+                          <label class="check">
+                            <input type="checkbox" checked={sendsForms(action)} onchange={event => setSendsForms(action, event.currentTarget.checked)} />
+                            <span>Let it send forms in this folder <span class="hint">The agent fills in and sends forms here as the person who pays for the job; the form decides where its copy goes, and the copy says an agent sent it. It can't sign, and the folder's Fill in forms and Take quizzes locks apply (Security page).</span></span>
+                          </label>
                         </details>
                       </fieldset>
                     {/if}
