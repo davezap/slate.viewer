@@ -1111,6 +1111,8 @@
     editor?.revealLine(heading.line);
     activeHeading = heading.id;
     headingPinned = true;
+    // On the site the address follows, so it can be copied to send someone to this heading.
+    showAnchorAddress(headingSlug(heading.title));
   }
 
   /** GitHub-style heading anchor, as Metatrash's website makes them. */
@@ -1118,12 +1120,29 @@
     return text.toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, '').trim().replace(/\s/g, '-');
   }
 
-  /** Goes to a link's #anchor in this document: a heading (`#bug-reported`) or a line (`#L12`). */
+  /** App links (#settings/…, #properties/…, #panel/…, #command/…), which aren't places in the document. */
+  const isAppAnchor = (anchor: string) => /^(settings|properties|panel|command)(\/|$)/.test(anchor);
+
+  /**
+   * On the site: puts the #anchor shown in the address bar (without a new history entry or a
+   * hashchange), so the address copied from it opens this document at the same heading.
+   */
+  function showAnchorAddress(anchor: string) {
+    if (!web) return;
+    window.history.replaceState(window.history.state, '', location.pathname + location.search + '#' + encodeURIComponent(anchor));
+  }
+
+  /**
+   * Goes to a link's #anchor in this document: a heading or a line (`#L12`). A heading can be
+   * named by its GitHub-style slug (`#run-it-from-windows-powershell`) or by its text
+   * (`#Run it from Windows (PowerShell)`, %20 for spaces in an address).
+   */
   function revealAnchor(anchor: string) {
     if (!editor || !anchor) return;
     const line = /^L(\d+)$/i.exec(anchor);
     if (line) {
       editor.revealLine(Math.max(0, Number(line[1]) - 1));
+      showAnchorAddress(`L${line[1]}`);
       return;
     }
     const wanted = headingSlug(anchor);
@@ -1136,7 +1155,33 @@
       return null;
     };
     const heading = find(editor.getOutline().headings);
-    if (heading) revealHeading(heading);
+    if (!heading) return;
+    revealHeading(heading);
+  }
+
+  /** The page address's #anchor (decoded), when it names a place in the document, or ''. */
+  function pageAnchor() {
+    let anchor = location.hash.slice(1);
+    try { anchor = decodeURIComponent(anchor); } catch { /* keep it as written */ }
+    return isAppAnchor(anchor) ? '' : anchor;
+  }
+
+  /**
+   * On the site: an address ending in #heading (or #L12) opens the document at that place,
+   * instead of where the reader last left it (0.34.3). Waits a frame so the document is drawn.
+   */
+  async function revealPageAnchor() {
+    const anchor = web ? pageAnchor() : '';
+    if (!anchor) return;
+    await tick();
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    revealAnchor(anchor);
+  }
+
+  /** The address's # changed (a link pasted or typed into the address bar): Settings, or a heading. */
+  function onPageHash() {
+    readSettingsHash();
+    void revealPageAnchor();
   }
 
   function unpinHeading() {
@@ -3251,8 +3296,8 @@
 
     if (web) {
       readSettingsHash();
-      addEventListener('hashchange', readSettingsHash);
-      cleanups.push(() => removeEventListener('hashchange', readSettingsHash));
+      addEventListener('hashchange', onPageHash);
+      cleanups.push(() => removeEventListener('hashchange', onPageHash));
       void backend.sync.whoami(null).then(text => {
         const who = text ? JSON.parse(text) : null;
         signedIn = who?.signedIn === true;
@@ -3364,6 +3409,8 @@
       } else if (!initialFolder && resumeSession) {
         await resumeLastSession();
       }
+      // metatrash.com/spaces/…/file.md#heading: the address's heading wins over the remembered place.
+      await revealPageAnchor();
 
       cleanups.push(await backend.on('document-changed', onDiskChange));
       cleanups.push(await backend.on('folder-changed', onFolderChange));
