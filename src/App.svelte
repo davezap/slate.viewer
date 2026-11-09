@@ -1895,6 +1895,23 @@
     formSync = formSync.then(applyFormView, applyFormView);
   }
 
+  /** Who is filling in forms on each server, for @name and @email defaults (Metatrash 0.95.19). */
+  const formPeople = new Map<string, Promise<{ name: string; email: string }>>();
+  function formPerson(): Promise<{ name: string; email: string }> {
+    const server = web ? location.origin : (openedSpace?.server ?? DEFAULT_SERVER);
+    let person = formPeople.get(server);
+    if (!person) {
+      person = backend.sync.whoami(web ? null : server).then(text => {
+        const who = text ? JSON.parse(text) : null;
+        return { name: typeof who?.account === 'string' ? who.account : '', email: typeof who?.email === 'string' ? who.email : '' };
+      });
+      // Asked again next time when it couldn't say.
+      person.catch(() => formPeople.delete(server));
+      formPeople.set(server, person);
+    }
+    return person.catch(() => ({ name: '', email: '' }));
+  }
+
   async function applyFormView() {
     if (!editor) return;
     const mode = editor.getWorkspaceMode();
@@ -1917,9 +1934,11 @@
     fillSent = false;
     try {
       filling = true;
+      const person = readOnly ? undefined : await formPerson();
       await editor.startFill({
         inPreview: true,
         readOnly,
+        person,
         answers: draft?.answers,
         status: blocked
           ?? (draft ? `Your draft from ${formatWhen(new Date(draft.savedAt).toISOString())}.`

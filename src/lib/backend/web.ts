@@ -17,7 +17,7 @@ const API = '/api/v1/site';
 const SPACES = '/spaces/';
 const POLL_MS = 5000;
 
-interface SiteSession { signedIn: boolean; account?: string; csrf?: string; spaces: { space: string; name: string; owner: string; access: string; web?: boolean }[] }
+interface SiteSession { signedIn: boolean; account?: string; email?: string; csrf?: string; spaces: { space: string; name: string; owner: string; access: string; web?: boolean }[] }
 
 let session: Promise<SiteSession> | null = null;
 function siteSession(): Promise<SiteSession> {
@@ -367,7 +367,7 @@ export const backend: Backend = {
     list: async () => watchedRoot ? [{ folder: watchedRoot, space: locate(watchedRoot).space, state: 'in sync', server: location.origin }] : [],
     whoami: async () => {
       const s = await siteSession();
-      return JSON.stringify({ server: location.origin, signedIn: s.signedIn, account: s.account ?? '' });
+      return JSON.stringify({ server: location.origin, signedIn: s.signedIn, account: s.account ?? '', email: s.email ?? '' });
     },
     add: () => notOnTheSite('Adding a space'),
     start: async () => {},
@@ -397,7 +397,11 @@ export const backend: Backend = {
     submit: async (file, answers, version, resends): Promise<SubmitResult> => {
       const { space, rel } = locate(file);
       try {
-        const receipt = await call<Receipt>('POST', spaceUrl(space, 'submissions'), { path: rel, answers, ...(version ? { version } : {}), ...(resends ? { resends } : {}) });
+        // The person's own date and time, for date limits and @today/@now defaults left to the server.
+        const now = new Date();
+        const pad = (n: number) => String(n).padStart(2, '0');
+        const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+        const receipt = await call<Receipt>('POST', spaceUrl(space, 'submissions'), { path: rel, answers, today, now: `${pad(now.getHours())}:${pad(now.getMinutes())}`, ...(version ? { version } : {}), ...(resends ? { resends } : {}) });
         return { ok: true, receipt };
       } catch (error) {
         return { ok: false, error: refusal(error) };

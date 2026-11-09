@@ -461,6 +461,9 @@ pub async fn mtsync_submit(file: String, answers: String, version: Option<u32>, 
     } else {
         require_forms().await?
     }
+    if answers.contains("\"data:image/") {
+        require_photos().await?
+    }
     let out = tauri::async_runtime::spawn_blocking(move || {
         let version = version.map(|v| v.to_string());
         let mut args = vec!["-json"];
@@ -482,6 +485,17 @@ fn outcome(out: Output) -> SubmitOutcome {
     let json = out.stdout.trim().to_string();
     let message = if out.ok { String::new() } else { out.message() };
     SubmitOutcome { ok: out.ok, json: if json.starts_with('{') { json } else { String::new() }, message }
+}
+
+/// Photos (data URLs in the answers) need mtsync 0.95.19, which reads answers that large.
+const PHOTOS_VERSION: (u32, u32, u32) = (0, 95, 19);
+
+async fn require_photos() -> Result<(), String> {
+    let out = run(None, vec!["version".into()]).await?;
+    match parse_version(&out.stdout) {
+        Some(v) if out.ok && v >= PHOTOS_VERSION => Ok(()),
+        _ => Err("Sending photos with a form needs mtsync 0.95.19 or later. Update mtsync and try again.".into()),
+    }
 }
 
 /// Sending a copy back for more information needs mtsync 0.95.10 (`submit -resends`).
