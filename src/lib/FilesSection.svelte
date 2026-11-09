@@ -50,6 +50,12 @@
     onProperties?: (folder: string) => void;
     /** Files (relative) the person still has to read: published, and not confirmed yet. */
     unread?: string[];
+    /**
+     * Files (relative) a form asks something of (Metatrash 0.95.20): copies waiting for a review,
+     * and forms sent back to this person for more information. Marked with the same dot.
+     */
+    toReview?: string[];
+    toFix?: string[];
     /** Publishes the next version of a folder ("" for the top of the space). Spaces only. */
     onPublish?: (folder: string) => void;
     /** The space's virtual files (content kept outside Git), by relative path. */
@@ -67,7 +73,7 @@
   let {
     root, files, truncated, current, recentFolders, rootKind = 'folder', onOpen, onCreate, onCloseFolder, onChooseFolder, onOpenFolder,
     descriptions = [], reveal = null, onOpenSpace, emptyFolders = [], editable = true, locked = [],
-    onCreateFolder, onRename, onMove, onDuplicate, onDelete, onProperties, unread = [], onPublish,
+    onCreateFolder, onRename, onMove, onDuplicate, onDelete, onProperties, unread = [], toReview = [], toFix = [], onPublish,
     virtualFiles = {}, onConvert, onUpload, activity = [], onDismissUpload,
   }: Props = $props();
 
@@ -119,7 +125,25 @@
   // ---- Files still to read (published, not confirmed) --------------------------------
 
   const unreadSet = $derived(new Set(unread));
-  const unreadIn = (folder: string) => unread.filter(f => f.startsWith(folder + '/')).length;
+  const reviewSet = $derived(new Set(toReview));
+  const fixSet = $derived(new Set(toFix));
+  const todo = $derived([...new Set([...unread, ...toReview, ...toFix])]);
+  const todoSet = $derived(new Set(todo));
+  const todoIn = (folder: string) => todo.filter(f => f.startsWith(folder + '/'));
+  /** What a folder's dot stands for, such as "2 to read and 1 to review in here". */
+  function folderTodo(folder: string): string {
+    const inside = todoIn(folder);
+    const count = (set: Set<string>) => inside.filter(f => set.has(f)).length;
+    const parts = [[count(unreadSet), 'to read'], [count(reviewSet), 'to review'], [count(fixSet), 'sent back to you']] as const;
+    const said = parts.filter(([n]) => n).map(([n, what]) => `${n} ${what}`);
+    return `${said.length > 1 ? `${said.slice(0, -1).join(', ')} and ${said[said.length - 1]}` : said[0]} in here`;
+  }
+  /** Why a file has a dot. */
+  function fileTodo(path: string): string {
+    if (unreadSet.has(path)) return "Published, and you haven't confirmed reading it yet.";
+    if (reviewSet.has(path)) return 'A filed copy of a form, waiting for someone to approve, decline or ask for more.';
+    return 'A reviewer sent this form back to you for more information: open it and choose Fix My Answers.';
+  }
 
   // ---- Tree ------------------------------------------------------------------
 
@@ -628,7 +652,7 @@
                   <span class="twisty" class:open={expanded.has(node.path)}>›</span>{node.name}
                   {#if isGithub(node.path)}<span class="badge" title="Mirrors a GitHub repository">GitHub</span>{/if}
                   {#if publishedVersion(node.path)}<span class="badge published" title="Publishes its files as versions: version {publishedVersion(node.path)} is the official one">v{publishedVersion(node.path)}</span>{/if}
-                  {#if unreadIn(node.path)}<span class="unread" title="{unreadIn(node.path)} published {unreadIn(node.path) === 1 ? 'file' : 'files'} to read in here">●</span>{/if}
+                  {#if todoIn(node.path).length}<span class="unread" title={folderTodo(node.path)}>●</span>{/if}
                   {@render chips(node.path)}
                   {#if !expanded.has(node.path) && busyIn(node.path)}<span class="spinner" title="Something is under way in here"></span>{/if}
                 </button>
@@ -653,8 +677,8 @@
                   class:conflict={conflictOriginal(node.name) !== null}
                   class:hidden-file={isHiddenFile(node.path) && !virtualFiles[node.path]}
                   class:dragged={dragging?.path === node.path}
-                  class:to-read={unreadSet.has(node.path)}
-                  title={unreadSet.has(node.path) ? `${fileTitle(node)}\nPublished, and you haven't confirmed reading it yet.` : fileTitle(node)}
+                  class:to-read={todoSet.has(node.path)}
+                  title={todoSet.has(node.path) ? `${fileTitle(node)}\n${fileTodo(node.path)}` : fileTitle(node)}
                   draggable={canChange(node) && !!onMove}
                   onclick={event => onOpen(node.path, { newWindow: isNewWindowClick(event) })}
                   onauxclick={event => { if (event.button === 1) onOpen(node.path, { newWindow: true }); }}
@@ -664,7 +688,7 @@
                   ondragend={onDragEnd}
                   ondragover={event => onDragOver(event, parentOf(node.path))}
                   ondrop={event => void onDrop(event)}
-                >{#if unreadSet.has(node.path)}<span class="unread before" aria-label="To read">●</span>{/if}<span class="label">{#if conflictOriginal(node.name) !== null}<span class="warn">⚠</span>{/if}{isHiddenFile(node.path) ? node.name : displayName(node.name)}{#if virtualFiles[node.path]}<span class="badge virtual" aria-label="Virtual file">{virtualFiles[node.path].source ? 'linked' : 'virtual'}</span>{/if}</span>{@render chips(node.path)}</button>
+                >{#if todoSet.has(node.path)}<span class="unread before" aria-label={unreadSet.has(node.path) ? 'To read' : reviewSet.has(node.path) ? 'To review' : 'Sent back to you'}>●</span>{/if}<span class="label">{#if conflictOriginal(node.name) !== null}<span class="warn">⚠</span>{/if}{isHiddenFile(node.path) ? node.name : displayName(node.name)}{#if virtualFiles[node.path]}<span class="badge virtual" aria-label="Virtual file">{virtualFiles[node.path].source ? 'linked' : 'virtual'}</span>{/if}</span>{@render chips(node.path)}</button>
               {/if}
               {/if}
             </li>

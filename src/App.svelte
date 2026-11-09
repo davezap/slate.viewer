@@ -39,7 +39,7 @@
   import { entryLabel, fileHistory, findPublishedEntry, formatWhen, revisionText, versionLabel, type HistoryEntry } from './lib/history';
   import { lastSession, saveSession, placeView, savePlaceView, documentView, saveDocumentView, forgetDocumentViews, type PlaceView } from './lib/session';
   import PolicyBanner from './lib/PolicyBanner.svelte';
-  import { acknowledge, fetchPolicies, outstandingFiles, policyFor, quizFor, quizzesCovering, setAttentionBadge, type Policies } from './lib/policies';
+  import { acknowledge, fetchPolicies, outstandingFiles, policyFor, quizFor, quizzesCovering, setAttentionBadge, thingsToDo, type Policies } from './lib/policies';
   import FormBanner from './lib/FormBanner.svelte';
   import SubmissionsDialog from './lib/SubmissionsDialog.svelte';
   import {
@@ -1702,9 +1702,10 @@
     return () => clearInterval(timer);
   });
 
-  // The red number on the taskbar button: published files this person still has to read.
+  // The red number on the taskbar button: published files this person still has to read, and
+  // forms waiting for them (copies to review, forms sent back; Metatrash 0.95.20).
   $effect(() => {
-    void setAttentionBadge(policies?.outstanding ?? 0).catch(() => {});
+    void setAttentionBadge(thingsToDo(policies)).catch(() => {});
   });
 
   /**
@@ -2012,8 +2013,9 @@
       sentForm = { path: file, receipt: result.receipt };
       if (sentBack?.path === file) sentBack = null;
       editor.endFill();
-      // Sending it counted as reading it, or a quiz was marked: the dot and the bars catch up.
-      if (result.receipt.acknowledged || result.receipt.quiz) void loadPolicies();
+      // Sending it counted as reading it, a quiz was marked or a form sent back was sent again:
+      // the dots and the bars catch up.
+      void loadPolicies();
       return;
     }
     const { code, message: text, fields } = result.error;
@@ -2115,6 +2117,8 @@
   let filedCopy = $state<FiledCopy | null>(null);
   let reviewing = $state(false);
   let reviewProblem = $state('');
+  /** The review just saved from this window, for the bar to say so plainly (0.35.1). */
+  let reviewDone = $state<{ path: string; status: string } | null>(null);
   /** What the last review here said, until the copy syncs back. */
   let reviewedText = $state<{ path: string; text: string } | null>(null);
   const shownCopy = $derived(reviewedText && reviewedText.path === path ? parseFiledCopy(reviewedText.text) : filedCopy);
@@ -2125,10 +2129,16 @@
     const target = path;
     reviewing = true;
     reviewProblem = '';
+    reviewDone = null;
     try {
       const result = await reviewCopy(target, review);
       if (result.ok) {
         if (result.receipt.text) reviewedText = { path: target, text: result.receipt.text };
+        reviewDone = { path: target, status: result.receipt.status ?? '' };
+        // Its dot goes at once; Metatrash says the same once asked.
+        const rel = spaceRelative(target);
+        if (policies && rel !== null) policies = { ...policies, toReview: policies.toReview.filter(p => p !== rel) };
+        schedulePolicies(1000);
       } else {
         reviewProblem = result.error.message || 'The review could not be saved.';
       }
@@ -2536,6 +2546,8 @@
     const parts = [label];
     if (conflictCount) parts.push(`${conflictCount} conflict${conflictCount === 1 ? '' : 's'}`);
     if (policies?.outstanding) parts.push(`${policies.outstanding} to read`);
+    if (policies?.toReview.length) parts.push(`${policies.toReview.length} to review`);
+    if (policies?.toFix.length) parts.push(`${policies.toFix.length} sent back`);
     if (currentRelative !== null && docBytes > SPACE_FILE_LIMIT * 0.85) parts.push(`${Math.ceil(docBytes / 1024)} of 64 KB`);
     // The website has no sync to report: the chip shows only what to read and the file's size.
     if (web) parts.shift();
@@ -3524,6 +3536,8 @@
               onDelete={(relative, isFolder) => void deleteEntry(relative, isFolder)}
               onProperties={openedSpace ? (relative => { propertiesPage = 'general'; propertiesFor = relative; }) : undefined}
               unread={unreadFiles}
+              toReview={policies?.toReview ?? []}
+              toFix={policies?.toFix ?? []}
               onPublish={openedSpace ? (relative => void publishFolder(relative)) : undefined}
               onCloseFolder={closeFolder}
               onChooseFolder={() => void chooseFolder()}
@@ -3626,6 +3640,7 @@
         copy={shownCopy}
         busy={reviewing}
         problem={reviewProblem}
+        done={reviewDone?.path === path ? reviewDone.status : ''}
         onReview={review => void sendReview(review)}
         onUseAsAnswers={() => void useAsAnswers()}
       />

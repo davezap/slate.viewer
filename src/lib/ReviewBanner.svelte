@@ -12,11 +12,13 @@
     busy: boolean;
     /** Why the last review was refused, or ''. */
     problem: string;
+    /** The status the review just saved from here set (0.35.1), or '': the bar says so plainly. */
+    done: string;
     onReview: (review: Review) => void;
     onUseAsAnswers: () => void;
   }
 
-  let { copy, busy, problem, onReview, onUseAsAnswers }: Props = $props();
+  let { copy, busy, problem, done, onReview, onUseAsAnswers }: Props = $props();
 
   let note = $state('');
   let ticks = $state<Record<string, boolean>>({});
@@ -58,6 +60,24 @@
   }
 
   const resent = $derived(copy.status === 'resent');
+
+  // A saved review clears the note it carried.
+  $effect(() => {
+    if (done) {
+      note = '';
+      ticks = {};
+    }
+  });
+
+  /** What the review just saved did, in words. */
+  const doneText = $derived.by(() => {
+    const who = copy.submittedBy || 'The person who sent it';
+    if (copy.quiz) return `Marks saved. ${who} sees the result in My Submissions.`;
+    if (done === 'approved') return `Approved. ${who} sees this, and your note, in My Submissions.`;
+    if (done === 'declined') return `Declined. ${who} sees this, and your note, in My Submissions.`;
+    if (done === 'needs-info') return `Sent back to ${who} with your note. The form gets a red dot for them until they choose Fix My Answers and send it again; the fixed copy then arrives in this folder.`;
+    return done ? 'Review saved.' : '';
+  });
 </script>
 
 <div class="bar" class:done={reviewed} role="status">
@@ -75,7 +95,7 @@
       {#if resent}<span>{copy.submittedBy || 'They'} sent a fixed copy, which is in this folder to review.</span>{/if}
       {#if copy.resends && !resent}<span>This is a fixed copy, sent again after a reviewer asked for more.</span>{/if}
     </div>
-    {#if problem}<div class="error">{problem}</div>{/if}
+    {#if problem}<div class="error">{problem}</div>{:else if doneText}<div class="saved" role="status">✓ {doneText}</div>{/if}
     {#if copy.quiz && toTick.length}
       <div class="ticks">
         <span>Mark the written answers:</span>
@@ -122,6 +142,7 @@
   .line .ok { color: var(--side-accent); }
   .line .note { font-style: italic; }
   .error { color: #c0392b; white-space: pre-line; }
+  .saved { color: var(--side-fg); font-weight: 600; }
   .ticks { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; color: var(--side-muted); }
   .tick { display: inline-flex; align-items: center; gap: 4px; color: var(--side-fg); }
   .actions { display: flex; gap: 8px; align-items: center; }

@@ -89,6 +89,13 @@ export interface Policies {
   folders: PolicyFolder[];
   /** How many files this person still has to read. */
   outstanding: number;
+  /**
+   * Filed copies of forms (relative) waiting for a review, for someone who can review them, and
+   * forms this person sent whose last copy came back for more information (Metatrash 0.95.20;
+   * empty from an older server or mtsync).
+   */
+  toReview: string[];
+  toFix: string[];
 }
 
 export interface ReaderReport {
@@ -101,7 +108,7 @@ export interface ReaderReport {
 /** The published folders of the space synced at `folder` (the space's local folder). */
 export async function fetchPolicies(folder: string): Promise<Policies> {
   const out = await backend.sync.policies(folder);
-  return { ...out, folders: out.folders ?? [] };
+  return { ...out, folders: out.folders ?? [], toReview: out.toReview ?? [], toFix: out.toFix ?? [] };
 }
 
 /** Confirms that this person read `file` (a full path) as published in `version`. */
@@ -128,6 +135,11 @@ export function policyFor(policies: Policies | null, relative: string): { folder
   }
   if (!best) return null;
   return { folder: best, file: best.files.find(f => f.path === relative) ?? null };
+}
+
+/** Everything with a dot: files to read, quizzes to pass, copies to review and forms sent back. */
+export function thingsToDo(policies: Policies | null): number {
+  return policies ? policies.outstanding + policies.toReview.length + policies.toFix.length : 0;
 }
 
 /** Files (relative) this person still has to read, and quizzes still to pass. */
