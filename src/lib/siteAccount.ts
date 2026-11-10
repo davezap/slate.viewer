@@ -7,7 +7,9 @@ import { pickerSession } from './siteSpaces';
 
 const API = '/api/v1/site/account';
 
-export interface AccountSpace { id: string; name: string; slug: string; space?: string; ready: boolean; web?: boolean; timezone?: string; usage?: Usage }
+/** owner (Metatrash 0.95.23) is set on a space of an account this person manages, such as an organisation they are an
+ * admin of; it is absent on their own spaces. */
+export interface AccountSpace { id: string; name: string; slug: string; space?: string; ready: boolean; web?: boolean; timezone?: string; usage?: Usage; owner?: string }
 /** Storage in bytes (Metatrash 0.89.0): git is the space's text with every version, files its virtual files (every version
  * kept), bytes both. measured is when the oldest number was measured. */
 export interface Usage { bytes: number; git: number; files: number; measured?: string }
@@ -33,6 +35,8 @@ export interface Account {
   joined: JoinedSpace[];
   invitations: Invitation[];
   offers: Offer[];
+  /** The usernames of the accounts this person manages (Metatrash 0.95.23): organisations they are an admin of. */
+  manages?: string[];
   storage?: Storage;
   unavailable?: string[];
 }
@@ -45,6 +49,8 @@ export interface Sharing {
   members: Member[];
   transfer?: { toEmail: string; toUsername?: string; expires: string; expired?: boolean };
   candidates: Member[];
+  /** Where this person can move the space (Metatrash 0.95.23): their own username and the accounts they manage. */
+  moveTo?: string[];
   fresh?: boolean;
   apps?: boolean;
 }

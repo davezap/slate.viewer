@@ -384,6 +384,12 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
   the account's total, deleted spaces still counted, when it was measured, and a note that history counts and deleting a
   file may not free any space. It reads `storage` and each space's `usage` from the site API (`formatBytes` and
   `measuredAgo` in `src/lib/siteAccount.ts`); 1 GB is 1024 MB. Nothing is limited yet.
+- **Spaces you manage** (Metatrash 0.95.23, Viewer 0.37.0). When the account manages other owner accounts (an
+  organisation it is an admin of, in Metatrash's Company edition), Settings > Spaces lists their spaces under each
+  owner's name after your own (`owner` on each space, `manages` on the account), and they open, share and change like
+  your own. A space's Ownership page has **Move** (`moveTo` from its sharing state, `POST …/spaces/{id}/move`): your
+  own space to an account you manage, or back. A managed space can't be offered to someone else until it is moved to
+  your own account. The Organisation tab itself is the Company edition's.
 - **Forms** (Metatrash 0.49.0, mtsync 0.49.0, Slate 0.19.0). A Markdown file whose front matter has `form`, `title` and
   `submitTo` is a form template, with fields written as `{{text name=…}}`, `{{choice name=…}}` and so on (see `docs/forms.md`
   in Metatrash). In Preview the form is ready to fill in (Slate's `startFill({ inPreview: true })`); Edit and Source show

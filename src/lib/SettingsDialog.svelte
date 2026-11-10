@@ -97,6 +97,7 @@
   let inviteEmail = $state('');
   let zone = $state('');
   let transferTo = $state('');
+  let moveTo = $state('');
   let deleteName = $state('');
   let deleteEmail = $state('');
   let removing = $state('');
@@ -351,7 +352,7 @@
               </div>
             {/if}
           </div>
-          <p class="mono muted">{acct.username}/{selected.slug}</p>
+          <p class="mono muted">{selected.space ?? `${acct.username}/${selected.slug}`}{#if selected.owner}{' '}<span class="pill" title="You manage this space for {selected.owner}">you manage it</span>{/if}</p>
           <div class="subtabs" role="tablist" aria-label="{selected.name} settings">
             {#each SPACE_PAGES as p (p.id)}
               <button role="tab" aria-selected={spacePage === p.id} class:selected={spacePage === p.id}
@@ -416,7 +417,11 @@
 
             <h3>Members</h3>
             <ul class="rows">
-              <li><span class="main"><strong>{acct.email}</strong><span class="sub">{acct.username} · owner</span></span><span class="pill ok">active</span></li>
+              {#if selected.owner}
+                <li><span class="main"><strong>{selected.owner}</strong><span class="sub">owner · you manage it</span></span><span class="pill ok">active</span></li>
+              {:else}
+                <li><span class="main"><strong>{acct.email}</strong><span class="sub">{acct.username} · owner</span></span><span class="pill ok">active</span></li>
+              {/if}
               {#each s.members as m (m.id)}
                 <li class="member">
                   <span class="main"><strong>{m.email}</strong>{#if m.username}<span class="sub">{m.username}</span>{/if}</span>
@@ -448,6 +453,29 @@
             <p class="hint">Suspending, restoring and removing apply only to this space.{s.apps ? ' What their connected apps may do here applies from their next operation; you always have full access to your own space.' : ''}</p>
 
             {:else}
+            {#if s.moveTo?.length}
+              <h3>Move</h3>
+              <p class="muted">{selected.owner ? `Move this space out of ${selected.owner}, or to another account you manage.` : 'Move this space to an account you manage, such as your organisation.'} Its address becomes <code>new-owner/{s.slug}</code>; old links and agents still reach it, and its members, invitations and apps stay as they are.{selected.owner ? '' : ' You stay on it as a member.'} You’ll be asked to confirm it’s you.</p>
+              <form class="row" onsubmit={event => {
+                event.preventDefault();
+                const to = moveTo || s.moveTo![0];
+                void run(() => account.space(s.id, 'move', { owner: to }), n => {
+                  moveTo = '';
+                  if (current === s.space && n.space) location.href = openAddress(n.space);
+                });
+              }}>
+                <label class="vh" for="settings-move">Move to</label>
+                <select id="settings-move" value={moveTo || s.moveTo[0]} onchange={event => (moveTo = (event.currentTarget as HTMLSelectElement).value)}>
+                  {#each s.moveTo as name (name)}<option value={name}>{name === acct.username ? `${name} (you)` : name}</option>{/each}
+                </select>
+                <button type="submit" disabled={busy}>Move space</button>
+              </form>
+            {/if}
+
+            {#if selected.owner}
+            <h3>Transfer ownership</h3>
+            <p class="muted">To give this space to someone else, move it to your own account first, then offer it to them.</p>
+            {:else}
             <h3>Transfer ownership</h3>
             {#if s.transfer && !s.transfer.expired}
               <p>Offered to <strong>{s.transfer.toEmail}</strong>{s.transfer.toUsername ? ` (${s.transfer.toUsername})` : ''} until {ago(s.transfer.expires)}. They accept or decline in Settings. Until they accept, nothing changes.</p>
@@ -466,6 +494,7 @@
                   <button type="submit" disabled={busy}>Offer ownership</button>
                 </form>
               {/if}
+            {/if}
             {/if}
 
             <h3>Delete this space</h3>
@@ -542,12 +571,14 @@
           </ul>
 
           {:else}
-          <h2>Your spaces <span class="muted">{acct.spaces.length} of {acct.maxSpaces}</span></h2>
+          {@const own = acct.spaces.filter(s => !s.owner)}
+          {@const managed = [...new Set(acct.spaces.filter(s => s.owner).map(s => s.owner!))]}
+          <h2>Your spaces <span class="muted">{own.length} of {acct.maxSpaces}</span></h2>
           {#if acct.invitations.length + acct.offers.length}
             <p class="note">{acct.invitations.length + acct.offers.length === 1 ? 'A space is' : `${acct.invitations.length + acct.offers.length} spaces are`} waiting for you in <button class="link" onclick={() => go('settings/spaces/invitations')}>Invitations</button>.</p>
           {/if}
           <ul class="rows">
-            {#each acct.spaces as s (s.id)}
+            {#each own as s (s.id)}
               <li>
                 {#if s.space}
                   <a class="main" href={openAddress(s.space)}><strong>{s.name}</strong><span class="sub mono">{s.space}</span></a>
@@ -575,6 +606,27 @@
             <p class="hint">To make a space of your own, first <button class="link" onclick={() => go('settings/profile')}>choose a public username</button>.</p>
           {:else}
             <p class="hint">Your space allowance is used.</p>
+          {/if}
+
+          {#each managed as owner (owner)}
+            <h3>{owner}’s spaces <span class="muted">you manage</span></h3>
+            <ul class="rows">
+              {#each acct.spaces.filter(s => s.owner === owner) as s (s.id)}
+                <li>
+                  {#if s.space}
+                    <a class="main" href={openAddress(s.space)}><strong>{s.name}</strong><span class="sub mono">{s.space}</span></a>
+                    {#if s.web}<span class="pill web" title="Anyone can read it on the website">public</span>{/if}
+                    {#if s.usage}<span class="size" title={`Text with its history ${formatBytes(s.usage.git)}, files ${formatBytes(s.usage.files)}`}>{formatBytes(s.usage.bytes)}</span>{/if}
+                    <button onclick={() => go(`settings/spaces/${s.id}`)}>Sharing and settings</button>
+                  {:else}
+                    <span class="main"><strong>{s.name}</strong><span class="sub">Not ready</span></span>
+                  {/if}
+                </li>
+              {/each}
+            </ul>
+          {/each}
+          {#if acct.manages?.length}
+            <p class="hint">You manage {acct.manages.join(', ')}. Move a space of yours there, or back, from its Ownership page.</p>
           {/if}
 
           {#if acct.storage}
