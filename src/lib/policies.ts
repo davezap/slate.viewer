@@ -96,6 +96,8 @@ export interface Policies {
    */
   toReview: string[];
   toFix: string[];
+  /** Filed copies (relative) a reviewer approved, ticked in the tree (Metatrash 0.95.21). */
+  approved: string[];
 }
 
 export interface ReaderReport {
@@ -108,7 +110,7 @@ export interface ReaderReport {
 /** The published folders of the space synced at `folder` (the space's local folder). */
 export async function fetchPolicies(folder: string): Promise<Policies> {
   const out = await backend.sync.policies(folder);
-  return { ...out, folders: out.folders ?? [], toReview: out.toReview ?? [], toFix: out.toFix ?? [] };
+  return { ...out, folders: out.folders ?? [], toReview: out.toReview ?? [], toFix: out.toFix ?? [], approved: out.approved ?? [] };
 }
 
 /** Confirms that this person read `file` (a full path) as published in `version`. */

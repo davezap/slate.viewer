@@ -1662,6 +1662,15 @@
   let publishedRequest = 0;
 
   const unreadFiles = $derived(outstandingFiles(policies));
+  /** What the account icon's red number stands for (0.35.2), such as "2 to review and 1 sent back". */
+  const todoText = $derived.by(() => {
+    const said = [
+      policies?.outstanding ? `${policies.outstanding} to read` : '',
+      policies?.toReview.length ? `${policies.toReview.length} to review` : '',
+      policies?.toFix.length ? `${policies.toFix.length} sent back to you` : '',
+    ].filter(Boolean);
+    return said.length > 1 ? `${said.slice(0, -1).join(', ')} and ${said[said.length - 1]}` : said[0] ?? '';
+  });
   const currentPolicy = $derived(currentRelative !== null && !isSpaceFolderFile(currentRelative) ? policyFor(policies, currentRelative) : null);
   /** A publishing folder (by its settings) holds the open file, but mtsync couldn't say more. */
   const policyNotice = $derived.by(() => {
@@ -2137,7 +2146,11 @@
         reviewDone = { path: target, status: result.receipt.status ?? '' };
         // Its dot goes at once; Metatrash says the same once asked.
         const rel = spaceRelative(target);
-        if (policies && rel !== null) policies = { ...policies, toReview: policies.toReview.filter(p => p !== rel) };
+        if (policies && rel !== null) {
+          const approved = policies.approved.filter(p => p !== rel);
+          if (result.receipt.status === 'approved') approved.push(rel);
+          policies = { ...policies, toReview: policies.toReview.filter(p => p !== rel), approved };
+        }
         schedulePolicies(1000);
       } else {
         reviewProblem = result.error.message || 'The review could not be saved.';
@@ -3499,6 +3512,9 @@
   {rememberPositions}
   onRememberPositions={toggleRememberPositions}
   onForgetPositions={() => void forgetPositions()}
+  onSubmissions={openedSpace ? () => showSubmissions() : undefined}
+  todo={thingsToDo(policies)}
+  {todoText}
 />
 <div class="layout" class:narrow>
   <ActivityBar sections={shownSections} expanded={activityLabels && !narrow} onToggle={toggleSection} onToggleExpanded={toggleActivityLabels} />
@@ -3538,6 +3554,7 @@
               unread={unreadFiles}
               toReview={policies?.toReview ?? []}
               toFix={policies?.toFix ?? []}
+              approved={policies?.approved ?? []}
               onPublish={openedSpace ? (relative => void publishFolder(relative)) : undefined}
               onCloseFolder={closeFolder}
               onChooseFolder={() => void chooseFolder()}

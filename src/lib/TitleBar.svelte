@@ -45,12 +45,18 @@
     rememberPositions?: boolean;
     onRememberPositions?: () => void;
     onForgetPositions?: () => void;
+    /** metatrash.com: opens My Submissions for the open space (0.35.2); absent outside a space. */
+    onSubmissions?: () => void;
+    /** metatrash.com: things waiting for this person in the open space (to read, to review, sent back): a red number on the account icon. */
+    todo?: number;
+    /** What that number is made of, for its tooltip, such as "2 to review, 1 sent back". */
+    todoText?: string;
   }
 
   let {
     menu, title, detail, dirty, backTo, forwardTo, onBack, onForward, onFind, sync = null, onSync, syncOpen = false,
     editing = null, onEditing, theme = 'system', onTheme, onPrint, signedIn = true, account = '', space = null,
-    rememberPositions = true, onRememberPositions, onForgetPositions,
+    rememberPositions = true, onRememberPositions, onForgetPositions, onSubmissions, todo = 0, todoText = '',
   }: Props = $props();
 
   /** metatrash.com: the space picker's anchor while it is open. */
@@ -189,17 +195,22 @@
         <div class="account" data-account-menu>
           <button
             class="who"
-            title={account ? `Signed in as ${account}` : 'Your account'}
-            aria-label="Your account"
+            title={`${account ? `Signed in as ${account}` : 'Your account'}${todo ? `\n${todoText || `${todo} waiting for you`}` : ''}`}
+            aria-label={todo ? `Your account, ${todo} waiting for you` : 'Your account'}
             aria-haspopup="menu"
             aria-expanded={accountOpen}
             onclick={() => { picker = null; accountOpen = !accountOpen; }}
           >
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 1 0 0-8a4 4 0 0 0 0 8zM4 20a8 8 0 0 1 16 0" /></svg>
+            {#if todo}<span class="count" aria-hidden="true">{todo > 99 ? '99+' : todo}</span>{/if}
           </button>
           {#if accountOpen}
             <div class="account-menu" role="menu">
               {#if account}<div class="signed">Signed in as <strong>{account}</strong></div>{/if}
+              {#if todo && todoText}<div class="waiting">{todoText} in this space</div>{/if}
+              {#if onSubmissions}
+                <button role="menuitem" title="The forms you sent from this space, and what reviewers said" onclick={() => { accountOpen = false; onSubmissions?.(); }}>My Submissions</button>
+              {/if}
               <a role="menuitem" href="#settings/spaces" onclick={() => (accountOpen = false)}>Settings</a>
               {#if onRememberPositions}
                 <button role="menuitemcheckbox" aria-checked={rememberPositions} title="Each document opens where you left it, in this browser" onclick={() => { accountOpen = false; onRememberPositions?.(); }}>
@@ -316,6 +327,13 @@
   }
   .signed { padding: 4px 10px 8px; margin-bottom: 4px; color: var(--side-muted); font-size: 12px; border-bottom: 1px solid var(--side-border); white-space: nowrap; }
   .signed strong { color: var(--side-fg); font-weight: 600; }
+  .waiting { padding: 2px 10px 6px; color: #d93025; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .who { position: relative; }
+  .count {
+    position: absolute; top: 2px; right: 0; min-width: 16px; height: 16px; padding: 0 4px; box-sizing: border-box;
+    border-radius: 8px; background: #d93025; color: #fff; font: 700 10px/16px Inter, "Segoe UI", system-ui, sans-serif;
+    text-align: center; pointer-events: none;
+  }
   .account-menu a, .account-menu button {
     display: flex; align-items: center; width: 100%; height: 28px; padding: 0 10px; box-sizing: border-box;
     color: inherit; font: inherit; font-size: 13px; text-align: left; text-decoration: none; border-radius: 4px; cursor: pointer;

@@ -87,8 +87,8 @@
         <nav aria-label="Submissions">
           {#each receipts as r (r.id)}
             <button class:selected={r.id === selected} onclick={() => void show(r.id)}>
-              <b>{r.title || r.form}</b>
-              <span>{formatWhen(r.submittedAt)}{reviewText(r) ? ` · ${reviewText(r)}` : ''}</span>
+              <b>{#if r.status === 'approved'}<span class="tick" title={r.quiz ? 'Passed' : 'Approved'} aria-label={r.quiz ? 'Passed' : 'Approved'}>✓</span>{:else if r.status === 'needs-info'}<span class="dot" title="Sent back: the reviewer needs more from you" aria-label="Sent back">●</span>{/if}{r.title || r.form}</b>
+              <span class:asked={r.status === 'needs-info'}>{formatWhen(r.submittedAt)}{reviewText(r) ? ` · ${reviewText(r)}` : ''}</span>
             </button>
           {/each}
         </nav>
@@ -104,14 +104,18 @@
               <dt>Form</dt><dd>{detail.template}</dd>
               <dt>Filed as</dt><dd>{detail.target}</dd>
               {#if reviewText(detail)}
-                <dt>Review</dt><dd>{reviewText(detail)}{detail.quiz && detail.passMark !== undefined && detail.status !== 'submitted' ? `, pass mark ${detail.passMark}%` : ''}{detail.reviewedAt ? ` (${formatWhen(detail.reviewedAt)})` : ''}</dd>
+                <dt>Review</dt><dd class:approved={detail.status === 'approved'}>{detail.status === 'approved' ? '✓ ' : ''}{reviewText(detail)}{detail.quiz && detail.passMark !== undefined && detail.status !== 'submitted' ? `, pass mark ${detail.passMark}%` : ''}{detail.reviewedAt ? ` (${formatWhen(detail.reviewedAt)})` : ''}</dd>
               {/if}
-              {#if detail.note}
+              {#if detail.note && detail.status !== 'needs-info'}
                 <dt>Note</dt><dd class="note">{detail.note}</dd>
               {/if}
             </dl>
             {#if detail.status === 'needs-info'}
-              <p class="muted">Open {detail.template.split('/').pop()} to fix your answers and send it again; the new copy replaces this one.</p>
+              <div class="sent-back" role="note">
+                <div class="label">The reviewer needs more from you</div>
+                {#if detail.note}<p class="what">{detail.note}</p>{/if}
+                <p>Open {detail.template.split('/').pop()} and choose <b>Fix My Answers</b>, change what they asked for and send it again; the new copy replaces this one.</p>
+              </div>
             {/if}
             {#if answers.length}
               <table>
@@ -183,6 +187,17 @@
   td:nth-child(2) { white-space: pre-wrap; overflow-wrap: anywhere; }
   td.mark { width: 2em; text-align: center; font-weight: 700; color: var(--side-accent); }
   dd.note { white-space: pre-wrap; font-style: italic; }
+  dd.approved { color: #1e8e3e; font-weight: 600; }
+  nav .tick { margin-right: 5px; color: #1e8e3e; font-weight: 700; }
+  nav .dot { margin-right: 5px; color: #d93025; font-size: 10px; vertical-align: 1px; }
+  nav button span.asked { color: #d93025; font-weight: 600; }
+  :global([data-theme="dark"]) dd.approved, :global([data-theme="dark"]) nav .tick { color: #5bb974; }
+  .sent-back { margin: 10px 0 14px; padding: 10px 12px; border: 1px solid #f0b400; border-left: 4px solid #e37400; border-radius: 6px; background: #fff8e1; color: #3c2f00; }
+  .sent-back .label { font-weight: 700; color: #b05a00; }
+  .sent-back .what { margin: 6px 0; font-size: 15px; font-weight: 600; white-space: pre-wrap; }
+  .sent-back p { margin: 4px 0 0; }
+  :global([data-theme="dark"]) .sent-back { background: #3a2c10; color: #f6e7c1; border-color: #8a6a1c; border-left-color: #f29900; }
+  :global([data-theme="dark"]) .sent-back .label { color: #f6b26b; }
   summary { cursor: pointer; color: var(--side-muted); }
   pre {
     margin: 8px 0 0; padding: 10px; white-space: pre-wrap; overflow-wrap: anywhere;

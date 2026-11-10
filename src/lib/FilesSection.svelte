@@ -56,6 +56,8 @@
      */
     toReview?: string[];
     toFix?: string[];
+    /** Filed copies (relative) a reviewer approved: a green tick after the name (0.35.2). */
+    approved?: string[];
     /** Publishes the next version of a folder ("" for the top of the space). Spaces only. */
     onPublish?: (folder: string) => void;
     /** The space's virtual files (content kept outside Git), by relative path. */
@@ -73,7 +75,7 @@
   let {
     root, files, truncated, current, recentFolders, rootKind = 'folder', onOpen, onCreate, onCloseFolder, onChooseFolder, onOpenFolder,
     descriptions = [], reveal = null, onOpenSpace, emptyFolders = [], editable = true, locked = [],
-    onCreateFolder, onRename, onMove, onDuplicate, onDelete, onProperties, unread = [], toReview = [], toFix = [], onPublish,
+    onCreateFolder, onRename, onMove, onDuplicate, onDelete, onProperties, unread = [], toReview = [], toFix = [], approved = [], onPublish,
     virtualFiles = {}, onConvert, onUpload, activity = [], onDismissUpload,
   }: Props = $props();
 
@@ -127,6 +129,7 @@
   const unreadSet = $derived(new Set(unread));
   const reviewSet = $derived(new Set(toReview));
   const fixSet = $derived(new Set(toFix));
+  const approvedSet = $derived(new Set(approved));
   const todo = $derived([...new Set([...unread, ...toReview, ...toFix])]);
   const todoSet = $derived(new Set(todo));
   const todoIn = (folder: string) => todo.filter(f => f.startsWith(folder + '/'));
@@ -688,7 +691,7 @@
                   ondragend={onDragEnd}
                   ondragover={event => onDragOver(event, parentOf(node.path))}
                   ondrop={event => void onDrop(event)}
-                >{#if todoSet.has(node.path)}<span class="unread before" aria-label={unreadSet.has(node.path) ? 'To read' : reviewSet.has(node.path) ? 'To review' : 'Sent back to you'}>●</span>{/if}<span class="label">{#if conflictOriginal(node.name) !== null}<span class="warn">⚠</span>{/if}{isHiddenFile(node.path) ? node.name : displayName(node.name)}{#if virtualFiles[node.path]}<span class="badge virtual" aria-label="Virtual file">{virtualFiles[node.path].source ? 'linked' : 'virtual'}</span>{/if}</span>{@render chips(node.path)}</button>
+                >{#if todoSet.has(node.path)}<span class="unread before" aria-label={unreadSet.has(node.path) ? 'To read' : reviewSet.has(node.path) ? 'To review' : 'Sent back to you'}>●</span>{/if}<span class="label">{#if conflictOriginal(node.name) !== null}<span class="warn">⚠</span>{/if}{isHiddenFile(node.path) ? node.name : displayName(node.name)}{#if virtualFiles[node.path]}<span class="badge virtual" aria-label="Virtual file">{virtualFiles[node.path].source ? 'linked' : 'virtual'}</span>{/if}{#if approvedSet.has(node.path)}<span class="approved" title="Approved by a reviewer" aria-label="Approved">✓</span>{/if}</span>{@render chips(node.path)}</button>
               {/if}
               {/if}
             </li>
@@ -746,6 +749,8 @@
   /* A published file still to read, and the folders holding one. */
   .unread { margin-left: 6px; font-size: 9px; vertical-align: 1px; color: #d93025; }
   .unread.before { margin: 0 5px 0 -12px; }
+  .approved { margin-left: 6px; color: #1e8e3e; font-weight: 700; }
+  :global([data-theme="dark"]) .approved { color: #5bb974; }
   .row.file.to-read { font-weight: 600; }
   /* Activity (0.30.0): chips after a file's name, a line at the top of the list. */
   .row.file { display: flex; align-items: center; gap: 4px; }

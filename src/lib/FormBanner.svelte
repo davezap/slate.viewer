@@ -51,7 +51,7 @@
   const passMark = $derived(sent?.passMark ?? 100);
 </script>
 
-<div class="bar" class:sent={sent !== null || state === 'passed'} role="status">
+<div class="bar" class:sent={sent !== null || state === 'passed'} class:sentback={sentBack !== null && !sent && !editing && !form.error && !unavailable} role="status">
   <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="1.5" width="10" height="13" rx="1.5" /><path d="M5.5 5h5M5.5 8h5M5.5 11h3" /></svg>
   <div class="text">
     <b>{form.title || form.form}</b>
@@ -62,9 +62,11 @@
     {:else if editing}
       <span>You're changing the form itself. Fill In (or Preview) shows it ready to fill in.</span>
     {:else if sentBack && !sent}
-      <span class="ask">A reviewer asked for more{sentBack.reviewedAt ? ` on ${formatWhen(sentBack.reviewedAt)}` : ''}:</span>
-      {#if sentBack.note}<span class="note">“{sentBack.note}”</span>{/if}
-      <span>{canFixSentBack ? 'Fix My Answers brings back what you sent. ' : ''}When you send the form again, it replaces the copy you sent on {formatWhen(sentBack.submittedAt)}.</span>
+      <div class="callout">
+        <div class="label">⚠ Sent back: the reviewer needs more from you{sentBack.reviewedAt ? ` (${formatWhen(sentBack.reviewedAt)})` : ''}</div>
+        {#if sentBack.note}<div class="what">{sentBack.note}</div>{/if}
+        <span>{canFixSentBack ? 'Fix My Answers brings back what you sent. ' : ''}When you send the form again, it replaces the copy you sent on {formatWhen(sentBack.submittedAt)}.</span>
+      </div>
     {:else if sent?.resends}
       <span class="done">✓ Sent again on {formatWhen(sent.submittedAt)}. It replaces the copy the reviewer sent back, and waits for review in {filedIn}.</span>
     {:else if sent?.quiz && sent.status === 'approved'}
@@ -129,8 +131,15 @@
   .text span { color: var(--side-muted); }
   .text .done { color: var(--side-accent); }
   .text .ask { color: var(--side-fg); font-weight: 600; }
-  .text .note { color: var(--side-fg); font-style: italic; }
   .text .error { color: #c0392b; }
+  /* A form a reviewer sent back (0.35.2): the request stands out from the bar's other text. */
+  .bar.sentback { align-items: flex-start; background: #fff8e1; border-bottom: 2px solid #e37400; }
+  .callout { margin-top: 4px; padding: 8px 12px; border-left: 4px solid #e37400; border-radius: 4px; background: #fff; }
+  .callout .label { font-weight: 700; color: #b05a00; }
+  .callout .what { margin: 4px 0; font-size: 15px; font-weight: 600; color: var(--side-fg); white-space: pre-wrap; }
+  :global([data-theme="dark"]) .bar.sentback { background: #3a2c10; border-bottom-color: #f29900; }
+  :global([data-theme="dark"]) .callout { background: #241b0a; border-left-color: #f29900; }
+  :global([data-theme="dark"]) .callout .label { color: #f6b26b; }
   button {
     flex: none; padding: 4px 12px; font: inherit; color: inherit; cursor: pointer;
     background: var(--side-input); border: 1px solid var(--side-border); border-radius: 6px;

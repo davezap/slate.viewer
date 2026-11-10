@@ -421,7 +421,7 @@ export const backend: Backend = {
     policies: async folder => {
       const { space } = locate(folder);
       // The public space keeps no read records, and signed out there is nobody to keep them for.
-      if (space === 'public' || !(await siteSession()).signedIn) return { space, folders: [], outstanding: 0, toReview: [], toFix: [] };
+      if (space === 'public' || !(await siteSession()).signedIn) return { space, folders: [], outstanding: 0, toReview: [], toFix: [], approved: [] };
       return call<Policies>('GET', spaceUrl(space, 'acknowledgements'));
     },
     acknowledge: async (file, version) => {
