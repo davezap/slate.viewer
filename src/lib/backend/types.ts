@@ -7,7 +7,7 @@ import type { SearchMatch } from '../types';
 import type { FolderDescription, MtsyncInfo, MtsyncOutput, Registration, SpaceRow, VirtualFile } from '../space';
 import type { ActivityResult } from '../activity';
 import type { HistoryPage } from '../history';
-import type { Receipt, SubmitResult } from '../forms';
+import type { AccountReceipt, AccountTodo, Receipt, SubmitResult } from '../forms';
 import type { Policies, ReaderReport } from '../policies';
 import type { UpdateCheck } from '../UpdateDialog.svelte';
 
@@ -116,6 +116,12 @@ export interface Backend {
     review(file: string, review: unknown): Promise<SubmitResult>;
     submissions(folder: string): Promise<Receipt[]>;
     submission(folder: string, id: string): Promise<Receipt>;
+    /** Every form the person sent, from all their spaces (Metatrash 0.95.22); null where that
+     *  can't be asked (the desktop app, an older server, signed out). */
+    accountSubmissions(): Promise<AccountReceipt[] | null>;
+    accountSubmission(id: string): Promise<AccountReceipt | null>;
+    /** What waits for the person in each of their spaces (Metatrash 0.95.22), or null. */
+    todo(): Promise<AccountTodo | null>;
     policies(folder: string): Promise<Policies>;
     acknowledge(file: string, version: number): Promise<void>;
     readers(folder: string): Promise<ReaderReport>;

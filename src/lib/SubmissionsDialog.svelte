@@ -1,35 +1,57 @@
 <script lang="ts">
-  // My Submissions: the forms this person sent from the open space, newest first, and for the one
-  // picked, the answers and the copy Metatrash filed (Metatrash 0.49.0), with its review (0.50.0).
+  // My Submissions: the forms this person sent, newest first, and for the one picked, the answers
+  // and the copy Metatrash filed (Metatrash 0.49.0), with its review (0.50.0). On the website it
+  // covers every space they can open (Metatrash 0.95.22, Viewer 0.36.0), lists the forms started
+  // here and not sent yet, and can start a new copy from an old one's answers while the form is
+  // unchanged. The desktop app (and an older server) shows the open space's forms.
   import { onMount } from 'svelte';
   import { formatWhen } from './history';
-  import { copyAnswers, fetchReceipt, fetchReceipts, reviewText, type Receipt } from './forms';
+  import {
+    clearDraft, copyAnswers, fetchAccountReceipt, fetchAccountReceipts, fetchReceipt, fetchReceipts, listDrafts, reviewText,
+    type AccountReceipt,
+  } from './forms';
 
   interface Props {
-    /** The synced folder of the open space. */
-    folder: string;
-    space: string;
+    /** The synced folder of the open space, if one is open. */
+    folder: string | null;
+    space: string | null;
+    /** Where this app's drafts live: /spaces/ on the website, the open space's folder on the desktop. */
+    draftRoot: string | null;
     /** The receipt to show first. */
     initialId?: string;
+    /** The form to open for a receipt (its file now), or null when it can't be opened from here. */
+    formFileOf: (receipt: AccountReceipt) => string | null;
+    onOpenForm: (file: string) => void;
+    /** Starts a new copy of the receipt's form with its answers (the receipt has them). */
+    onUseAnswers: (receipt: AccountReceipt) => void;
     onClose: () => void;
   }
 
-  let { folder, space, initialId, onClose }: Props = $props();
+  let { folder, space, draftRoot, initialId, formFileOf, onOpenForm, onUseAnswers, onClose }: Props = $props();
 
-  let receipts = $state<Receipt[] | null>(null);
+  let receipts = $state<AccountReceipt[] | null>(null);
+  /** Across all spaces (the website with Metatrash 0.95.22), or only the open one. */
+  let everywhere = $state(false);
   let listError = $state('');
+  let drafts = $state<{ file: string; savedAt: number; answered: number }[]>([]);
   let selected = $state<string | null>(null);
-  let detail = $state<Receipt | null>(null);
+  let selectedDraft = $state<string | null>(null);
+  let detail = $state<AccountReceipt | null>(null);
   let detailError = $state('');
-  const cache = new Map<string, Receipt>();
+  const cache = new Map<string, AccountReceipt>();
 
   async function show(id: string) {
     selected = id;
+    selectedDraft = null;
     detailError = '';
     detail = cache.get(id) ?? null;
     if (detail) return;
     try {
-      const one = await fetchReceipt(folder, id);
+      const listed = receipts?.find(r => r.id === id);
+      let one: AccountReceipt | null = everywhere ? await fetchAccountReceipt(id) : folder ? await fetchReceipt(folder, id) : null;
+      if (!one) throw new Error('This submission could not be found.');
+      // The single answer leaves out what only the list says.
+      one = { ...one, space: one.space ?? listed?.space, current: one.current ?? listed?.current, sameForm: one.sameForm ?? listed?.sameForm };
       cache.set(id, one);
       if (selected === id) detail = one;
     } catch (e) {
@@ -37,23 +59,64 @@
     }
   }
 
+  function showDraft(file: string) {
+    selected = null;
+    detail = null;
+    detailError = '';
+    selectedDraft = file;
+  }
+
+  function readDrafts() {
+    drafts = draftRoot ? listDrafts(draftRoot) : [];
+  }
+
   onMount(() => {
+    readDrafts();
     void (async () => {
       try {
-        receipts = await fetchReceipts(folder);
+        const all = await fetchAccountReceipts();
+        everywhere = all !== null;
+        receipts = all ?? (folder ? await fetchReceipts(folder) : []);
       } catch (e) {
         receipts = [];
         listError = String(e);
         return;
       }
-      const first = receipts.find(r => r.id === initialId) ?? receipts[0];
+      const first = receipts.find(r => r.id === initialId) ?? (initialId || !drafts.length ? receipts[0] : undefined);
       if (first) await show(first.id);
+      else if (drafts.length) showDraft(drafts[0].file);
     })();
   });
 
   const answers = $derived(detail?.text ? copyAnswers(detail.text) : []);
   /** A quiz's ticks by field: only right or not, never the right answer. */
   const marks = $derived(detail?.quiz && detail.marks ? detail.marks : null);
+  const draft = $derived(drafts.find(d => d.file === selectedDraft) ?? null);
+  const formFile = $derived(detail ? formFileOf(detail) : null);
+
+  /** Why Use These Answers can't be used for this receipt, or '' when it can. */
+  const reuseProblem = $derived.by(() => {
+    if (!detail || !everywhere) return 'unknown';
+    if (detail.quiz) return 'quiz';
+    if (!detail.current || !formFile) return "The form isn't there any more, or you can't open its space, so these answers can't start a new copy.";
+    if (!detail.sameForm) return 'The form has changed since you sent this, so its answers would not fit it. Open the form to fill it in again.';
+    return '';
+  });
+
+  /** A draft's form, for the list: its name, and its space on the website. */
+  function draftName(file: string): { name: string; where: string } {
+    const parts = file.replace(/\\/g, '/').split('/');
+    const name = (parts.pop() ?? file).replace(/\.md$/i, '');
+    const where = file.startsWith('/spaces/') ? parts.slice(2, 4).join('/') : '';
+    return { name, where };
+  }
+
+  function discardDraft(file: string) {
+    clearDraft(file);
+    readDrafts();
+    selectedDraft = null;
+    if (receipts?.[0]) void show(receipts[0].id);
+  }
 
   function onKeydown(event: KeyboardEvent) {
     if (event.key === 'Escape') {
@@ -73,7 +136,11 @@
     </button>
     <header>
       <h2>My Submissions</h2>
-      <p class="muted">The forms you sent from {space}. Each one was filed as a copy that the form's reviewers can read; you can't change it.</p>
+      {#if receipts !== null && !everywhere && space}
+        <p class="muted">The forms you sent from {space}. Each one was filed as a copy that the form's reviewers can read; you can't change it.</p>
+      {:else}
+        <p class="muted">The forms you sent from all your spaces. Each one was filed as a copy that the form's reviewers can read; you can't change it.</p>
+      {/if}
     </header>
 
     <div class="body">
@@ -81,27 +148,53 @@
         <p class="muted pad">Loading…</p>
       {:else if listError}
         <p class="error pad">{listError}</p>
-      {:else if !receipts.length}
-        <p class="muted pad">You haven't sent any forms from this space yet.</p>
+      {:else if !receipts.length && !drafts.length}
+        <p class="muted pad">You haven't sent any forms {everywhere || !space ? '' : 'from this space '}yet.</p>
       {:else}
         <nav aria-label="Submissions">
+          {#if drafts.length}
+            <h4>Not sent yet</h4>
+            {#each drafts as d (d.file)}
+              {@const n = draftName(d.file)}
+              <button class:selected={d.file === selectedDraft} onclick={() => showDraft(d.file)}>
+                <b><span class="pencil" aria-hidden="true">✎</span>{n.name}</b>
+                <span>{n.where ? `${n.where} · ` : ''}{formatWhen(new Date(d.savedAt).toISOString())}</span>
+              </button>
+            {/each}
+            {#if receipts.length}<h4>Sent</h4>{/if}
+          {/if}
           {#each receipts as r (r.id)}
             <button class:selected={r.id === selected} onclick={() => void show(r.id)}>
               <b>{#if r.status === 'approved'}<span class="tick" title={r.quiz ? 'Passed' : 'Approved'} aria-label={r.quiz ? 'Passed' : 'Approved'}>✓</span>{:else if r.status === 'needs-info'}<span class="dot" title="Sent back: the reviewer needs more from you" aria-label="Sent back">●</span>{/if}{r.title || r.form}</b>
+              {#if everywhere && r.space}<span class="space">{r.space}</span>{/if}
               <span class:asked={r.status === 'needs-info'}>{formatWhen(r.submittedAt)}{reviewText(r) ? ` · ${reviewText(r)}` : ''}</span>
             </button>
           {/each}
         </nav>
         <section>
-          {#if detailError}
+          {#if draft}
+            {@const n = draftName(draft.file)}
+            <h3>{n.name}</h3>
+            <dl>
+              {#if n.where}<dt>Space</dt><dd>{n.where}</dd>{/if}
+              <dt>Saved</dt><dd>{formatWhen(new Date(draft.savedAt).toISOString())}</dd>
+              <dt>Answered</dt><dd>{draft.answered === 1 ? '1 question' : `${draft.answered} questions`}</dd>
+            </dl>
+            <p class="muted">You started this form and haven't sent it. Your answers are kept in this {draftRoot?.startsWith('/spaces/') ? 'browser' : 'app'} only.</p>
+            <div class="actions">
+              <button class="primary" onclick={() => onOpenForm(draft.file)}>Continue Filling In</button>
+              <button onclick={() => discardDraft(draft.file)}>Discard Draft</button>
+            </div>
+          {:else if detailError}
             <p class="error">{detailError}</p>
           {:else if !detail}
-            <p class="muted">Loading…</p>
+            <p class="muted">{selected ? 'Loading…' : ''}</p>
           {:else}
             <h3>{detail.title || detail.form}</h3>
             <dl>
               <dt>Sent</dt><dd>{formatWhen(detail.submittedAt)}</dd>
-              <dt>Form</dt><dd>{detail.template}</dd>
+              {#if everywhere && detail.space}<dt>Space</dt><dd>{detail.space}</dd>{/if}
+              <dt>Form</dt><dd>{detail.current ?? detail.template}</dd>
               <dt>Filed as</dt><dd>{detail.target}</dd>
               {#if reviewText(detail)}
                 <dt>Review</dt><dd class:approved={detail.status === 'approved'}>{detail.status === 'approved' ? '✓ ' : ''}{reviewText(detail)}{detail.quiz && detail.passMark !== undefined && detail.status !== 'submitted' ? `, pass mark ${detail.passMark}%` : ''}{detail.reviewedAt ? ` (${formatWhen(detail.reviewedAt)})` : ''}</dd>
@@ -114,8 +207,18 @@
               <div class="sent-back" role="note">
                 <div class="label">The reviewer needs more from you</div>
                 {#if detail.note}<p class="what">{detail.note}</p>{/if}
-                <p>Open {detail.template.split('/').pop()} and choose <b>Fix My Answers</b>, change what they asked for and send it again; the new copy replaces this one.</p>
+                <p>Open {(detail.current ?? detail.template).split('/').pop()} and choose <b>Fix My Answers</b>, change what they asked for and send it again; the new copy replaces this one.</p>
+                {#if formFile}<div class="actions"><button class="primary" onclick={() => formFile && onOpenForm(formFile)}>Open the Form</button></div>{/if}
               </div>
+            {:else if reuseProblem === ''}
+              <div class="actions">
+                <button class="primary" title="Opens the form with these answers filled in, to check and send as a new copy" onclick={() => detail && onUseAnswers(detail)}>Use These Answers</button>
+                {#if formFile}<button onclick={() => formFile && onOpenForm(formFile)}>Open the Form</button>{/if}
+              </div>
+              <p class="muted small">Use These Answers starts a new copy of the form with these answers, for you to change and send. Photos aren't copied.</p>
+            {:else if reuseProblem !== 'unknown' && reuseProblem !== 'quiz'}
+              <p class="muted small">{reuseProblem}</p>
+              {#if formFile}<div class="actions"><button onclick={() => formFile && onOpenForm(formFile)}>Open the Form</button></div>{/if}
             {/if}
             {#if answers.length}
               <table>
@@ -203,6 +306,20 @@
     margin: 8px 0 0; padding: 10px; white-space: pre-wrap; overflow-wrap: anywhere;
     font: 12px/1.45 "Cascadia Mono", Consolas, monospace; background: var(--side-bg); border-radius: 6px;
   }
+  nav h4 { margin: 8px 8px 2px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--side-muted); }
+  nav h4:first-child { margin-top: 2px; }
+  nav button span.space { color: var(--side-fg); opacity: .75; }
+  nav .pencil { margin-right: 5px; color: var(--side-accent); }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 8px; }
+  .actions button {
+    padding: 6px 14px; font: inherit; color: inherit; background: var(--side-bg);
+    border: 1px solid var(--side-border); border-radius: 6px; cursor: pointer;
+  }
+  .actions button:hover { background: var(--side-hover); }
+  .actions button.primary { color: var(--side-input); background: var(--side-accent); border-color: var(--side-accent); font-weight: 600; }
+  .actions button.primary:hover { filter: brightness(1.08); }
+  .small { font-size: 12px; }
+  .sent-back .actions { margin: 8px 0 0; }
   footer { display: flex; gap: 8px; align-items: center; padding: 10px 16px; }
   .grow { flex: 1; }
   footer button {

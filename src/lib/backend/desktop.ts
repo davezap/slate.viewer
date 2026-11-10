@@ -95,6 +95,10 @@ export const backend: Backend = {
       return out.submissions ?? [];
     },
     submission: async (folder, id) => JSON.parse(await invoke<string>('mtsync_submissions', { folder, id })) as Receipt,
+    // mtsync asks one space at a time; My Submissions and the count stay with the open space.
+    accountSubmissions: async () => null,
+    accountSubmission: async () => null,
+    todo: async () => null,
     policies: async folder => JSON.parse(await invoke<string>('mtsync_policies', { folder })) as Policies,
     acknowledge: (file, version) => invoke('mtsync_ack', { file, version }),
     readers: async folder => JSON.parse(await invoke<string>('mtsync_readers', { folder })) as ReaderReport,

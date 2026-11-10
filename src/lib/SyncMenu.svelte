@@ -148,10 +148,10 @@
 
 <style>
   .sync-menu {
-    position: fixed; z-index: 4000; width: 420px; max-width: calc(100vw - 16px); box-sizing: border-box; padding: 6px;
+    position: fixed; z-index: 4000; width: 420px; max-width: calc(100vw - 16px); box-sizing: border-box; padding: 8px;
     background: var(--side-input); color: var(--side-fg); outline: none;
     border: 1px solid var(--side-border); border-radius: 8px; box-shadow: 0 10px 30px rgb(0 0 0 / .2);
-    font: 13px/1.4 "Segoe UI", system-ui, sans-serif; user-select: text;
+    font: 13px/1.4 Inter, "Segoe UI", system-ui, sans-serif; user-select: text;
   }
   .head { display: flex; align-items: flex-start; gap: 10px; padding: 6px 8px 8px; }
   .what { min-width: 0; }
@@ -165,7 +165,7 @@
   @keyframes pulse { 50% { opacity: .3; } }
   .actions { display: flex; flex-direction: column; padding-bottom: 4px; border-bottom: 1px solid var(--side-border); }
   .item {
-    display: flex; align-items: center; width: 100%; height: 28px; padding: 0 10px; border: 0; border-radius: 4px;
+    display: flex; align-items: center; width: 100%; min-height: 38px; margin: 2px 0; padding: 6px 10px; border: 0; border-radius: 5px;
     font: inherit; color: inherit; background: none; cursor: default; text-align: left;
   }
   .item:hover:not(:disabled) { background: var(--side-accent-soft); }

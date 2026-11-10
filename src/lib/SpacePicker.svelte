@@ -80,6 +80,12 @@
   }
 
   const indexOf = (label: string, s: PickerSpace) => rows.findIndex(r => r.label === label && r.s.space === s.space);
+
+  /** The site's documentation (0.36.0): the home page now reopens the last place, so it is listed here. */
+  const showDocs = $derived.by(() => {
+    const f = filter.trim().toLowerCase();
+    return !!session?.docs && (!f || ['docs', 'documentation', 'help', 'guides', 'metatrash'].some(word => word.startsWith(f)));
+  });
 </script>
 
 <div class="picker" bind:this={box} {style} role="dialog" aria-label="Change space" tabindex="-1" onkeydown={onKeydown}>
@@ -98,7 +104,7 @@
       <p class="note">Your spaces can't be listed just now: {failed}</p>
     {:else if !session}
       <p class="note">Loading your spaces…</p>
-    {:else if !rows.length}
+    {:else if !rows.length && !showDocs}
       <p class="note">{filter ? 'No space matches.' : 'No spaces yet.'}</p>
     {:else}
       {#each sections as [label, list] (label)}
@@ -139,6 +145,18 @@
           </div>
         {/each}
       {/each}
+      {#if showDocs && session.docs}
+        <div class="label">Help</div>
+        <a class="row docs" href={session.docs} title="Guides and reference for Metatrash, Slate Viewer and mtsync">
+          <span class="tick book" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v15H5.5A1.5 1.5 0 0 0 4 20.5zM20 5.5A1.5 1.5 0 0 0 18.5 4H13v15h5.5a1.5 1.5 0 0 1 1.5 1.5z" /></svg>
+          </span>
+          <span class="what">
+            <span class="name">Metatrash documentation</span>
+            <span class="address">{location.host}{session.docs}</span>
+          </span>
+        </a>
+      {/if}
     {/if}
   </div>
   {#if session?.signedIn}
@@ -155,19 +173,19 @@
 <style>
   .picker {
     position: fixed; z-index: 4000; box-sizing: border-box; display: flex; flex-direction: column; max-height: min(520px, calc(100vh - 70px));
-    padding: 8px; background: var(--side-input); color: var(--side-fg); outline: none;
+    padding: 10px; background: var(--side-input); color: var(--side-fg); outline: none;
     border: 1px solid var(--side-border); border-radius: 8px; box-shadow: 0 10px 30px rgb(0 0 0 / .2);
     font: 13px/1.4 Inter, "Segoe UI", system-ui, sans-serif;
   }
   input {
-    flex: none; box-sizing: border-box; width: 100%; margin-bottom: 6px; padding: 6px 8px; font: inherit; color: inherit;
+    flex: none; box-sizing: border-box; width: 100%; margin-bottom: 8px; padding: 7px 10px; font: inherit; color: inherit;
     background: var(--side-bg); border: 1px solid var(--side-border); border-radius: 6px; outline: none;
   }
   input:focus { border-color: var(--side-accent); }
   .list { flex: 1; min-height: 0; overflow: auto; }
-  .label { padding: 8px 8px 3px; color: var(--side-muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  .label { padding: 10px 10px 5px; color: var(--side-muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
   hr { margin: 8px 4px 2px; border: 0; border-top: 1px solid var(--side-border); }
-  .row { display: flex; align-items: center; gap: 6px; min-height: 34px; padding: 3px 6px; border-radius: 5px; cursor: pointer; }
+  .row { display: flex; align-items: center; gap: 8px; min-height: 38px; margin: 2px 0; padding: 6px 10px; border-radius: 5px; cursor: pointer; }
   .row.active { background: var(--side-accent-soft); }
   .tick { flex: none; width: 14px; color: var(--side-accent); font-weight: 700; text-align: center; }
   .what { flex: 1; min-width: 0; display: flex; flex-direction: column; }
@@ -184,8 +202,11 @@
   .gear:hover, .forget:hover { background: var(--side-hover); color: var(--side-fg); }
   .gear svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
   .note { margin: 10px 8px; color: var(--side-muted); }
+  a.row { color: inherit; text-decoration: none; }
+  a.row:hover, a.row:focus-visible { background: var(--side-accent-soft); outline: none; }
+  .book svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linejoin: round; vertical-align: -3px; }
   .foot {
-    flex: none; display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; padding: 8px 8px 2px; border-top: 1px solid var(--side-border); font-size: 12px;
+    flex: none; display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; padding: 10px 10px 2px; border-top: 1px solid var(--side-border); font-size: 12px;
   }
   .foot a { color: var(--side-accent); text-decoration: none; }
   .foot a:hover { text-decoration: underline; }

@@ -91,3 +91,21 @@ body {
 .web-dialog .buttons { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 .web-dialog button { padding: 6px 14px; font: inherit; color: inherit; background: var(--side-bg); border: 1px solid var(--side-border); border-radius: 6px; }
 .web-dialog button.primary { background: var(--side-accent); border-color: var(--side-accent); color: #fff; }
+/* Drop-down menus on the website (0.36.0): one look, the space picker's (SpacePicker.svelte). */
+.dropdown {
+  box-sizing: border-box; padding: 10px; background: var(--side-input); color: var(--side-fg);
+  border: 1px solid var(--side-border); border-radius: 8px; box-shadow: 0 10px 30px rgb(0 0 0 / .2);
+  font: 13px/1.4 Inter, "Segoe UI", system-ui, sans-serif; text-align: left;
+}
+.dropdown .dropdown-label { padding: 10px 10px 5px; color: var(--side-muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.dropdown .dropdown-label:first-child { padding-top: 2px; }
+.dropdown hr { margin: 8px 4px; border: 0; border-top: 1px solid var(--side-border); }
+.dropdown .dropdown-row {
+  display: flex; align-items: center; gap: 8px; box-sizing: border-box; width: 100%; height: auto; min-height: 38px; margin: 2px 0; padding: 7px 10px;
+  color: inherit; font: inherit; text-align: left; text-decoration: none; background: none; border: 0; border-radius: 5px; cursor: pointer;
+}
+.dropdown .dropdown-row:hover:not(:disabled), .dropdown .dropdown-row:focus-visible { background: var(--side-accent-soft); color: inherit; outline: none; }
+.dropdown .dropdown-tick { flex: none; width: 14px; color: var(--side-accent); font-weight: 700; text-align: center; }
+.dropdown .dropdown-what { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.dropdown .dropdown-sub { margin-top: 2px; color: var(--side-muted); font-size: 11.5px; line-height: 1.3; }
+.dropdown .dropdown-row.current .dropdown-what > :first-child { font-weight: 600; }

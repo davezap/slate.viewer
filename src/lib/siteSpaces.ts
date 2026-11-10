@@ -20,6 +20,8 @@ export interface PickerSession {
   /** Invitations and ownership offers waiting for the person. */
   waiting?: number;
   csrf?: string;
+  /** The site's documentation address (/docs/), when it has one (Metatrash 0.95.22). */
+  docs?: string;
 }
 
 export async function pickerSession(): Promise<PickerSession> {

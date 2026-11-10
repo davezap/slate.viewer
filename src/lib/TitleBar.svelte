@@ -45,26 +45,29 @@
     rememberPositions?: boolean;
     onRememberPositions?: () => void;
     onForgetPositions?: () => void;
-    /** metatrash.com: opens My Submissions for the open space (0.35.2); absent outside a space. */
+    /** metatrash.com: opens My Submissions, the forms sent from all the person's spaces (0.36.0). */
     onSubmissions?: () => void;
-    /** metatrash.com: things waiting for this person in the open space (to read, to review, sent back): a red number on the account icon. */
+    /** metatrash.com: things waiting for this person in all their spaces (to read, to review, sent back; 0.36.0): a red number on the account icon. */
     todo?: number;
-    /** What that number is made of, for its tooltip, such as "2 to review, 1 sent back". */
-    todoText?: string;
+    /** What that number is made of, a line per space, such as "HR: 2 to review"; href opens that space. */
+    todoSpaces?: { text: string; href: string | null }[];
   }
 
   let {
     menu, title, detail, dirty, backTo, forwardTo, onBack, onForward, onFind, sync = null, onSync, syncOpen = false,
     editing = null, onEditing, theme = 'system', onTheme, onPrint, signedIn = true, account = '', space = null,
-    rememberPositions = true, onRememberPositions, onForgetPositions, onSubmissions, todo = 0, todoText = '',
+    rememberPositions = true, onRememberPositions, onForgetPositions, onSubmissions, todo = 0, todoSpaces = [],
   }: Props = $props();
 
   /** metatrash.com: the space picker's anchor while it is open. */
   let picker = $state<DOMRect | null>(null);
   let accountOpen = $state(false);
+  /** metatrash.com: the theme menu (0.36.0, the space picker's look instead of the browser's list). */
+  let themeOpen = $state(false);
 
   function togglePicker(event: MouseEvent) {
     accountOpen = false;
+    themeOpen = false;
     picker = picker ? null : (event.currentTarget as HTMLElement).getBoundingClientRect();
   }
 
@@ -82,14 +85,16 @@
   }
 
   function closeAccount(event: PointerEvent) {
-    if (accountOpen && !(event.target as Element | null)?.closest('[data-account-menu]')) accountOpen = false;
+    const target = event.target as Element | null;
+    if (accountOpen && !target?.closest('[data-account-menu]')) accountOpen = false;
+    if (themeOpen && !target?.closest('[data-theme-menu]')) themeOpen = false;
   }
 
-  const themes: { value: ThemePref; label: string }[] = [
-    { value: 'system', label: 'Match system' },
-    { value: 'light', label: 'Light' },
-    { value: 'dark', label: 'Dark' },
-    { value: 'paper', label: 'Paper' },
+  const themes: { value: ThemePref; label: string; hint: string }[] = [
+    { value: 'system', label: 'Match system', hint: 'Follows your device' },
+    { value: 'light', label: 'Light', hint: 'White pages' },
+    { value: 'dark', label: 'Dark', hint: 'Light text on dark' },
+    { value: 'paper', label: 'Paper', hint: 'Soft, warm pages' },
   ];
 
   const appWindow = backend.window;
@@ -173,12 +178,35 @@
         </button>
       {/if}
       {#if onTheme}
-        <label class="theme" title="Theme">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0-18zM12 3v18" /></svg>
-          <select aria-label="Theme" value={theme} onchange={event => onTheme?.(event.currentTarget.value as ThemePref)}>
-            {#each themes as option (option.value)}<option value={option.value}>{option.label}</option>{/each}
-          </select>
-        </label>
+        <div class="theme-wrap" data-theme-menu>
+          <button
+            class="theme"
+            title={`Theme: ${themes.find(option => option.value === theme)?.label ?? ''}`}
+            aria-label="Theme"
+            aria-haspopup="menu"
+            aria-expanded={themeOpen}
+            onclick={() => { picker = null; accountOpen = false; themeOpen = !themeOpen; }}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0-18zM12 3v18" /></svg>
+          </button>
+          {#if themeOpen}
+            <div class="theme-menu dropdown" role="menu" aria-label="Theme">
+              <div class="dropdown-label">Theme</div>
+              {#each themes as option (option.value)}
+                <button
+                  role="menuitemradio"
+                  class="dropdown-row"
+                  class:current={option.value === theme}
+                  aria-checked={option.value === theme}
+                  onclick={() => { themeOpen = false; onTheme?.(option.value); }}
+                >
+                  <span class="dropdown-tick" aria-hidden="true">{option.value === theme ? '✓' : ''}</span>
+                  <span class="dropdown-what"><span>{option.label}</span><span class="dropdown-sub">{option.hint}</span></span>
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
       {/if}
       {#each headerAdditions as addition (addition.id)}
         <addition.component {signedIn} {account} />
@@ -195,32 +223,59 @@
         <div class="account" data-account-menu>
           <button
             class="who"
-            title={`${account ? `Signed in as ${account}` : 'Your account'}${todo ? `\n${todoText || `${todo} waiting for you`}` : ''}`}
+            title={`${account ? `Signed in as ${account}` : 'Your account'}${todo ? `\n${todoSpaces.length ? todoSpaces.map(line => line.text).join('\n') : `${todo} waiting for you`}` : ''}`}
             aria-label={todo ? `Your account, ${todo} waiting for you` : 'Your account'}
             aria-haspopup="menu"
             aria-expanded={accountOpen}
-            onclick={() => { picker = null; accountOpen = !accountOpen; }}
+            onclick={() => { picker = null; themeOpen = false; accountOpen = !accountOpen; }}
           >
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 1 0 0-8a4 4 0 0 0 0 8zM4 20a8 8 0 0 1 16 0" /></svg>
             {#if todo}<span class="count" aria-hidden="true">{todo > 99 ? '99+' : todo}</span>{/if}
           </button>
           {#if accountOpen}
-            <div class="account-menu" role="menu">
-              {#if account}<div class="signed">Signed in as <strong>{account}</strong></div>{/if}
-              {#if todo && todoText}<div class="waiting">{todoText} in this space</div>{/if}
-              {#if onSubmissions}
-                <button role="menuitem" title="The forms you sent from this space, and what reviewers said" onclick={() => { accountOpen = false; onSubmissions?.(); }}>My Submissions</button>
+            <div class="account-menu dropdown" role="menu">
+              {#if account}
+                <div class="signed"><span class="dropdown-sub">Signed in as</span><strong>{account}</strong></div>
               {/if}
-              <a role="menuitem" href="#settings/spaces" onclick={() => (accountOpen = false)}>Settings</a>
+              {#if todo && todoSpaces.length}
+                <div class="dropdown-label">Waiting for you</div>
+                <div class="waiting-list">
+                  {#each todoSpaces as line (line.text)}
+                    {#if line.href}
+                      <a role="menuitem" class="dropdown-row waiting" href={line.href} title="Open this space" onclick={() => (accountOpen = false)}>
+                        <span class="dropdown-tick" aria-hidden="true"><span class="red-dot"></span></span><span class="dropdown-what">{line.text}</span>
+                      </a>
+                    {:else}
+                      <div class="dropdown-row waiting here"><span class="dropdown-tick" aria-hidden="true"><span class="red-dot"></span></span><span class="dropdown-what">{line.text}</span></div>
+                    {/if}
+                  {/each}
+                </div>
+                <hr />
+              {/if}
+              {#if onSubmissions}
+                <button role="menuitem" class="dropdown-row" onclick={() => { accountOpen = false; onSubmissions?.(); }}>
+                  <span class="dropdown-tick"></span>
+                  <span class="dropdown-what"><span>My Submissions</span><span class="dropdown-sub">Forms you sent or started, in all your spaces</span></span>
+                </button>
+              {/if}
+              <a role="menuitem" class="dropdown-row" href="#settings/spaces" onclick={() => (accountOpen = false)}>
+                <span class="dropdown-tick"></span><span class="dropdown-what"><span>Settings</span><span class="dropdown-sub">Your spaces, sharing and account</span></span>
+              </a>
+              {#if onRememberPositions || onForgetPositions}<hr />{/if}
               {#if onRememberPositions}
-                <button role="menuitemcheckbox" aria-checked={rememberPositions} title="Each document opens where you left it, in this browser" onclick={() => { accountOpen = false; onRememberPositions?.(); }}>
-                  <span class="tick" aria-hidden="true">{rememberPositions ? '✓' : ''}</span>Remember position in each document
+                <button role="menuitemcheckbox" class="dropdown-row" aria-checked={rememberPositions} title="Each document opens where you left it, in this browser" onclick={() => { accountOpen = false; onRememberPositions?.(); }}>
+                  <span class="dropdown-tick" aria-hidden="true">{rememberPositions ? '✓' : ''}</span><span class="dropdown-what">Remember position in each document</span>
                 </button>
               {/if}
               {#if onForgetPositions}
-                <button role="menuitem" onclick={() => { accountOpen = false; onForgetPositions?.(); }}>Forget document positions</button>
+                <button role="menuitem" class="dropdown-row" onclick={() => { accountOpen = false; onForgetPositions?.(); }}>
+                  <span class="dropdown-tick"></span><span class="dropdown-what">Forget document positions</span>
+                </button>
               {/if}
-              <button role="menuitem" onclick={() => void signOut()}>Sign out</button>
+              <hr />
+              <button role="menuitem" class="dropdown-row" onclick={() => void signOut()}>
+                <span class="dropdown-tick"></span><span class="dropdown-what">Sign out</span>
+              </button>
             </div>
           {/if}
         </div>
@@ -249,7 +304,7 @@
   {/if}
 </header>
 
-<svelte:window onpointerdown={closeAccount} />
+<svelte:window onpointerdown={closeAccount} onkeydown={event => { if (event.key === 'Escape' && (accountOpen || themeOpen)) { accountOpen = false; themeOpen = false; } }} />
 
 {#if picker}
   <SpacePicker anchor={picker} current={space} onClose={() => (picker = null)} />
@@ -309,8 +364,10 @@
     position: relative; display: grid; place-items: center; width: 32px; height: 32px; color: var(--side-muted); border-radius: 6px;
   }
   .theme:hover { background: var(--side-hover); color: var(--side-fg); }
-  /* The select covers the icon, invisible, so a click opens the browser's own list. */
-  .theme select { position: absolute; inset: 0; opacity: 0; cursor: pointer; font: inherit; }
+  button.theme { padding: 0; font: inherit; background: none; border: 0; cursor: pointer; }
+  .theme[aria-expanded="true"] { background: var(--side-hover); color: var(--side-fg); }
+  .theme-wrap { position: relative; }
+  .theme-menu { position: absolute; right: 0; top: 38px; z-index: 4000; width: 250px; }
   .change {
     display: flex; align-items: center; height: 28px; padding: 0 10px; margin-left: 4px;
     color: var(--side-fg); font-size: 12px; text-decoration: none; white-space: nowrap;
@@ -320,26 +377,20 @@
   button.change { width: auto; font: inherit; font-size: 12px; cursor: pointer; }
   button.change[aria-expanded="true"] { background: var(--side-hover); }
   .account { position: relative; margin-left: 2px; }
-  .account-menu {
-    position: absolute; right: 0; top: 36px; z-index: 4000; min-width: 190px; padding: 6px; box-sizing: border-box;
-    background: var(--side-input); color: var(--side-fg); border: 1px solid var(--side-border); border-radius: 8px;
-    box-shadow: 0 10px 30px rgb(0 0 0 / .2);
-  }
-  .signed { padding: 4px 10px 8px; margin-bottom: 4px; color: var(--side-muted); font-size: 12px; border-bottom: 1px solid var(--side-border); white-space: nowrap; }
-  .signed strong { color: var(--side-fg); font-weight: 600; }
-  .waiting { padding: 2px 10px 6px; color: #d93025; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .account-menu { position: absolute; right: 0; top: 38px; z-index: 4000; width: min(300px, calc(100vw - 16px)); }
+  .signed { display: flex; flex-direction: column; gap: 2px; padding: 2px 10px 10px; margin-bottom: 4px; border-bottom: 1px solid var(--side-border); }
+  .signed strong { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .waiting-list { max-height: 40vh; overflow: auto; }
+  .account-menu .waiting { color: #d93025; font-weight: 600; cursor: default; }
+  .account-menu a.waiting { cursor: pointer; }
+  .red-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #d93025; vertical-align: 1px; }
+  .account-menu div.waiting:hover { background: none; }
   .who { position: relative; }
   .count {
     position: absolute; top: 2px; right: 0; min-width: 16px; height: 16px; padding: 0 4px; box-sizing: border-box;
     border-radius: 8px; background: #d93025; color: #fff; font: 700 10px/16px Inter, "Segoe UI", system-ui, sans-serif;
     text-align: center; pointer-events: none;
   }
-  .account-menu a, .account-menu button {
-    display: flex; align-items: center; width: 100%; height: 28px; padding: 0 10px; box-sizing: border-box;
-    color: inherit; font: inherit; font-size: 13px; text-align: left; text-decoration: none; border-radius: 4px; cursor: pointer;
-  }
-  .account-menu a:hover, .account-menu button:hover { background: var(--side-accent-soft); }
-  .tick { display: inline-block; width: 1.2em; }
   .phone { display: none; }
   /* A phone on the website: the title and the switches that matter, nothing else. */
   @media (max-width: 800px) {

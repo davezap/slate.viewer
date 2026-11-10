@@ -6,7 +6,7 @@
 
 import type { MenuEntry } from '../menu';
 import type { HistoryEntry, HistoryPage } from '../history';
-import type { Receipt, SubmitRefusal, SubmitResult } from '../forms';
+import type { AccountReceipt, AccountTodo, Receipt, SubmitRefusal, SubmitResult } from '../forms';
 import type { Policies, ReaderReport } from '../policies';
 import type { SpaceRow } from '../space';
 import type { ActivityResult } from '../activity';
@@ -56,6 +56,16 @@ async function call<T>(method: string, url: string, body?: unknown, signal?: Abo
       retryAfterMilliseconds(res.headers.get('Retry-After')));
   }
   return data as T;
+}
+
+/** An account-wide forms call (Metatrash 0.95.22): null signed out or from an older server. */
+async function accountCall<T>(ask: () => Promise<T>): Promise<T | null> {
+  try {
+    return await ask();
+  } catch (error) {
+    if (error instanceof SiteError && (error.status === 401 || error.status === 404)) return null;
+    throw error;
+  }
 }
 
 const spaceUrl = (space: string, resource: string, query: Record<string, string | number | undefined> = {}) => {
@@ -418,6 +428,9 @@ export const backend: Backend = {
     },
     submissions: async folder => (await call<{ submissions?: Receipt[] }>('GET', spaceUrl(locate(folder).space, 'submissions'))).submissions ?? [],
     submission: async (folder, id) => call<Receipt>('GET', spaceUrl(locate(folder).space, 'submissions', { id })),
+    accountSubmissions: () => accountCall(async () => (await call<{ submissions?: AccountReceipt[] }>('GET', `${API}/submissions`)).submissions ?? []),
+    accountSubmission: id => accountCall(() => call<AccountReceipt>('GET', `${API}/submissions?id=${encodeURIComponent(id)}`)),
+    todo: () => accountCall(() => call<AccountTodo>('GET', `${API}/todo`)),
     policies: async folder => {
       const { space } = locate(folder);
       // The public space keeps no read records, and signed out there is nobody to keep them for.

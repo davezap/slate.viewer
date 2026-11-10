@@ -43,8 +43,8 @@
   import FormBanner from './lib/FormBanner.svelte';
   import SubmissionsDialog from './lib/SubmissionsDialog.svelte';
   import {
-    answerKeyName, answerKeyText, clearDraft, fetchReceipt, fetchReceipts, loadDraft, parseFiledCopy, reviewCopy, saveDraft, submitForm,
-    type FiledCopy, type FormDraft, type Receipt, type Review, needsInfo } from './lib/forms';
+    answerKeyName, answerKeyText, clearDraft, fetchAccountTodo, fetchReceipt, fetchReceipts, loadDraft, parseFiledCopy, reusableAnswers, reviewCopy,
+    saveDraft, submitForm, todoWords, type AccountReceipt, type AccountTodo, type FiledCopy, type FormDraft, type Receipt, type Review, needsInfo } from './lib/forms';
   import ReviewBanner from './lib/ReviewBanner.svelte';
   import { SETTINGS_FILE, effectiveSettings, folderChain, frozenKeys, pageFooter, printImage, publishText, toSavedVersion } from './lib/folderSettings';
   import { renderFooter } from './lib/footer';
@@ -1671,6 +1671,50 @@
     ].filter(Boolean);
     return said.length > 1 ? `${said.slice(0, -1).join(', ')} and ${said[said.length - 1]}` : said[0] ?? '';
   });
+  /** What waits in each of the person's spaces (website, Metatrash 0.95.22); null where it can't be asked. */
+  let accountTodo = $state<AccountTodo | null>(null);
+  let accountTodoAt = 0;
+  let accountTodoRequest = 0;
+
+  async function loadAccountTodo() {
+    if (!web || !signedIn || Date.now() - accountTodoAt < 20_000) return;
+    accountTodoAt = Date.now();
+    const request = ++accountTodoRequest;
+    try {
+      const found = await fetchAccountTodo();
+      if (request === accountTodoRequest) accountTodo = found;
+    } catch { /* keep what was known */ }
+  }
+
+  /** The open space's entry in the account-wide answer, which its own live answer replaces. */
+  function sameSpace(a: string, b: string | undefined | null): boolean {
+    return !!b && a.toLowerCase() === b.toLowerCase();
+  }
+
+  /** The account icon's red number (0.36.0): every space's, with the open one's as it is now. */
+  const todoCount = $derived.by(() => {
+    const here = thingsToDo(policies);
+    if (!accountTodo) return here;
+    const listed = accountTodo.spaces.find(sp => sameSpace(sp.space, openedSpace?.space));
+    return accountTodo.total - (listed ? listed.toRead + listed.toReview + listed.sentBack : 0) + here;
+  });
+
+  /** The account menu's lines: each space with something waiting, linked to it. */
+  const todoSpaces = $derived.by(() => {
+    const hereCounts = { toRead: policies?.outstanding ?? 0, toReview: policies?.toReview.length ?? 0, sentBack: policies?.toFix.length ?? 0 };
+    if (!accountTodo) return todoText ? [{ text: `${todoText} in this space`, href: null as string | null }] : [];
+    const lines: { text: string; href: string | null }[] = [];
+    let hereListed = false;
+    for (const sp of accountTodo.spaces) {
+      const here = sameSpace(sp.space, openedSpace?.space);
+      hereListed ||= here;
+      const words = todoWords(here ? hereCounts : sp);
+      if (words) lines.push({ text: `${here ? 'This space' : sp.name || sp.space}: ${words}`, href: here ? null : `/spaces/${sp.space}/` });
+    }
+    if (!hereListed && todoText && openedSpace) lines.unshift({ text: `This space: ${todoText}`, href: null });
+    return lines;
+  });
+
   const currentPolicy = $derived(currentRelative !== null && !isSpaceFolderFile(currentRelative) ? policyFor(policies, currentRelative) : null);
   /** A publishing folder (by its settings) holds the open file, but mtsync couldn't say more. */
   const policyNotice = $derived.by(() => {
@@ -1694,6 +1738,7 @@
       // Keep what was known (offline for a moment); an older mtsync or server just has none.
       policiesProblem = String(error);
     }
+    void loadAccountTodo();
     await syncPublishedView();
   }
 
@@ -1714,7 +1759,15 @@
   // The red number on the taskbar button: published files this person still has to read, and
   // forms waiting for them (copies to review, forms sent back; Metatrash 0.95.20).
   $effect(() => {
-    void setAttentionBadge(thingsToDo(policies)).catch(() => {});
+    void setAttentionBadge(todoCount).catch(() => {});
+  });
+
+  // The other spaces' count (website): when signed in, and every five minutes.
+  $effect(() => {
+    if (!web || !signedIn) return;
+    void loadAccountTodo();
+    const timer = setInterval(() => void loadAccountTodo(), 5 * 60_000);
+    return () => clearInterval(timer);
   });
 
   /**
@@ -1951,7 +2004,7 @@
         person,
         answers: draft?.answers,
         status: blocked
-          ?? (draft ? `Your draft from ${formatWhen(new Date(draft.savedAt).toISOString())}.`
+          ?? (draft ? draft.note ?? `Your draft from ${formatWhen(new Date(draft.savedAt).toISOString())}.`
             : sent ? 'Sent. You can fill it in again to send another.'
               : 'Your answers are kept on this computer until you send them.'),
       });
@@ -2184,8 +2237,63 @@
   }
 
   function showSubmissions(id?: string) {
-    if (!openedSpace) return;
+    if (!openedSpace && !web) return;
     submissionsDialog = { id };
+  }
+
+  /** The website's address for a file in a space (/spaces/owner/slug/path), each part encoded. */
+  function siteFileAddress(file: string): string {
+    return file.split('/').map(encodeURIComponent).join('/');
+  }
+
+  /** The form a receipt was sent from, as it is now (0.36.0): a site path, or a file on this computer. */
+  function receiptForm(r: AccountReceipt): string | null {
+    if (web) {
+      // Across all spaces the server says where the form is now; one space's list says where it was.
+      if (r.space) return r.current ? `/spaces/${r.space}/${r.current}` : null;
+      return openedSpace ? `/spaces/${openedSpace.space}/${r.template}` : null;
+    }
+    return openedSpace ? joinPath(openedSpace.folder, r.template) : null;
+  }
+
+  /** Opens a form from My Submissions: a sent-back one to fix, a draft to finish. */
+  async function openSubmissionForm(file: string) {
+    submissionsDialog = null;
+    if (web) await followLink(siteFileAddress(file), false);
+    else if (file !== path) await openDocument(file);
+  }
+
+  /**
+   * Use These Answers (0.36.0): a copy sent before starts a new one of the same, unchanged form. The
+   * answers become the form's draft (photos left out), and the form opens with them filled in.
+   */
+  async function useAnswers(r: AccountReceipt) {
+    const target = receiptForm(r);
+    if (!target || !r.sameForm || !r.answers) return;
+    const existing = loadDraft(target);
+    if (existing) {
+      const choice = await message(`You have answers in ${target.split('/').pop()} that you haven't sent yet, from ${formatWhen(new Date(existing.savedAt).toISOString())}.\n\nReplace them with the answers from your copy sent ${formatWhen(r.submittedAt)}?`, {
+        title: 'Slate Viewer',
+        kind: 'warning',
+        buttons: { ok: 'Replace', cancel: 'Cancel' },
+      });
+      if (choice !== 'Replace') return;
+    }
+    const answers = reusableAnswers(r.answers);
+    const note = `Answers from your copy sent ${formatWhen(r.submittedAt)}. Check them, change what's different, then choose Send.`;
+    submissionsDialog = null;
+    if (editor && path === target && filling && !fillReadOnly) {
+      // The form is open and being filled in: put the answers in now.
+      clearTimeout(draftTimer);
+      await editor.setFormAnswers(answers);
+      saveDraft(target, editor.getFormAnswers(), note);
+      formDraft = loadDraft(target);
+      editor.setFormProblems([]);
+      editor.setFormStatus(note);
+      return;
+    }
+    saveDraft(target, answers, note);
+    await openSubmissionForm(target);
   }
 
   /** Waits (up to about 40 s) for mtsync to send this window's saves to the space. */
@@ -2869,7 +2977,7 @@
           { text: 'Save &As…', keys: 'Ctrl+Shift+S', action: () => void once('save', saveAs) },
           separator,
           { text: 'Fill In For&m', enabled: currentForm !== null && !currentForm.error && workspaceMode !== 'preview', action: () => void fillInForm() },
-          { text: 'My Su&bmissions…', enabled: openedSpace !== null, action: () => showSubmissions() },
+          { text: 'My Su&bmissions…', enabled: openedSpace !== null || web, action: () => showSubmissions() },
           separator,
           { text: '&Print…', keys: 'Ctrl+P', action: () => void once('print', print) },
           separator,
@@ -3512,9 +3620,9 @@
   {rememberPositions}
   onRememberPositions={toggleRememberPositions}
   onForgetPositions={() => void forgetPositions()}
-  onSubmissions={openedSpace ? () => showSubmissions() : undefined}
-  todo={thingsToDo(policies)}
-  {todoText}
+  onSubmissions={openedSpace || web ? () => showSubmissions() : undefined}
+  todo={todoCount}
+  {todoSpaces}
 />
 <div class="layout" class:narrow>
   <ActivityBar sections={shownSections} expanded={activityLabels && !narrow} onToggle={toggleSection} onToggleExpanded={toggleActivityLabels} />
@@ -3685,8 +3793,17 @@
   />
 {/if}
 
-{#if submissionsDialog && openedSpace}
-  <SubmissionsDialog folder={openedSpace.folder} space={openedSpace.space} initialId={submissionsDialog.id} onClose={() => (submissionsDialog = null)} />
+{#if submissionsDialog && (openedSpace || web)}
+  <SubmissionsDialog
+    folder={openedSpace?.folder ?? null}
+    space={openedSpace?.space ?? null}
+    draftRoot={web ? '/spaces/' : openedSpace?.folder ?? null}
+    initialId={submissionsDialog.id}
+    formFileOf={receiptForm}
+    onOpenForm={file => void openSubmissionForm(file)}
+    onUseAnswers={r => void useAnswers(r)}
+    onClose={() => (submissionsDialog = null)}
+  />
 {/if}
 
 {#if settings !== null}

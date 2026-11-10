@@ -42,6 +42,74 @@ export interface Receipt {
   answers?: SlateFormAnswers;
 }
 
+/**
+ * A receipt in the account-wide list (Metatrash 0.95.22, the website): the form's space, its path
+ * there now, and whether it is still the text the answers were given to.
+ */
+export interface AccountReceipt extends Receipt {
+  /** owner/slug. */
+  space?: string;
+  current?: string;
+  sameForm?: boolean;
+}
+
+/** What waits for the person in one space (Metatrash 0.95.22). */
+export interface TodoSpace {
+  space: string;
+  name: string;
+  toRead: number;
+  toReview: number;
+  sentBack: number;
+}
+
+export interface AccountTodo {
+  total: number;
+  spaces: TodoSpace[];
+  partial?: boolean;
+}
+
+/** "2 to read and 1 to review", for a space or the whole account. */
+export function todoWords(t: { toRead: number; toReview: number; sentBack: number }): string {
+  const said = [
+    t.toRead ? `${t.toRead} to read` : '',
+    t.toReview ? `${t.toReview} to review` : '',
+    t.sentBack ? `${t.sentBack} sent back to you` : '',
+  ].filter(Boolean);
+  return said.length > 1 ? `${said.slice(0, -1).join(', ')} and ${said[said.length - 1]}` : said[0] ?? '';
+}
+
+/**
+ * The forms this person sent from all their spaces, or null where the server or app can't list
+ * them that way (the desktop app, an older server, signed out).
+ */
+export async function fetchAccountReceipts(): Promise<AccountReceipt[] | null> {
+  return backend.sync.accountSubmissions();
+}
+
+/** One receipt from the account-wide list, with its answers and copy. */
+export async function fetchAccountReceipt(id: string): Promise<AccountReceipt | null> {
+  return backend.sync.accountSubmission(id);
+}
+
+/** What waits in each space, or null where it can't be asked. */
+export async function fetchAccountTodo(): Promise<AccountTodo | null> {
+  return backend.sync.todo();
+}
+
+/**
+ * The answers of a copy sent before, to start a new copy with (Viewer 0.36.0). Photos stay out:
+ * the filed copy keeps them as pictures in the review space, which a new copy can't reuse.
+ */
+export function reusableAnswers(answers: SlateFormAnswers | undefined): SlateFormAnswers {
+  const out: SlateFormAnswers = {};
+  for (const [name, value] of Object.entries(answers ?? {})) {
+    const photos = Array.isArray(value) && value.length > 0
+      && value.every(v => typeof v === 'string' && (/^data:image\//.test(v) || /(^|\/)assets\/[^/]+\.(jpe?g|png)$/i.test(v)));
+    if (!photos) out[name] = value;
+  }
+  return out;
+}
+
 export type ReviewStatus = 'submitted' | 'approved' | 'declined' | 'needs-info' | 'resent';
 
 const reviewStatuses: ReviewStatus[] = ['submitted', 'approved', 'declined', 'needs-info', 'resent'];
@@ -239,6 +307,10 @@ export interface FormDraft {
   answers: SlateFormAnswers;
   /** When it was last changed, ms since 1970. */
   savedAt: number;
+  /** The form's path as written (0.36.0): keys are lowercased, so My Submissions reads it here. */
+  file?: string;
+  /** Said when the form opens, instead of "Your draft from…": where the answers came from. */
+  note?: string;
 }
 
 function draftKey(file: string): string {
@@ -255,17 +327,39 @@ export function loadDraft(file: string): FormDraft | null {
 }
 
 /** Keeps the answers for `file`; answers with nothing in them remove the draft. */
-export function saveDraft(file: string, answers: SlateFormAnswers): void {
+export function saveDraft(file: string, answers: SlateFormAnswers, note?: string): void {
   const empty = Object.values(answers).every(v => (Array.isArray(v) ? v.length === 0 : !String(v).trim()));
   if (empty) { clearDraft(file); return; }
   try {
-    localStorage.setItem(draftKey(file), JSON.stringify({ answers, savedAt: Date.now() }));
+    const draft: FormDraft = { answers, savedAt: Date.now(), file, ...(note ? { note } : {}) };
+    localStorage.setItem(draftKey(file), JSON.stringify(draft));
     pruneDrafts();
   } catch { /* storage full or blocked: the answers stay on screen */ }
 }
 
 export function clearDraft(file: string): void {
   try { localStorage.removeItem(draftKey(file)); } catch { /* blocked */ }
+}
+
+/**
+ * The forms started on this computer and not sent yet, under `root` (a space's folder, or
+ * /spaces/ on the website), newest first. Drafts kept before 0.36.0 don't know their path, so
+ * they show up only once the form is opened again.
+ */
+export function listDrafts(root: string): { file: string; savedAt: number; answered: number }[] {
+  const out: { file: string; savedAt: number; answered: number }[] = [];
+  const prefix = root.replace(/\\/g, '/').replace(/\/?$/, '/').toLowerCase();
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key?.startsWith(DRAFT_PREFIX) || !key.slice(DRAFT_PREFIX.length).startsWith(prefix)) continue;
+      const draft = JSON.parse(localStorage.getItem(key) ?? 'null') as FormDraft | null;
+      if (!draft?.file || typeof draft.answers !== 'object' || !draft.answers) continue;
+      const answered = Object.values(draft.answers).filter(v => (Array.isArray(v) ? v.length > 0 : !!String(v).trim())).length;
+      out.push({ file: draft.file, savedAt: draft.savedAt || 0, answered });
+    }
+  } catch { /* blocked */ }
+  return out.sort((a, b) => b.savedAt - a.savedAt);
 }
 
 /** Forgets the oldest drafts beyond MAX_DRAFTS. */
