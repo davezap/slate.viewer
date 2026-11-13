@@ -12,6 +12,7 @@ import type { SpaceRow } from '../space';
 import type { ActivityResult } from '../activity';
 import type { Backend, BackendEvents, FileFilter, MessageOptions, Unlisten } from './types';
 import { createPoller, retryAfterMilliseconds } from './polling';
+import { brand } from '$edition';
 
 const API = '/api/v1/site';
 const SPACES = '/spaces/';
@@ -184,7 +185,7 @@ function dialog(text: string, options: MessageOptions = {}, input?: string): Pro
     if (options.title) {
       const h = document.createElement('h2');
       // The app's messages are titled with its name; here it is the site's.
-      h.textContent = options.title === 'Slate Viewer' ? 'Metatrash' : options.title;
+      h.textContent = options.title === 'Slate Viewer' ? brand.name : options.title;
       box.append(h);
     }
     for (const para of text.split('\n\n')) {
@@ -464,7 +465,7 @@ export const backend: Backend = {
   },
 
   window: {
-    setTitle: async title => { document.title = title.replace(/ - Slate Viewer$/, ' — Metatrash'); },
+    setTitle: async title => { document.title = title.replace(/ - Slate Viewer$/, ' — ' + brand.name); },
     setTheme: async () => {},
     show: async () => {},
     close: async () => {},

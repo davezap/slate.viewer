@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { headerAdditions } from '$edition';
+  import { brand, headerAdditions } from '$edition';
   import { backend, capabilities } from './backend';
   import MenuBar from './MenuBar.svelte';
   import SpacePicker from './SpacePicker.svelte';
@@ -30,6 +30,12 @@
     /** metatrash.com: the editing switch's state, or null to hide it (a space the person can only read). */
     editing?: boolean | null;
     onEditing?: (on: boolean) => void;
+    /**
+     * metatrash.com: the Changes toggle (0.38.0; it was Slate's toolbar button, which kept a bar
+     * above every page): whether changes are showing, or null to hide it (a file with no history).
+     */
+    changes?: boolean | null;
+    onChanges?: () => void;
     /** metatrash.com: the theme selector (the desktop app has View > Theme). */
     theme?: ThemePref;
     onTheme?: (theme: ThemePref) => void;
@@ -55,7 +61,7 @@
 
   let {
     menu, title, detail, dirty, backTo, forwardTo, onBack, onForward, onFind, sync = null, onSync, syncOpen = false,
-    editing = null, onEditing, theme = 'system', onTheme, onPrint, signedIn = true, account = '', space = null,
+    editing = null, onEditing, changes = null, onChanges, theme = 'system', onTheme, onPrint, signedIn = true, account = '', space = null,
     rememberPositions = true, onRememberPositions, onForgetPositions, onSubmissions, todo = 0, todoSpaces = [],
   }: Props = $props();
 
@@ -119,8 +125,13 @@
 <!-- The empty parts of the bar move the window (and double-click maximises it). -->
 <header class="titlebar" class:custom={customTitleBar && capabilities.windows} class:web={!capabilities.menuBar} data-tauri-drag-region>
   {#if !capabilities.menuBar}
-    <!-- metatrash.com: the site's own wordmark, home, instead of the app's icon and menus. -->
-    <a class="brand" href="/" onclick={goingHome}>metatrash<span>.</span></a>
+    <!-- The website: the site's own wordmark, home, instead of the app's icon and menus.
+         An edition's brand may bring its own wordmark (editionTypes.ts Brand). -->
+    {#if brand.wordmark}
+      <a class="brand brand-mark" href="/" onclick={goingHome} aria-label="{brand.name} home"><brand.wordmark /></a>
+    {:else}
+      <a class="brand" href="/" onclick={goingHome}>{brand.name.toLowerCase()}<span>.</span></a>
+    {/if}
   {:else if customTitleBar}
     <img class="logo" src="/app-icon.png" alt="" data-tauri-drag-region />
     <MenuBar bind:this={menuBar} menus={menu} />
@@ -166,6 +177,17 @@
         onclick={() => onEditing?.(!editing)}
       >
         <span class="track"><span class="knob"></span></span>Edit
+      </button>
+    {/if}
+    {#if changes !== null}
+      <button
+        class="changes"
+        aria-pressed={changes}
+        title={changes ? 'Hide changes (Ctrl+Shift+D)' : 'Show what changed since the last version (Ctrl+Shift+D)'}
+        aria-label={changes ? 'Hide changes' : 'Show changes'}
+        onclick={() => onChanges?.()}
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v8M8 8h8M8 18h8" /></svg>
       </button>
     {/if}
     <button title="Find in document (Ctrl+F)" aria-label="Find in document" onclick={onFind}>
@@ -321,6 +343,9 @@
   .logo { width: 18px; height: 18px; margin: 0 6px 0 4px; }
   .brand { margin: 0 6px 0 6px; color: var(--side-fg); font-weight: 700; font-size: 17px; letter-spacing: -.02em; text-decoration: none; }
   .brand span { color: var(--side-accent); }
+  /* An edition's wordmark: an inline SVG drawn at the text wordmark's height. */
+  .brand-mark { display: inline-flex; align-items: center; height: 22px; }
+  .brand-mark :global(svg) { height: 100%; width: auto; display: block; }
   .nav { display: flex; gap: 2px; margin-left: 8px; }
   .title {
     flex: 1; min-width: 0; height: 100%; display: flex; align-items: center; justify-content: center; gap: 8px;
@@ -360,6 +385,7 @@
   .switch[aria-checked="true"] { color: var(--side-fg); }
   .switch[aria-checked="true"] .track { background: var(--side-accent); }
   .switch[aria-checked="true"] .knob { left: 14px; }
+  .changes[aria-pressed="true"] { background: var(--side-hover); color: var(--side-accent); }
   .theme {
     position: relative; display: grid; place-items: center; width: 32px; height: 32px; color: var(--side-muted); border-radius: 6px;
   }
@@ -396,6 +422,7 @@
   @media (max-width: 800px) {
     .web { gap: 2px; padding: 0 6px; }
     .web .brand { margin: 0 4px; font-size: 15px; }
+    .web .brand-mark { height: 18px; }
     .web .nav, .web .detail, .web .print, .web .sync { display: none; }
     .web .tools { margin-right: 0; }
     .web .switch { padding: 0 4px; }

@@ -131,6 +131,38 @@ export function setPinnedOutlineWidthPref(width: number): void {
   write(PINNED_WIDTH_KEY, String(Math.round(width)));
 }
 
+// ---- First visit ------------------------------------------------------------------
+
+const VISITED_KEY = 'slate-viewer.visited';
+
+/**
+ * True the first time this browser opens the app: nothing of the app's is saved yet. Records the
+ * visit, so it is true once. Storage that is blocked counts as a return visit (nothing changes).
+ */
+export function firstVisit(): boolean {
+  try {
+    if (localStorage.getItem(VISITED_KEY) !== null) return false;
+    let seen = false;
+    for (let i = 0; i < localStorage.length; i++) {
+      if (localStorage.key(i)?.startsWith('slate-viewer.')) { seen = true; break; }
+    }
+    localStorage.setItem(VISITED_KEY, '1');
+    return !seen;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The website's first-visit layout (0.38.0): the page reads like a landing page, with the sidebar
+ * sections closed and Document Nav pinned beside the document. Saved like any other choice, so the
+ * person's own changes win from then on.
+ */
+export function useLandingLayout(): void {
+  write(SECTIONS_KEY, JSON.stringify({ files: false, search: false, outline: true, history: false }));
+  write(OUTLINE_PINNED_KEY, 'true');
+}
+
 // ---- Each document's own place ----------------------------------------------------
 
 const POSITIONS_KEY = 'slate-viewer.remember-positions';

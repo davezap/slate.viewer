@@ -16,3 +16,9 @@ export interface SecurityAddition {
   id: string; label: string; component: Component<SecurityPanelProps>;
   count?: (security: Security) => number | undefined;
 }
+/**
+ * The service's name and wordmark on the website (0.38.0): the header's home link and the
+ * page title. The public edition is Metatrash, shown as the text wordmark; an edition may give
+ * its own name and a wordmark component (an inline SVG, sized by the header's .brand rule).
+ */
+export interface Brand { name: string; wordmark?: Component }

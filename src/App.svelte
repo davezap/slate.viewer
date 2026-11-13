@@ -13,7 +13,7 @@
   import {
     themePref, setThemePref, zoomPref, setZoomPref, ZOOM_MIN, ZOOM_MAX, sidebarWidthPref, setSidebarWidthPref,
     sectionsPref, setSectionsPref, sectionWeightsPref, setSectionWeightsPref, activityLabelsPref, setActivityLabelsPref,
-    outlinePinnedPref, setOutlinePinnedPref, pinnedOutlineWidthPref, setPinnedOutlineWidthPref, showHiddenPref, setShowHiddenPref,
+    outlinePinnedPref, setOutlinePinnedPref, firstVisit, useLandingLayout, pinnedOutlineWidthPref, setPinnedOutlineWidthPref, showHiddenPref, setShowHiddenPref,
     SECTION_IDS, type ThemePref, type SectionId, rememberPositionsPref, setRememberPositionsPref,
   } from './lib/prefs';
   import { resolveWikiLink, noteFileName } from './lib/wiki';
@@ -108,6 +108,11 @@
   const launched = window.__SLATE_VIEWER_LAUNCHED__ === true;
   // The first window of a launch with nothing on the command line picks up where the last session left off.
   const resumeSession = window.__SLATE_VIEWER_RESUME__ === true;
+
+  // A browser's first visit to the website opens like a landing page (0.38.0): sidebar sections
+  // closed, Document Nav pinned. Must run before the sidebar reads its settings below.
+  const landing = capabilities.kind === 'web' && firstVisit();
+  if (landing) useLandingLayout();
 
   // Sidebar: an icon bar whose buttons switch sections on and off; the ones on stack in the panel.
   // Which are on (like the labels and the pinned Document Nav) is one setting for every window.
@@ -381,7 +386,19 @@
     const lines = editor.getMarkdown().split('\n').length;
     const selection = view?.selection && view.selection[1] <= length ? view.selection : ([0, 0] as [number, number]);
     await tick();
-    editor.restoreView({ topLine: Math.min(view?.topLine ?? 0, Math.max(0, lines - 1)), selection, focus: false });
+    const topLine = Math.min(view?.topLine ?? 0, Math.max(0, lines - 1));
+    editor.restoreView({ topLine, selection, focus: false });
+    if (topLine === 0) toVeryTop();
+  }
+
+  /**
+   * Slate puts line 0 at the top of the pane, which scrolls past the page's top padding; a document
+   * opened at its start shows the padding too (0.38.0, now that no toolbar sits above a page read on
+   * the website).
+   */
+  function toVeryTop() {
+    const pane = host?.querySelector<HTMLElement>('#previewPane');
+    if (pane && pane.scrollTop < 64) pane.scrollTop = 0;
   }
 
   function toggleRememberPositions() {
@@ -434,6 +451,7 @@
     if (view.mode !== editor.getWorkspaceMode()) await setMode(view.mode);
     await tick();
     editor.restoreView({ selection: view.selection, topLine: view.topLine, focus: editor.getWorkspaceMode() !== 'preview' });
+    if (!view.topLine) toVeryTop();
   }
 
   /**
@@ -1640,9 +1658,10 @@
     changesTo = null;
   }
 
-  // Slate's ± Changes toggle, for files that have a history in the space.
+  // Slate's ± Changes toggle, for files that have a history in the space. The website has its own
+  // in the title bar instead (0.38.0), so a page being read has no toolbar above it.
   $effect(() => {
-    const offered = historyFile !== null;
+    const offered = historyFile !== null && !web;
     editor?.setChangesToggle(offered ? () => showDefaultChanges() : null);
   });
 
@@ -3532,7 +3551,7 @@
         outlineOpen: sections.outline,
       });
       outline = editor.getOutline();
-      editor.setChangesToggle(historyFile ? () => showDefaultChanges() : null);
+      editor.setChangesToggle(historyFile && !web ? () => showDefaultChanges() : null);
       applyTheme();
       if (web && !editing) {
         // The site opens spaces for reading until the editing switch is on (the lock effect above
@@ -3548,7 +3567,7 @@
       const initial = window.__SLATE_VIEWER_INITIAL_FILE__;
       // A folder from Explorer picks up where it was left; New Window and Ctrl+click keep this
       // window's folder without opening anything in it.
-      if (initialFolder) await openFolder(initialFolder, { restore: launched && !initial });
+      if (initialFolder) await openFolder(initialFolder, { restore: launched && !initial, showFiles: !landing });
       if (initial) {
         // A file from Explorer opens on its own (no folder, whatever the last session had) and
         // replaces the session, but its scroll position and cursor come back.
@@ -3611,6 +3630,8 @@
   syncOpen={!!syncMenu}
   editing={web && openedSpace && openedSpace.access !== 'read only' ? editing : null}
   onEditing={setEditing}
+  changes={web && (historyFile !== null || showingChanges) ? showingChanges : null}
+  onChanges={() => void toggleChanges()}
   {theme}
   onTheme={chooseTheme}
   onPrint={() => void once('print', print)}

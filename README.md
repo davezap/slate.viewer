@@ -61,6 +61,11 @@ npm run build:web          # dist-web\assets\ and dist-web\.vite\manifest.json
 Copy everything in `dist-web` into Metatrash's `internal/service/web/app/` (replacing the old `assets` and `.vite`,
 keeping its README), and Metatrash embeds it.
 
+An edition names the site (0.38.0): `src/lib/edition.ts` exports `brand`, here `{ name: 'Metatrash' }`, shown as the
+text wordmark in the website header and after the page title. Another edition (Metatrash Company's is Collumii)
+may give its own name and a `wordmark` component (an inline SVG the header sizes), and bring its own colours and
+fonts by importing a stylesheet. The `:metatrash:` footer wordmark stays Metatrash's.
+
 The website build has a second entry, `src/pricing.ts` (0.24.0, Metatrash 0.90.0): metatrash.com's `/pricing`,
 `/checkout` and `/welcome` pages, in `src/lib/pricing/`. They load Paddle.js with `@paddle/paddle-js`, show the
 plan and storage prices from `Paddle.PricePreview` exactly as Paddle formats them, and open Paddle's one-page
