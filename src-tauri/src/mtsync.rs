@@ -1,6 +1,6 @@
 //! Metatrash spaces through mtsync.
 //!
-//! The app never talks to metatrash.com itself: it runs the user's `mtsync` command line
+//! The app never talks to the Metatrash server itself: it runs the user's `mtsync` command line
 //! (sign-in, list, register a folder, start the service) and then edits the synced folder
 //! like any other. See "Integrating a desktop editor with Metatrash spaces through mtsync".
 //! The `spaces` and `list` output is text meant for people (gaps G4/G5), so it is parsed
@@ -17,7 +17,11 @@ use tauri::{Emitter, EventTarget, State, WebviewWindow};
 
 /// The oldest mtsync with everything the app relies on (windowless `mtsync start`).
 pub(crate) const MIN_VERSION: (u32, u32, u32) = (0, 37, 2);
-pub(crate) const DEFAULT_SERVER: &str = "https://metatrash.com";
+pub(crate) const DEFAULT_SERVER: &str = "https://collumii.com";
+
+/// The hosted service's old address (moved to collumii.com, Metatrash 0.95.29); mtsync
+/// 0.95.29 and later treat it as the default server too.
+const MOVED_SERVER: &str = "https://metatrash.com";
 
 #[derive(Default)]
 pub struct Mtsync {
@@ -51,7 +55,7 @@ pub struct Registration {
     space: String,
     /// "in sync, checked …", "starting", "error: …" or "service not running".
     state: String,
-    /// Only set for servers other than metatrash.com.
+    /// Only set for servers other than mtsync's default.
     server: Option<String>,
 }
 
@@ -108,7 +112,7 @@ pub(crate) fn find_binary() -> Option<PathBuf> {
 
 pub(crate) fn command(binary: &Path, server: Option<&str>, args: &[&str]) -> Command {
     let mut cmd = Command::new(binary);
-    if let Some(server) = server.filter(|s| !s.is_empty() && s.trim_end_matches('/') != DEFAULT_SERVER) {
+    if let Some(server) = server.filter(|s| !s.is_empty() && ![DEFAULT_SERVER, MOVED_SERVER].contains(&s.trim_end_matches('/'))) {
         cmd.args(["-server", server]);
     }
     cmd.args(args).stdin(Stdio::null());

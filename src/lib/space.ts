@@ -3,7 +3,16 @@
 
 import { backend } from './backend';
 
-export const DEFAULT_SERVER = 'https://metatrash.com';
+export const DEFAULT_SERVER = 'https://collumii.com';
+
+/** Servers that moved: the hosted service left metatrash.com for collumii.com (Metatrash 0.95.29). */
+const MOVED_SERVERS: Record<string, string> = { 'https://metatrash.com': 'https://collumii.com' };
+
+/** A server's current address: a moved one's new address, else itself without a trailing slash. */
+export function currentServer(server: string): string {
+  const s = server.replace(/\/+$/, '');
+  return MOVED_SERVERS[s] ?? s;
+}
 
 export interface SpaceRef {
   /** Origin of the metatrash server. */
@@ -15,7 +24,7 @@ export interface SpaceRef {
 }
 
 /**
- * Accepts `https://metatrash.com/spaces/owner/slug/path…`, `…/spaces/public/path…`,
+ * Accepts `https://collumii.com/spaces/owner/slug/path…` (or a metatrash.com address), `…/spaces/public/path…`,
  * or the same without the site (`owner/slug[/path]`, `public[/path]`).
  */
 export function parseSpaceRef(input: string): SpaceRef | string {
@@ -29,7 +38,7 @@ export function parseSpaceRef(input: string): SpaceRef | string {
     const local = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
     if (url.protocol !== 'https:' && !(url.protocol === 'http:' && local)) return 'Space addresses start with https://.';
     if (!url.pathname.startsWith('/spaces/')) return 'That isn\'t a space address (it should contain /spaces/).';
-    server = url.origin;
+    server = currentServer(url.origin);
     text = decodeURIComponent(url.pathname.slice('/spaces/'.length));
   }
 
@@ -194,7 +203,7 @@ export interface Whoami { server: string; signedIn: boolean; account: string }
 export interface Registration { folder: string; space: string; state: string; server: string | null }
 export interface MtsyncOutput { ok: boolean; stdout: string; stderr: string }
 
-const serverArg = (server: string) => (server === DEFAULT_SERVER ? null : server);
+const serverArg = (server: string) => (currentServer(server) === DEFAULT_SERVER ? null : currentServer(server));
 
 export const mtsync = {
   info: () => backend.sync.info(),
@@ -232,7 +241,7 @@ export function sameFolder(a: string, b: string): boolean {
 
 /** The registration for `space` on `server`, if this computer already syncs it. */
 export function findRegistration(list: Registration[], space: string, server: string): Registration | undefined {
-  return list.find(r => r.space === space && (r.server ?? DEFAULT_SERVER) === server);
+  return list.find(r => r.space === space && currentServer(r.server ?? DEFAULT_SERVER) === currentServer(server));
 }
 
 /** A short status for the title bar, from `mtsync list`'s state text. */

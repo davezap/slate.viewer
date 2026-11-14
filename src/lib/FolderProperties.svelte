@@ -46,7 +46,7 @@
   ];
 
   /** The Folder properties guides in the Metatrash docs: one page per page here. */
-  const HELP_ROOT = 'https://metatrash.com/docs/guides/folder-properties/';
+  const HELP_ROOT = 'https://collumii.com/docs/guides/folder-properties/';
 
   const LEVELS: { level: LockLevel; title: string; about: string }[] = [
     { level: '', title: 'Unlocked', about: 'Anyone with write access can, agents included.' },

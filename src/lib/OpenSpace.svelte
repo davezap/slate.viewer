@@ -185,7 +185,7 @@
       <input
         bind:this={field}
         bind:value={input}
-        placeholder="https://metatrash.com/spaces/owner/space/"
+        placeholder="https://collumii.com/spaces/owner/space/"
         spellcheck="false"
         onkeydown={event => { if (event.key === 'Enter') { event.preventDefault(); void go(); } }}
       />
