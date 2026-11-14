@@ -52,6 +52,13 @@ export const MAX_PUBLISHED_VERSION = 1_000_000;
 const MAX_ACKNOWLEDGE_FILES = 50;
 const MAX_PRINT_IMAGE = 2000;
 export const MAX_FOOTER = 500;
+/** Lines a page footer may have (Metatrash 0.95.29; one before). */
+export const MAX_FOOTER_LINES = 3;
+
+/** A footer as typed, made ready to save: line breaks as \n, each line trimmed, no blank lines at the ends. */
+export function cleanFooter(footer: string): string {
+  return footer.replace(/\r\n?/g, '\n').split('\n').map(line => line.trim()).join('\n').replace(/^\n+|\n+$/g, '');
+}
 
 const GITHUB_REPO = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
 const GIT_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/;
@@ -75,7 +82,7 @@ export interface FolderSettings {
   acknowledge: AcknowledgeService | null;
   /** An https address of an image printed centred above the first page's title, or "" for none. */
   printImage: string;
-  /** The page footer: one line of Markdown, or "" when this folder sets none (the one above applies). */
+  /** The page footer: up to MAX_FOOTER_LINES lines of Markdown, or "" when this folder sets none (the one above applies). */
   footer: string;
   /** This folder turns the footer off (footer: ""), for itself and the folders under it. */
   footerOff: boolean;
@@ -203,7 +210,7 @@ function keyValues(s: FolderSettings, isRoot: boolean): Record<string, unknown> 
   if (s.publishedVersion !== null) out.publishedVersion = s.publishedVersion;
   if (s.printImage.trim()) out.print = { image: s.printImage.trim() };
   if (s.footerOff) out.footer = '';
-  else if (s.footer.trim()) out.footer = s.footer.trim();
+  else if (cleanFooter(s.footer)) out.footer = cleanFooter(s.footer);
   if (s.actions.length) out.actions = actionsValue(s.actions);
   return out;
 }
@@ -425,7 +432,7 @@ export function check(s: FolderSettings, text: string, folder: string, ctx: Spac
   if (image && !isPrintImageAddress(image)) problems.push({ page: 'publishing', text: 'The printout image should be a web address starting with https://, such as https://example.com/logo.png.' });
   else if (image.length > MAX_PRINT_IMAGE) problems.push({ page: 'publishing', text: `The printout image's address is ${image.length} characters; ${MAX_PRINT_IMAGE} is the most.` });
 
-  if (!s.footerOff) problems.push(...footerProblems(s.footer.trim()).map(text => ({ page: 'publishing' as const, text })));
+  if (!s.footerOff) problems.push(...footerProblems(cleanFooter(s.footer)).map(text => ({ page: 'publishing' as const, text })));
 
   problems.push(...actionProblems(s.actions, ctx.ownedSpace).map(text => ({ page: 'automation' as const, text })));
   const savedRaw = parseObject(ctx.texts.get(folder) ?? defaultSettingsText(folder));
@@ -513,7 +520,8 @@ export function footerLinkTarget(target: string): boolean {
 export function footerProblems(footer: string): string[] {
   const problems: string[] = [];
   if ([...footer].length > MAX_FOOTER) problems.push(`The page footer is ${[...footer].length} characters; ${MAX_FOOTER} is the most.`);
-  if (/[\u0000-\u001f\u007f\u2028\u2029]/.test(footer)) problems.push('The page footer is one line: no line breaks or tabs.');
+  if (/[\u0000-\u0009\u000b-\u001f\u007f\u2028\u2029]/.test(footer)) problems.push('The page footer can\'t contain tabs or other control characters.');
+  if (footer.split('\n').length > MAX_FOOTER_LINES) problems.push(`The page footer is ${footer.split('\n').length} lines; ${MAX_FOOTER_LINES} is the most.`);
   if (/[<>]/.test(footer)) problems.push('The page footer is Markdown without HTML, so it can\'t contain < or >. Use [text](https://…) for a link and :metatrash: for the Metatrash wordmark.');
   for (const match of footer.matchAll(/\]\(([^)\s]*)\)/g)) {
     if (!footerLinkTarget(match[1])) problems.push(`The footer's link to "${match[1]}" should start with https:// or mailto:, or be a page of the site starting with /, such as /docs/about.md.`);

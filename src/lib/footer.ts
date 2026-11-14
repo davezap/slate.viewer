@@ -1,5 +1,6 @@
-// The page footer on metatrash.com (Metatrash 0.88.0): one line of Markdown from a folder's
-// .metatrash.json `footer`, drawn below the document by App.svelte. It is never in the file.
+// The page footer on the website (Metatrash 0.88.0): up to three lines of Markdown (0.95.29;
+// one before) from a folder's .metatrash.json `footer`, separated by \n, drawn below the
+// document by App.svelte. It is never in the file.
 // Only a little Markdown is read, and only into DOM nodes (never HTML), so the site's CSP and
 // Slate's no-attribute rule for HTML stay as they are:
 //   [text](target)  a link (https, mailto: or a path on the site; anything else stays plain text)
@@ -104,13 +105,16 @@ function inline(text: string, links: boolean): Node[] {
   return out;
 }
 
-/** The footer element for one line of footer Markdown: a centred line below a rule (app.css). */
+/** The footer element for footer Markdown: each line centred, below a rule (app.css). */
 export function renderFooter(markdown: string): HTMLElement {
   const footer = document.createElement('footer');
   footer.className = 'page-footer';
   // Slate's Preview can be editable on the site; the footer is never part of the document.
   footer.contentEditable = 'false';
-  const line = footer.appendChild(document.createElement('p'));
-  line.append(...inline(markdown, true));
+  for (const text of markdown.split('\n')) {
+    if (!text.trim()) continue;
+    const line = footer.appendChild(document.createElement('p'));
+    line.append(...inline(text, true));
+  }
   return footer;
 }

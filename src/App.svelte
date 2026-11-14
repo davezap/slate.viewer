@@ -48,6 +48,7 @@
   import ReviewBanner from './lib/ReviewBanner.svelte';
   import { SETTINGS_FILE, effectiveSettings, folderChain, frozenKeys, pageFooter, printImage, publishText, toSavedVersion } from './lib/folderSettings';
   import { renderFooter } from './lib/footer';
+  import { fadeTheme } from './lib/themeFade';
 
   /** The open folder is a Metatrash space that mtsync keeps in sync. */
   interface OpenedSpace { space: string; server: string; access: string; folder: string; state: string }
@@ -2397,7 +2398,7 @@
   function chooseTheme(next: ThemePref) {
     theme = next;
     setThemePref(next);
-    applyTheme();
+    fadeTheme(applyTheme);
   }
 
   async function setMode(mode: SlateWorkspaceMode) {
@@ -3535,7 +3536,7 @@
       const wantsSaveAs = (event as CustomEvent<{ saveAs: boolean }>).detail.saveAs;
       void once('save', wantsSaveAs ? saveAs : save);
     });
-    const onSystemTheme = () => { if (theme === 'system') applyTheme(); };
+    const onSystemTheme = () => { if (theme === 'system') fadeTheme(applyTheme); };
     systemDark.addEventListener('change', onSystemTheme);
     cleanups.push(() => systemDark.removeEventListener('change', onSystemTheme));
 
