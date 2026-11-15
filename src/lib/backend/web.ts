@@ -455,6 +455,7 @@ export const backend: Backend = {
       await call('POST', spaceUrl(space, 'acknowledgements'), { path: rel, version });
     },
     readers: async folder => call<ReaderReport>('GET', spaceUrl(locate(folder).space, 'acknowledgements', { report: 'true' })),
+    emailAddress: async (root, folder) => (await call<{ address: string }>('GET', spaceUrl(locate(root).space, 'email', { folder }))).address,
   },
 
   app: {

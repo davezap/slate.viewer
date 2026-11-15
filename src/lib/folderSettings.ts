@@ -67,6 +67,34 @@ export interface GithubService { repo: string; branch: string; push: PushMode | 
 /** Asks everyone in the space to confirm they read the published files: `files` empty means every .md file. */
 export interface AcknowledgeService { files: string[] }
 
+/**
+ * The email service (Metatrash 0.97.0): the folder has its own address, and each message sent to it
+ * becomes a Markdown file here. allow and block are one sender per line; address is the address's
+ * version (raising it retires the address); history says whether replies keep the text they quote.
+ */
+export interface EmailService { allow: string; block: string; history: 'strip' | 'keep'; address: number }
+
+const MAX_EMAIL_RULES = 200;
+export const MAX_EMAIL_ADDRESS_VERSION = 1000;
+const EMAIL_DOMAIN = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+
+/** The senders in an allow or block box: one per line (commas and spaces also separate), in lower case. */
+export function senderRules(text: string): string[] {
+  return [...new Set(text.split(/[\s,;]+/).map(r => r.trim().toLowerCase()).filter(Boolean))];
+}
+
+/** Whether Metatrash takes a sender rule (email_in.go validSenderRule): a@example.com, example.com or *.example.com. */
+export function validSenderRule(rule: string): boolean {
+  if (rule !== rule.toLowerCase() || rule.length > 254 || /[\s<>",;]/.test(rule)) return false;
+  const at = rule.indexOf('@');
+  if (at >= 0) {
+    const local = rule.slice(0, at);
+    const domain = rule.slice(at + 1);
+    return local !== '' && local.length <= 64 && !domain.includes('@') && EMAIL_DOMAIN.test(domain);
+  }
+  return EMAIL_DOMAIN.test(rule.replace(/^\*\./, ''));
+}
+
 /** The editable form of one folder's settings. Empty text or lists mean "not set". */
 export interface FolderSettings {
   inherit: boolean;
@@ -80,6 +108,10 @@ export interface FolderSettings {
   /** The published version, or null when the folder doesn't publish. Publishing raises it. */
   publishedVersion: number | null;
   acknowledge: AcknowledgeService | null;
+  /** Receiving email in this folder, or null. */
+  email: EmailService | null;
+  /** Services the dialog doesn't edit (such as email), written back exactly as they were. */
+  otherServices?: Record<string, unknown>[];
   /** An https address of an image printed centred above the first page's title, or "" for none. */
   printImage: string;
   /** The page footer: up to MAX_FOOTER_LINES lines of Markdown, or "" when this folder sets none (the one above applies). */
@@ -160,6 +192,8 @@ export function toSettings(raw: Record<string, unknown>): FolderSettings {
   const services = Array.isArray(raw.services) ? raw.services as Record<string, unknown>[] : [];
   const gh = services.find(s => s && s.type === 'github');
   const ack = services.find(s => s && s.type === 'acknowledge');
+  const em = services.find(s => s && s.type === 'email');
+  const lines = (v: unknown) => (Array.isArray(v) ? v.map(String).join('\n') : '');
   return {
     inherit: raw.inherit === true,
     purpose: typeof raw.purpose === 'string' ? raw.purpose : '',
@@ -172,6 +206,10 @@ export function toSettings(raw: Record<string, unknown>): FolderSettings {
       : null,
     publishedVersion: typeof raw.publishedVersion === 'number' ? raw.publishedVersion : null,
     acknowledge: ack ? { files: Array.isArray(ack.files) ? (ack.files as unknown[]).map(String) : [] } : null,
+    email: em
+      ? { allow: lines(em.allow), block: lines(em.block), history: em.history === 'keep' ? 'keep' : 'strip', address: typeof em.address === 'number' && em.address > 0 ? em.address : 1 }
+      : null,
+    otherServices: services.filter(s => s && s.type !== 'github' && s.type !== 'acknowledge' && s.type !== 'email'),
     printImage: raw.print && typeof raw.print === 'object' && typeof (raw.print as Record<string, unknown>).image === 'string' ? (raw.print as Record<string, string>).image : '',
     footer: typeof raw.footer === 'string' ? raw.footer : '',
     footerOff: raw.footer === '',
@@ -206,6 +244,17 @@ function keyValues(s: FolderSettings, isRoot: boolean): Record<string, unknown> 
     const files = s.acknowledge.files.map(f => f.trim()).filter(Boolean);
     services.push(files.length ? { type: 'acknowledge', files } : { type: 'acknowledge' });
   }
+  if (s.email) {
+    const svc: Record<string, unknown> = { type: 'email' };
+    const allow = senderRules(s.email.allow);
+    const block = senderRules(s.email.block);
+    if (allow.length) svc.allow = allow;
+    if (block.length) svc.block = block;
+    if (s.email.address > 1) svc.address = s.email.address;
+    if (s.email.history === 'keep') svc.history = 'keep';
+    services.push(svc);
+  }
+  services.push(...(s.otherServices ?? []));
   if (services.length) out.services = services;
   if (s.publishedVersion !== null) out.publishedVersion = s.publishedVersion;
   if (s.printImage.trim()) out.print = { image: s.printImage.trim() };
@@ -426,6 +475,24 @@ export function check(s: FolderSettings, text: string, folder: string, ctx: Spac
         problems.push({ page: 'publishing', text: `"${entry}" should be one file name or pattern in this folder (leave.md, *.md) or a subfolder ending in / (hr/).` });
       }
     }
+  }
+
+  if (s.email) {
+    if (!ctx.ownedSpace) problems.push({ page: 'automation', text: 'Only your own spaces can receive email, not the public space.' });
+    if (s.github) problems.push({ page: 'automation', text: 'A folder that mirrors a GitHub repository can\'t also receive email; use an ordinary folder.' });
+    else {
+      const around = ctx.githubFolders.find(g => g !== folder && folder.startsWith(g));
+      if (around) problems.push({ page: 'automation', text: `This folder is inside ${around}, which mirrors a GitHub repository, so email can't be filed here.` });
+    }
+    for (const [name, text] of [['allowed', s.email.allow], ['blocked', s.email.block]] as const) {
+      const rules = senderRules(text);
+      if (rules.length > MAX_EMAIL_RULES) problems.push({ page: 'automation', text: `There are ${rules.length} ${name} senders; ${MAX_EMAIL_RULES} is the most.` });
+      for (const rule of rules) {
+        if (!validSenderRule(rule)) problems.push({ page: 'automation', text: `"${rule}" (${name} senders) should be an email address (a@example.com), a domain (example.com) or a domain and its subdomains (*.example.com).` });
+      }
+    }
+    const v = s.email.address;
+    if (!Number.isInteger(v) || v < 1 || v > MAX_EMAIL_ADDRESS_VERSION) problems.push({ page: 'automation', text: `The address can be replaced at most ${MAX_EMAIL_ADDRESS_VERSION - 1} times.` });
   }
 
   const image = s.printImage.trim();

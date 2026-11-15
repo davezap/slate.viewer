@@ -42,7 +42,7 @@
     { id: 'security', title: 'Security', about: 'Read-only files and locks', help: 'security.md' },
     { id: 'connections', title: 'Connections', about: 'GitHub repository', help: 'connections.md' },
     { id: 'publishing', title: 'Publishing', about: 'Versions, readers, printouts and the page footer', help: 'publishing.md' },
-    { id: 'automation', title: 'Automation', about: 'Agents that work here by themselves', help: 'automation.md' },
+    { id: 'automation', title: 'Automation', about: 'Receiving email, and agents that work here by themselves', help: 'automation.md' },
     { id: 'file', title: 'Settings File', about: SETTINGS_FILE, help: 'settings-file.md' },
   ];
 
@@ -230,6 +230,60 @@
       readersError = String(e);
     } finally {
       readersLoading = false;
+    }
+  }
+
+  // ---- Receiving email (Metatrash 0.97.0) ----------------------------------------------------------
+
+  /** The email service as saved, or null: the address shown is the saved one's. */
+  const savedEmail = $derived(toSettings(original).email);
+  let emailAddress = $state('');
+  let emailAddressError = $state('');
+  let emailAddressLoading = $state(false);
+  let emailCopied = $state(false);
+  const emailWhy = $derived(
+    !ownedSpace ? 'Only your own spaces can receive email, not the public space.'
+      : form?.github || githubAround ? 'A folder that mirrors a GitHub repository can\'t receive email.'
+      : null,
+  );
+  /** Where the space's owner reads the address on the website (the desktop app can't ask yet). */
+  const emailAddressPage = $derived(`${space.server}/api/v1/site/spaces/${space.space}/email?folder=${encodeURIComponent(folder)}`);
+
+  async function loadEmailAddress() {
+    if (!backend.sync.emailAddress) return;
+    emailAddressLoading = true;
+    emailAddressError = '';
+    try {
+      emailAddress = await backend.sync.emailAddress(root, folder);
+    } catch (e) {
+      emailAddressError = e instanceof Error ? e.message : String(e);
+    } finally {
+      emailAddressLoading = false;
+    }
+  }
+
+  $effect(() => {
+    if (page === 'automation' && savedEmail && !emailAddress && !emailAddressLoading && !emailAddressError) void loadEmailAddress();
+  });
+
+  function setEmail(on: boolean) {
+    if (!form) return;
+    form.email = on ? (savedEmail ? { ...savedEmail } : { allow: '', block: '', history: 'strip', address: 1 }) : null;
+  }
+
+  /** Raises the address's version by one from the saved one: saving retires the address. */
+  function newEmailAddress() {
+    if (!form?.email || !savedEmail) return;
+    form.email.address = savedEmail.address + 1;
+  }
+
+  async function copyEmailAddress() {
+    try {
+      await navigator.clipboard.writeText(emailAddress);
+      emailCopied = true;
+      setTimeout(() => (emailCopied = false), 2000);
+    } catch {
+      emailCopied = false;
     }
   }
 
@@ -774,6 +828,58 @@
 
           {:else if page === 'automation'}
             <section>
+              <h3>Receive email</h3>
+              <p class="hint">The folder gets its own email address. Each message sent to it becomes a Markdown file here, with its attachments kept beside it, and the actions below run on that file like on any new file: an agent can triage security notices as they arrive, say.</p>
+              <label class="check">
+                <input type="checkbox" checked={form.email !== null} disabled={disabled('services') || (emailWhy !== null && form.email === null)} onchange={event => setEmail(event.currentTarget.checked)} />
+                <span><b>Receive email in this folder</b>
+                  {#if emailWhy && form.email === null}<span class="hint">{emailWhy}</span>{/if}
+                </span>
+              </label>
+              {#if form.email}
+                <div class="card">
+                  {#if !savedEmail}
+                    <p class="hint">Save, and the folder's address shows here the next time you open its properties{capabilities.kind === 'web' ? '' : ', once Metatrash Sync has sent the change'}.</p>
+                  {:else if form.email.address !== savedEmail.address}
+                    <p class="hint"><b>Saving retires the current address:</b> mail sent to it is refused from then on. The new address appears here after saving.</p>
+                    <div class="buttons"><button class="small" onclick={() => (form!.email!.address = savedEmail.address)}>Keep the Current Address</button></div>
+                  {:else}
+                    {#if emailAddress}
+                      <p class="mail-address"><code>{emailAddress}</code> <button class="small" onclick={copyEmailAddress}>{emailCopied ? 'Copied' : 'Copy'}</button></p>
+                      <p class="hint">Anyone who has this address can send to the folder unless you list allowed senders below, so share it only where it's needed. Anything after a + is ignored, so you can tag where you gave it out (…+aws@…).</p>
+                    {:else if emailAddressLoading}
+                      <p class="hint">Getting the address…</p>
+                    {:else if backend.sync.emailAddress}
+                      <p class="hint">The address couldn't be fetched{emailAddressError ? `: ${emailAddressError}` : '.'} Only the space's owner sees it. <button class="link" onclick={() => void loadEmailAddress()}>Try again</button></p>
+                    {:else}
+                      <p class="hint">Slate Viewer can't show the address yet. <button class="link" onclick={() => void backend.opener.url(emailAddressPage)}>Open it on the website</button>, signed in as the space's owner.</p>
+                    {/if}
+                    <div class="buttons"><button class="small" disabled={disabled('services')} onclick={newEmailAddress}>Get a New Address</button></div>
+                  {/if}
+                </div>
+                <h4>Who can send</h4>
+                <p class="hint">One sender per line: an address (alerts@example.com), a domain (example.com) or a domain and its subdomains (*.example.com). With no allowed senders, anyone can send. Blocked senders are always refused, and an allowed sender whose mail fails its domain's DMARC check is refused as forged.</p>
+                <div class="mail-rules">
+                  <label><span>Allowed senders</span><textarea rows="4" bind:value={form.email.allow} disabled={disabled('services')} placeholder="alerts@example.com" spellcheck="false"></textarea></label>
+                  <label><span>Blocked senders</span><textarea rows="4" bind:value={form.email.block} disabled={disabled('services')} spellcheck="false"></textarea></label>
+                </div>
+                <h4>Replies</h4>
+                <div class="choice">
+                  <label>
+                    <input type="radio" name="mail-history" checked={form.email.history === 'strip'} disabled={disabled('services')} onchange={() => (form!.email!.history = 'strip')} />
+                    <span><b>Leave out what they quote</b> <span class="hint">When the earlier message is already in the space, the reply's file links to it and keeps only the new text. The default.</span></span>
+                  </label>
+                  <label>
+                    <input type="radio" name="mail-history" checked={form.email.history === 'keep'} disabled={disabled('services')} onchange={() => (form!.email!.history = 'keep')} />
+                    <span><b>Keep the whole message</b> <span class="hint">Replies keep the earlier messages they quote.</span></span>
+                  </label>
+                </div>
+                <p class="hint small-print">Everything in an email was written by whoever sent it, so give actions that read email only the tools they need. The original message is kept beside each file. A message can bring up to 25 MB of attachments, and a folder takes up to 200 messages an hour.</p>
+              {/if}
+              {#if lockNote('services')}<p class="lock-note">{lockNote('services')}</p>{/if}
+            </section>
+
+            <section>
               <h3>Actions</h3>
               <p class="hint">An action is an agent that works in this folder by itself: when files arrive (tidy every draft dropped in <code>inbound/</code>, say), or on a schedule (a news summary every morning). It follows your instructions with Metatrash's file tools, sees only this folder and the folders inside it, and notes each job in <code>{RUNNER_LOG}</code> here. Jobs run on an agent from <button class="link" onclick={openAgentsSettings}>Settings → Services → Agents</button> and use its tokens.</p>
               {#if !ownedSpace}
@@ -1122,6 +1228,11 @@
   .remove { padding: 2px 8px; font-size: 16px; line-height: 1; color: var(--side-muted); background: none; border: 0; border-radius: 5px; cursor: pointer; }
   .remove:hover:not(:disabled) { background: var(--side-hover); color: var(--side-fg); }
   .buttons { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
+  .mail-address { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .mail-address code { user-select: all; overflow-wrap: anywhere; }
+  .mail-rules { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .mail-rules label { display: flex; flex-direction: column; gap: 4px; }
+  @media (max-width: 560px) { .mail-rules { grid-template-columns: 1fr; } }
   .link { padding: 0; font: inherit; color: var(--side-accent); background: none; border: 0; text-decoration: underline; cursor: pointer; }
   .action { margin-bottom: 8px; border: 1px solid var(--side-border); border-radius: 8px; background: var(--side-bg); }
   .action.open { border-color: var(--side-accent); }

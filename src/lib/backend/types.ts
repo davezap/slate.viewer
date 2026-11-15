@@ -127,6 +127,9 @@ export interface Backend {
     policies(folder: string): Promise<Policies>;
     acknowledge(file: string, version: number): Promise<void>;
     readers(folder: string): Promise<ReaderReport>;
+    /** The email address of `folder` ("" or "notes/" style) in the space at `root`, for the space's
+     *  owner (Metatrash 0.97.0). Absent where it can't be asked yet (the desktop app). */
+    emailAddress?(root: string, folder: string): Promise<string>;
   };
 
   /** The app itself. */
