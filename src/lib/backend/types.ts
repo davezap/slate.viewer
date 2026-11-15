@@ -58,7 +58,9 @@ export interface Backend {
     read(path: string): Promise<LoadedDocument>;
     write(path: string, text: string, hasBom: boolean): Promise<void>;
     list(root: string, hidden: boolean): Promise<FolderListing>;
-    search(root: string, query: string, hidden: boolean): Promise<{ matches: SearchMatch[]; truncated: boolean }>;
+    /** `rank`: best matching notes by word, best first, each with its best lines (a note found
+     *  by name alone has one match at line 0); otherwise every line holding the text. */
+    search(root: string, query: string, hidden: boolean, rank?: boolean): Promise<{ matches: SearchMatch[]; truncated: boolean }>;
     /** Makes `name` in `folder` with a `# title` heading; returns its full path. */
     createNote(folder: string, name: string, title: string): Promise<string>;
     /** Returns the new folder's full path. */

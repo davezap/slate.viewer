@@ -15,6 +15,7 @@
   } from './folderSettings';
   import { fetchReaders, type ReaderReport } from './policies';
   import { formatWhen } from './history';
+  import { footerMarks } from './footer';
 
   interface Props {
     /** The space's local folder. */
@@ -727,7 +728,7 @@
               <h3>Page footer</h3>
               <p class="hint">Up to three lines shown centred below a rule at the bottom of every page of this folder{isRoot ? '' : ' and its subfolders'} on the website, such as a notice or a link. Subfolders get it whether or not they use this folder's settings, unless they set their own. It is never added to the files.</p>
               <textarea class="address" rows="3" bind:value={form.footer} placeholder={footerAbove?.footer || ':metatrash: is a [Zaptronics](https://zaptronics.co.nz/) product'} spellcheck="false" maxlength={MAX_FOOTER} disabled={disabled('footer') || form.footerOff}></textarea>
-              <p class="hint small-print">Markdown, up to three lines (Enter starts a new line): <code>[text](https://…)</code> for a link (or a page of the site, such as <code>/docs/about.md</code>), <code>**bold**</code>, <code>*italic*</code> and <code>`code`</code>; no HTML. <code>:metatrash:</code> shows the Metatrash wordmark.</p>
+              <p class="hint small-print">Markdown, up to three lines (Enter starts a new line): <code>[text](https://…)</code> for a link (or a page of the site, such as <code>/docs/about.md</code>), <code>**bold**</code>, <code>*italic*</code> and <code>`code`</code>; no HTML. {#each footerMarks() as mark, n}{n ? ', ' : ''}<code>:{mark.name}:</code> shows the {mark.label} wordmark{/each}.</p>
               {#if !form.footerOff && !form.footer.trim() && footerAbove}<p class="hint small-print">{footerAbove.footer ? `Empty uses the footer from ${folderLabel(footerAbove.from)}.` : `${folderLabel(footerAbove.from)} turns the footer off, so these pages have none.`}</p>{/if}
               <label class="check">
                 <input type="checkbox" bind:checked={form.footerOff} disabled={disabled('footer')} />

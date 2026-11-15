@@ -6,11 +6,28 @@
 //   [text](target)  a link (https, mailto: or a path on the site; anything else stays plain text)
 //   **bold**  *italic* or _italic_  `code`  \* (a character as written)
 //   :metatrash:     the Metatrash wordmark, as on the sign-in page
+//   :name:          a mark the edition's brand adds (0.40.0; editionTypes.ts Brand.footerMarks),
+//                   such as a company's own wordmark; an unknown :name: stays text
 // Everything else is text.
 
+import { brand } from '$edition';
 import { footerLinkTarget } from './folderSettings';
 
-const WORDMARK = ':metatrash:';
+/** A :name: token at the start of the text. */
+const MARK = /^:([a-z][a-z0-9-]{0,31}):/;
+
+/** The marks a footer can use, by name, with what each shows (Folder Properties' hint). */
+export function footerMarks(): { name: string; label: string }[] {
+  return [{ name: 'metatrash', label: 'Metatrash' },
+    ...Object.entries(brand.footerMarks ?? {}).filter(([name]) => name !== 'metatrash').map(([name, mark]) => ({ name, label: mark.label }))];
+}
+
+/** The node for :name:, or null when nothing has that name. */
+function mark(name: string): Node | null {
+  if (name === 'metatrash') return wordmark();
+  const made = Object.hasOwn(brand.footerMarks ?? {}, name) ? brand.footerMarks![name] : undefined;
+  return made ? made.render() : null;
+}
 
 /** The Metatrash wordmark: "metatrash" with its accent-coloured dot. */
 function wordmark(): HTMLElement {
@@ -45,11 +62,15 @@ function inline(text: string, links: boolean): Node[] {
       i += 2;
       continue;
     }
-    if (text.startsWith(WORDMARK, i)) {
-      flush();
-      out.push(wordmark());
-      i += WORDMARK.length;
-      continue;
+    if (c === ':') {
+      const found = MARK.exec(text.slice(i));
+      const node = found && mark(found[1]);
+      if (found && node) {
+        flush();
+        out.push(node);
+        i += found[0].length;
+        continue;
+      }
     }
     if (c === '`') {
       const end = text.indexOf('`', i + 1);

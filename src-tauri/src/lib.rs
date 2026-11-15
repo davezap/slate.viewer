@@ -3,6 +3,7 @@ mod attention;
 mod documents;
 mod files;
 mod mtsync;
+mod rank;
 mod updates;
 mod watcher;
 mod workspace;
@@ -179,6 +180,7 @@ pub fn run_with_context(context: tauri::Context<tauri::Wry>, viewer_update_manif
             watcher::watch_folder,
             workspace::list_folder,
             workspace::search_folder,
+            workspace::rank_folder,
             workspace::create_note,
             workspace::folder_descriptions,
             files::trash_path,

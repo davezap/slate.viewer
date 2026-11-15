@@ -20,6 +20,8 @@ const MAX_FILES: usize = 5000;
 const MAX_DEPTH: usize = 12;
 const MAX_SEARCH_RESULTS: usize = 500;
 const MAX_SEARCH_FILE_BYTES: u64 = 4 * 1024 * 1024;
+/// Best matches lists at most this many notes.
+const MAX_RANKED_FILES: usize = 50;
 /// A walk stops after this many folders or this long, so opening a drive or a home folder
 /// (or a cloud folder that is slow to list) can't keep the app busy for minutes.
 const MAX_FOLDERS: usize = 20_000;
@@ -210,6 +212,43 @@ pub async fn search_folder(root: String, query: String, hidden: Option<bool>) ->
     .map_err(|e| e.to_string())
 }
 
+/// Best matches: the notes under `root` that best match `query`'s words, best first, each
+/// with its best lines (`rank.rs`). A note found by its name alone comes with one entry at line
+/// 0, as in `search_folder`.
+#[tauri::command]
+pub async fn rank_folder(root: String, query: String, hidden: Option<bool>) -> Result<SearchResults, String> {
+    let hidden = hidden.unwrap_or(false);
+    let words = crate::rank::query_words(&query);
+    if words.is_empty() {
+        return Ok(SearchResults { matches: Vec::new(), truncated: false });
+    }
+    let root = PathBuf::from(root);
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut notes = Vec::new();
+        for file in markdown_files(&root, hidden).files {
+            if fs::metadata(&file).map(|m| m.len()).unwrap_or(0) > MAX_SEARCH_FILE_BYTES {
+                continue;
+            }
+            let Ok(text) = fs::read_to_string(&file) else { continue };
+            notes.push((relative(&root, &file), text));
+        }
+        let (ranked, truncated) = crate::rank::rank(&notes, &words, MAX_RANKED_FILES);
+        let mut matches = Vec::new();
+        for file in ranked {
+            if file.lines.is_empty() {
+                matches.push(SearchMatch { path: file.path, line: 0, text: String::new() });
+                continue;
+            }
+            for (line, text) in file.lines {
+                matches.push(SearchMatch { path: file.path.clone(), line, text: trim_line(&text) });
+            }
+        }
+        SearchResults { matches, truncated }
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
 fn trim_line(line: &str) -> String {
     let line = line.trim();
     match line.char_indices().nth(200) {
@@ -353,6 +392,9 @@ mod tests {
         let results = tauri::async_runtime::block_on(search_folder(root.to_string_lossy().into(), "WORLD".into(), Some(true))).unwrap();
         assert_eq!(results.matches.len(), 6);
         assert_eq!(results.matches[0].line, 1);
+        let ranked = tauri::async_runtime::block_on(rank_folder(root.to_string_lossy().into(), "Hello".into(), None)).unwrap();
+        assert_eq!(ranked.matches.len(), 4);
+        assert!(ranked.matches.iter().all(|m| m.line == 1));
 
         let created = create_note(root.join("notes").to_string_lossy().into(), "New idea".into(), None).unwrap();
         assert!(created.ends_with("New idea.md"));

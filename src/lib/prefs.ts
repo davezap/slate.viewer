@@ -45,6 +45,19 @@ export function setShowHiddenPref(show: boolean): void {
   write(HIDDEN_KEY, String(show));
 }
 
+const SEARCH_MODE_KEY = 'slate-viewer.search-mode';
+
+/** Search: best matching notes by word ('best') or every line holding the exact text ('exact'). */
+export type SearchMode = 'best' | 'exact';
+
+export function searchModePref(): SearchMode {
+  return read(SEARCH_MODE_KEY) === 'exact' ? 'exact' : 'best';
+}
+
+export function setSearchModePref(mode: SearchMode): void {
+  write(SEARCH_MODE_KEY, mode);
+}
+
 const SIDEBAR_KEY = 'slate-viewer.sidebar-width';
 
 export function sidebarWidthPref(): number {

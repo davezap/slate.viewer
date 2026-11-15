@@ -21,4 +21,10 @@ export interface SecurityAddition {
  * page title. The public edition is Metatrash, shown as the text wordmark; an edition may give
  * its own name and a wordmark component (an inline SVG, sized by the header's .brand rule).
  */
-export interface Brand { name: string; wordmark?: Component }
+export interface Brand { name: string; wordmark?: Component; footerMarks?: Record<string, FooterMark> }
+/**
+ * A mark people can put in a page footer as :name: (0.40.0), next to the built-in :metatrash:,
+ * such as the edition's own wordmark. `render` returns a fresh node each time (footer.ts); the
+ * footer is never part of the document. `label` names it in Folder Properties' footer hint.
+ */
+export interface FooterMark { label: string; render: () => Node }

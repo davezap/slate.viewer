@@ -64,7 +64,8 @@ keeping its README), and Metatrash embeds it.
 An edition names the site (0.38.0): `src/lib/edition.ts` exports `brand`, here `{ name: 'Metatrash' }`, shown as the
 text wordmark in the website header and after the page title. Another edition (Metatrash Company's is Collumii)
 may give its own name and a `wordmark` component (an inline SVG the header sizes), and bring its own colours and
-fonts by importing a stylesheet. The `:metatrash:` footer wordmark stays Metatrash's.
+fonts by importing a stylesheet. The `:metatrash:` footer wordmark stays Metatrash's; an edition may add its own
+footer marks (0.40.0), such as `:collumii:`, with `footerMarks` (`src/lib/editionTypes.ts`).
 
 The website build has a second entry, `src/pricing.ts` (0.24.0, Metatrash 0.90.0): metatrash.com's `/pricing`,
 `/checkout` and `/welcome` pages, in `src/lib/pricing/`. They load Paddle.js with `@paddle/paddle-js`, show the
@@ -380,7 +381,8 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
   Markdown that the website shows centred below a rule at the bottom of every page of the folder and its subfolders. The
   nearest folder that sets one wins, whether or not folders use their parent's settings; `""` (No footer here) turns it off.
   Only links (`https`, `mailto:` or a site path such as `/docs/about.md`), `**bold**`, `*italic*` and `` `code` `` are read,
-  into DOM nodes, never HTML; `:metatrash:` is the Metatrash wordmark. On the site, `App.svelte` reads the folders'
+  into DOM nodes, never HTML; `:metatrash:` is the Metatrash wordmark, and `:name:` is a mark the edition's
+  `brand.footerMarks` adds (an unknown one stays text). On the site, `App.svelte` reads the folders'
   settings when a file opens (`pageFooter` in `src/lib/folderSettings.ts`), draws it with `src/lib/footer.ts` and keeps it
   last in Slate's Preview pane (a MutationObserver puts it back each time Slate draws); it is hidden while editing. The
   desktop app shows none.

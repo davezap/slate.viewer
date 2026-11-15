@@ -10,6 +10,7 @@ import type { AccountReceipt, AccountTodo, Receipt, SubmitRefusal, SubmitResult 
 import type { Policies, ReaderReport } from '../policies';
 import type { SpaceRow } from '../space';
 import type { ActivityResult } from '../activity';
+import type { SearchMatch } from '../types';
 import type { Backend, BackendEvents, FileFilter, MessageOptions, Unlisten } from './types';
 import { createPoller, retryAfterMilliseconds } from './polling';
 import { brand } from '$edition';
@@ -273,8 +274,19 @@ export const backend: Backend = {
       const shown = hidden ? files : files.filter(f => !f.split('/').some(part => part.startsWith('.')));
       return { files: shown, emptyFolders: [], truncated };
     },
-    search: async (root, query) => {
+    search: async (root, query, _hidden, rank) => {
       const { space } = locate(root);
+      if (rank) {
+        // Best matches (Metatrash 0.97.0): files best first, each with its best lines.
+        const out = await call<{ files: { path: string; lines: { line: number; text: string }[] }[]; truncated: boolean }>('GET',
+          spaceUrl(space, 'search', { query, rank: 'true', limit: 50 }));
+        const matches: SearchMatch[] = [];
+        for (const f of out.files) {
+          if (f.lines.length === 0) matches.push({ path: f.path, line: 0, text: '' });
+          for (const { line, text } of f.lines) matches.push({ path: f.path, line, text });
+        }
+        return { matches, truncated: out.truncated };
+      }
       const out = await call<{ matches: { path: string; line: number; text: string }[]; nextCursor?: string | null }>('GET',
         spaceUrl(space, 'search', { query, ignoreCase: 'true', limit: 200 }));
       return { matches: out.matches.map(({ path, line, text }) => ({ path, line, text })), truncated: out.matches.length >= 200 };

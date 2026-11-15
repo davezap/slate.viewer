@@ -1056,8 +1056,8 @@
     rememberSession();
   }
 
-  function searchFolder(query: string) {
-    return backend.files.search(root!, query, showHidden);
+  function searchFolder(query: string, rank: boolean) {
+    return backend.files.search(root!, query, showHidden, rank);
   }
 
   async function showSearch() {

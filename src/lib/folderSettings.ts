@@ -522,7 +522,7 @@ export function footerProblems(footer: string): string[] {
   if ([...footer].length > MAX_FOOTER) problems.push(`The page footer is ${[...footer].length} characters; ${MAX_FOOTER} is the most.`);
   if (/[\u0000-\u0009\u000b-\u001f\u007f\u2028\u2029]/.test(footer)) problems.push('The page footer can\'t contain tabs or other control characters.');
   if (footer.split('\n').length > MAX_FOOTER_LINES) problems.push(`The page footer is ${footer.split('\n').length} lines; ${MAX_FOOTER_LINES} is the most.`);
-  if (/[<>]/.test(footer)) problems.push('The page footer is Markdown without HTML, so it can\'t contain < or >. Use [text](https://…) for a link and :metatrash: for the Metatrash wordmark.');
+  if (/[<>]/.test(footer)) problems.push('The page footer is Markdown without HTML, so it can\'t contain < or >. Use [text](https://…) for a link and :metatrash: (or another :name: the site offers) for a wordmark.');
   for (const match of footer.matchAll(/\]\(([^)\s]*)\)/g)) {
     if (!footerLinkTarget(match[1])) problems.push(`The footer's link to "${match[1]}" should start with https:// or mailto:, or be a page of the site starting with /, such as /docs/about.md.`);
   }
