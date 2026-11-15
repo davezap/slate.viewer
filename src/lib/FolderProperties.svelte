@@ -266,9 +266,52 @@
     if (page === 'automation' && savedEmail && !emailAddress && !emailAddressLoading && !emailAddressError) void loadEmailAddress();
   });
 
+  /** The website can save the email service on its own and show the address straight away. */
+  const emailNow = $derived(capabilities.kind === 'web' && !!backend.sync.emailAddress);
+  let emailCreating = $state(false);
+  let emailCreateError = $state('');
+
   function setEmail(on: boolean) {
     if (!form) return;
     form.email = on ? (savedEmail ? { ...savedEmail } : { allow: '', block: '', history: 'strip', address: 1 }) : null;
+    if (on && !savedEmail && emailNow) void saveEmailNow();
+  }
+
+  /**
+   * Saves only the email service as it is in the form (the other edits stay pending for Save) and
+   * shows the folder's address: on ticking Receive email, and for a new address.
+   */
+  async function saveEmailNow() {
+    if (!form?.email || readOnlySpace || emailCreating) return;
+    emailCreating = true;
+    emailCreateError = '';
+    try {
+      const now = await readText(ownPath);
+      if (now !== texts.get(folder)) {
+        emailCreateError = `${ownPath} changed while this was open (perhaps a sync). Close and open Properties again.`;
+        return;
+      }
+      const next = toSettings(original);
+      next.email = { ...form.email };
+      const value = toObject(next, original, isRoot);
+      const text = toText(value);
+      const issues = check(next, text, folder, context).filter(p => p.page === 'automation');
+      if (issues.length) {
+        emailCreateError = issues[0].text;
+        return;
+      }
+      await backend.files.write(joinPath(root, ownPath), text, false);
+      texts = new Map(texts).set(folder, text);
+      original = value;
+      onSaved();
+      emailAddress = '';
+      emailAddressError = '';
+      await loadEmailAddress();
+    } catch (e) {
+      emailCreateError = e instanceof Error ? e.message : String(e);
+    } finally {
+      emailCreating = false;
+    }
   }
 
   /** Raises the address's version by one from the saved one: saving retires the address. */
@@ -838,11 +881,20 @@
               </label>
               {#if form.email}
                 <div class="card">
-                  {#if !savedEmail}
-                    <p class="hint">Save, and the folder's address shows here the next time you open its properties{capabilities.kind === 'web' ? '' : ', once Metatrash Sync has sent the change'}.</p>
+                  {#if emailCreating}
+                    <p class="hint">Creating the address…</p>
+                  {:else if !savedEmail && emailNow}
+                    <p class="hint">{emailCreateError ? `The address couldn't be created: ${emailCreateError}` : 'This folder has no address yet.'}</p>
+                    <div class="buttons"><button class="small" disabled={disabled('services')} onclick={() => void saveEmailNow()}>Create the Address</button></div>
+                  {:else if !savedEmail}
+                    <p class="hint">Save, and once Metatrash Sync has sent the change, <button class="link" onclick={() => void backend.opener.url(emailAddressPage)}>open the address on the website</button>, signed in as the space's owner.</p>
                   {:else if form.email.address !== savedEmail.address}
-                    <p class="hint"><b>Saving retires the current address:</b> mail sent to it is refused from then on. The new address appears here after saving.</p>
-                    <div class="buttons"><button class="small" onclick={() => (form!.email!.address = savedEmail.address)}>Keep the Current Address</button></div>
+                    <p class="hint"><b>A new address retires the current one:</b> mail sent to it is refused from then on.{emailNow ? '' : ' The change takes effect when you save.'}</p>
+                    {#if emailCreateError}<p class="hint">The new address couldn't be created: {emailCreateError}</p>{/if}
+                    <div class="buttons">
+                      {#if emailNow}<button class="small" disabled={disabled('services')} onclick={() => void saveEmailNow()}>Retire It and Create the New Address</button>{/if}
+                      <button class="small" onclick={() => { form!.email!.address = savedEmail.address; emailCreateError = ''; }}>Keep the Current Address</button>
+                    </div>
                   {:else}
                     {#if emailAddress}
                       <p class="mail-address"><code>{emailAddress}</code> <button class="small" onclick={copyEmailAddress}>{emailCopied ? 'Copied' : 'Copy'}</button></p>

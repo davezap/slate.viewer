@@ -226,7 +226,8 @@
     const lines = [node.path];
     if (about) lines.push(about);
     if (v) {
-      lines.push(`Virtual file (${v.type}, ${sizeLabel(v.size)}): the space keeps it outside Git. It opens in its own app.`);
+      const opens = capabilities.kind === 'web' ? (v.type.startsWith('image/') ? 'Click to see it.' : 'It opens in a new tab.') : 'It opens in its own app.';
+      lines.push(`Virtual file (${v.type}, ${sizeLabel(v.size)}): the space keeps it outside Git. ${opens}`);
       if (v.source) lines.push(`From ${v.source}${v.refresh ? `, fetched again every ${v.refresh}` : ''}; changes made here are put back.`);
     }
     return lines.join('\n');

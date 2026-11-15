@@ -8,7 +8,7 @@ import type { MenuEntry } from '../menu';
 import type { HistoryEntry, HistoryPage } from '../history';
 import type { AccountReceipt, AccountTodo, Receipt, SubmitRefusal, SubmitResult } from '../forms';
 import type { Policies, ReaderReport } from '../policies';
-import type { SpaceRow } from '../space';
+import type { SpaceRow, VirtualFile } from '../space';
 import type { ActivityResult } from '../activity';
 import type { SearchMatch } from '../types';
 import type { Backend, BackendEvents, FileFilter, MessageOptions, Unlisten } from './types';
@@ -83,7 +83,13 @@ const fileStates = new Map<string, string>();
 const fileIds = new Map<string, string>();
 
 interface ReadResult { state: string; file: { id: string; path: string; text: string } }
-interface ListResult { state: string; files: { path: string }[]; nextCursor: string | null; removed?: string[] }
+interface ListedVirtual { sha256: string; size: number; type: string; textSha256?: string; source?: string; refresh?: string }
+interface ListResult { state: string; files: { path: string; virtual?: ListedVirtual }[]; nextCursor: string | null; removed?: string[] }
+
+/** The virtual files (pictures, PDFs…) the last listing of each folder found, for `sync.virtual`
+ *  (0.41.1): the space's list says which files they are, as `mtsync virtual` does on the desktop.
+ *  Without them Files greyed out an uploaded picture and opened it as an empty note. */
+const listedVirtual = new Map<string, VirtualFile[]>();
 interface Mutation { newState: string; file: { id: string; path: string } }
 
 async function readFile(path: string): Promise<ReadResult> {
@@ -257,6 +263,7 @@ export const backend: Backend = {
       const baseline = watchedState;
       const { space } = locate(root);
       const files: string[] = [];
+      const virtual: VirtualFile[] = [];
       let cursor: string | undefined;
       let state = '';
       let truncated = false;
@@ -264,6 +271,11 @@ export const backend: Backend = {
         const out = await call<ListResult>('GET', spaceUrl(space, 'files', { limit: 100, cursor }));
         state ||= out.state;
         files.push(...out.files.map(f => f.path));
+        for (const f of out.files) {
+          if (!f.virtual) continue;
+          const v = f.virtual;
+          virtual.push({ path: f.path, file: `${root}/${f.path}`, type: v.type, size: v.size, sha256: v.sha256, text: !!v.textSha256, source: v.source || undefined, refresh: v.refresh || undefined });
+        }
         if (!out.nextCursor) break;
         if (page >= 99) { truncated = true; break; }
         cursor = out.nextCursor;
@@ -271,7 +283,9 @@ export const backend: Backend = {
       // A file-list refresh supplies the initial baseline only. Advancing an
       // established watch here could hide document edits from its next since=.
       if (root === watchedRoot && generation === watchGeneration && baseline === null && watchedState === null) watchedState = state;
-      const shown = hidden ? files : files.filter(f => !f.split('/').some(part => part.startsWith('.')));
+      const dotted = (f: string) => f.split('/').some(part => part.startsWith('.'));
+      const shown = hidden ? files : files.filter(f => !dotted(f));
+      listedVirtual.set(root, hidden ? virtual : virtual.filter(v => !dotted(v.path)));
       return { files: shown, emptyFolders: [], truncated };
     },
     search: async (root, query, _hidden, rank) => {
@@ -396,7 +410,7 @@ export const backend: Backend = {
     start: async () => {},
     log: async () => '',
     syncNow: async () => { await watcher.refresh(); },
-    virtual: async () => [],
+    virtual: async folder => listedVirtual.get(folder) ?? [],
     activity: async (folder, viewing) => {
       const { space } = locate(folder);
       // Only owned spaces have activity; the public space answers nothing.

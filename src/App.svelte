@@ -33,7 +33,7 @@
   import FolderProperties from './lib/FolderProperties.svelte';
   import {
     mtsync, sameFolder, describeState, lastSyncTime, spacePathProblem, conflictOriginal, isSignedOut, SPACE_FILE_LIMIT,
-    DEFAULT_SERVER, fileLock, canConvert, type SpaceRef, type FolderDescription, type VirtualFile } from './lib/space';
+    DEFAULT_SERVER, fileLock, canConvert, sizeLabel, type SpaceRef, type FolderDescription, type VirtualFile } from './lib/space';
   import QuickOpen from './lib/QuickOpen.svelte';
   import HistoryPanel from './lib/HistoryPanel.svelte';
   import { entryLabel, fileHistory, findPublishedEntry, formatWhen, revisionText, versionLabel, type HistoryEntry } from './lib/history';
@@ -231,6 +231,7 @@
   /** Loads a file into this window, replacing the current (clean) document. `quiet` skips the error message. */
   async function loadHere(target: string, { pushHistory = true, quiet = false } = {}) {
     if (!editor) return;
+    picture = null;
     try {
       const doc = await backend.files.read(target);
       rememberPlace();
@@ -544,6 +545,7 @@
 
   function closeFolder() {
     folderRequest += 1;
+    picture = null;
     rememberPlace();
     root = null;
     folderFiles = [];
@@ -613,6 +615,14 @@
   async function openFromFolder(relative: string, { newWindow = false, find, line }: { newWindow?: boolean; find?: string; line?: number } = {}) {
     if (!root) return;
     const target = joinPath(root, relative);
+    // On the website a picture shows here (0.41.1); before, it opened as an empty note. Other
+    // files the space keeps outside Git (a PDF, a zip) open in a new tab, where they download.
+    const virtual = web ? virtualFiles[relative] : undefined;
+    if (virtual && !MARKDOWN_EXTENSIONS.includes(extname(target).toLowerCase())) {
+      if (!newWindow && SHOWN_PICTURES.has(virtual.type)) showPicture(relative, virtual);
+      else await backend.opener.path(target).catch(showError);
+      return;
+    }
     // A hidden file that isn't text (an image, a PDF) opens in its own app, as a link to it does.
     if (!MARKDOWN_EXTENSIONS.includes(extname(target).toLowerCase()) && !(await backend.files.read(target).then(() => true, () => false))) {
       await backend.opener.path(target).catch(() => backend.opener.reveal(target).catch(showError));
@@ -621,6 +631,44 @@
     if (newWindow) { await openWindow(target); return; }
     if (target !== path) await openDocument(target);
     if (find && target === path) await findBar?.open(find, line ? line - 1 : undefined);
+  }
+
+  // ---- Pictures (website) ----------------------------------------------------------
+
+  /** Pictures a browser shows, which open in the picture view rather than as a note. */
+  const SHOWN_PICTURES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml', 'image/avif', 'image/bmp']);
+
+  /** The picture shown over the document, or null. `preview` is its smaller copy (Metatrash 0.97.1). */
+  let picture = $state<{ relative: string; url: string; type: string; size: number; preview: string | null } | null>(null);
+  let pictureCopied = $state(false);
+  let pictureView = $state<HTMLElement | null>(null);
+
+  function showPicture(relative: string, v: VirtualFile) {
+    if (!root) return;
+    const dot = relative.lastIndexOf('.');
+    const stem = dot > relative.lastIndexOf('/') ? relative.slice(0, dot) : relative;
+    const preview = [`${stem}.preview.jpg`, `${stem}.preview.png`].find(p => p !== relative && sidebarFiles.includes(p)) ?? null;
+    picture = { relative, url: backend.files.url(joinPath(root, relative)), type: v.type, size: v.size, preview };
+    pictureCopied = false;
+    void tick().then(() => pictureView?.focus());
+  }
+
+  /** Markdown that shows the picture in a note in the same folder: its preview when it has one. */
+  function pictureMarkdown(p: NonNullable<typeof picture>): string {
+    const name = basename(p.preview ?? p.relative);
+    const alt = basename(p.relative).replace(/\.[^.]+$/, '').replace(/[[\]]/g, '');
+    const link = name.replace(/[ ()<>%]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0'));
+    return `![${alt}](${link})`;
+  }
+
+  async function copyPictureMarkdown() {
+    if (!picture) return;
+    try {
+      await navigator.clipboard.writeText(pictureMarkdown(picture));
+      pictureCopied = true;
+    } catch (error) {
+      await showError(error);
+    }
   }
 
   /** Where a new note goes by default: beside the open document, or at the top of the open folder. */
@@ -3793,6 +3841,25 @@
       />
     {/if}
     <div class="host" bind:this={host}></div>
+    {#if picture}
+      <div class="picture-view" bind:this={pictureView} role="dialog" aria-label="Picture {basename(picture.relative)}" tabindex="0"
+        onkeydown={event => { if (event.key === 'Escape') { event.stopPropagation(); picture = null; } }}>
+        <div class="picture-bar">
+          <span class="picture-name" title={picture.relative}>{basename(picture.relative)}</span>
+          <span class="picture-size">{sizeLabel(picture.size)}</span>
+          <span class="picture-actions">
+            <button type="button" onclick={() => void copyPictureMarkdown()}
+              title={picture.preview ? `Copies Markdown that shows ${basename(picture.preview)}, the smaller copy, in a note in this folder` : 'Copies Markdown that shows this picture in a note in this folder'}
+            >{pictureCopied ? 'Copied' : 'Copy Markdown'}</button>
+            <a href={picture.url} target="_blank" rel="noopener">Open in New Tab</a>
+            <button type="button" class="picture-close" aria-label="Close picture" title="Close (Esc)" onclick={() => (picture = null)}>×</button>
+          </span>
+        </div>
+        <div class="picture-frame">
+          <img src={picture.url} alt={basename(picture.relative)} />
+        </div>
+      </div>
+    {/if}
     <FindBar bind:this={findBar} getHost={() => host} getEditor={() => editor} inEditor={() => editor?.getWorkspaceMode() !== 'preview'} />
   </div>
 </div>
@@ -3897,6 +3964,25 @@
   .nav-strip span { writing-mode: vertical-rl; }
   .nav-strip svg { flex: none; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
   .host { flex: 1; min-height: 0; }
+  .picture-view {
+    position: absolute; inset: 0; z-index: 5; display: flex; flex-direction: column;
+    background: var(--side-bg); color: var(--side-fg); font: 13px/1.35 Inter, "Segoe UI", system-ui, sans-serif; outline: none;
+  }
+  .picture-bar {
+    flex: none; display: flex; align-items: center; gap: 10px; padding: 7px 10px 7px 14px; min-width: 0;
+    border-bottom: 1px solid var(--side-border);
+  }
+  .picture-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .picture-size { color: var(--side-muted); flex: none; }
+  .picture-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; }
+  .picture-actions button, .picture-actions a {
+    font: inherit; color: var(--side-fg); background: var(--side-input); border: 1px solid var(--side-border);
+    border-radius: 6px; padding: 3px 9px; cursor: pointer; text-decoration: none;
+  }
+  .picture-actions button:hover, .picture-actions a:hover { background: var(--side-hover); }
+  .picture-actions .picture-close { font-size: 16px; line-height: 1; padding: 2px 8px; }
+  .picture-frame { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 16px; overflow: auto; }
+  .picture-frame img { max-width: 100%; max-height: 100%; object-fit: contain; box-shadow: 0 1px 6px rgba(0, 0, 0, .18); }
   .policy-notice {
     margin: 0; padding: 7px 14px; font: 13px/1.4 Inter, "Segoe UI", system-ui, sans-serif;
     color: var(--side-muted); background: var(--side-bg); border-bottom: 1px solid var(--side-border);
