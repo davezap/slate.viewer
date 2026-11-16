@@ -11,7 +11,7 @@ import type { Policies, ReaderReport } from '../policies';
 import type { SpaceRow, VirtualFile } from '../space';
 import type { ActivityResult } from '../activity';
 import type { SearchMatch } from '../types';
-import type { Backend, BackendEvents, FileFilter, MessageOptions, Unlisten } from './types';
+import type { Backend, BackendEvents, FileFilter, FolderListing, ListOnly, MessageOptions, Unlisten } from './types';
 import { createPoller, retryAfterMilliseconds } from './polling';
 import { brand } from '$edition';
 
@@ -249,6 +249,49 @@ const TEXT_UPLOAD = /\.(md|markdown|txt)$/i;
 
 const notOnTheSite = (what: string) => Promise.reject(new Error(`${what} isn't available on the website.`));
 
+/**
+ * A narrow list (folder Properties): only files under `only.prefix`, at most `only.limit`, asked of
+ * the server with prefix= so a large space isn't fetched 100 files at a time. It leaves the open
+ * space's watch baseline and virtual-file list alone.
+ */
+/**
+ * What a listing shows without View > Show Hidden Files: no name starting with a dot (.metatrash.json)
+ * and no folder's AGENTS.md. `emptyFolders` are the folders left holding only hidden files, such as a
+ * folder just made here, so they still show.
+ */
+function shownListing(files: string[], hidden: boolean): { files: string[]; emptyFolders: string[] } {
+  if (hidden) return { files, emptyFolders: [] };
+  const dotted = (f: string) => f.split('/').some(part => part.startsWith('.'));
+  const isHidden = (f: string) => dotted(f) || f.slice(f.lastIndexOf('/') + 1).toLowerCase() === 'agents.md';
+  const foldersOf = (f: string) => {
+    const parts = f.split('/');
+    return parts.slice(0, -1).map((_, i) => parts.slice(0, i + 1).join('/'));
+  };
+  const shown = files.filter(f => !isHidden(f));
+  const withShown = new Set(shown.flatMap(foldersOf));
+  const emptyFolders = [...new Set(files.flatMap(foldersOf))].filter(d => !withShown.has(d) && !dotted(d)).sort();
+  return { files: shown, emptyFolders };
+}
+
+/** The AGENTS.md a folder made on the website starts with (the server adds its .metatrash.json). */
+const FOLDER_AGENTS_STARTER = '# Agent instructions\n\nNothing written here yet. Agents may describe what this folder holds and how to work in it.\n';
+
+async function listOnly(root: string, hidden: boolean, only: ListOnly): Promise<FolderListing> {
+  const { space } = locate(root);
+  const limit = only.limit ?? Infinity;
+  const files: string[] = [];
+  let cursor: string | undefined;
+  let truncated = false;
+  for (let page = 0; ; page++) {
+    const out = await call<ListResult>('GET', spaceUrl(space, 'files', { prefix: only.prefix || undefined, limit: Math.min(100, Math.max(1, limit - files.length)), cursor }));
+    files.push(...out.files.map(f => f.path));
+    if (!out.nextCursor) break;
+    if (files.length >= limit || page >= 99) { truncated = true; break; }
+    cursor = out.nextCursor;
+  }
+  return { ...shownListing(files, hidden), truncated };
+}
+
 export const backend: Backend = {
   capabilities: { kind: 'web', windows: false, menuBar: false, updates: false, syncService: false, fileManager: false },
 
@@ -258,7 +301,8 @@ export const backend: Backend = {
       return { path, text: out.file.text, hasBom: false };
     },
     write: async (path, text) => { await writeFile(path, text); },
-    list: async (root, hidden) => {
+    list: async (root, hidden, only) => {
+      if (only) return listOnly(root, hidden, only);
       const generation = watchGeneration;
       const baseline = watchedState;
       const { space } = locate(root);
@@ -283,10 +327,10 @@ export const backend: Backend = {
       // A file-list refresh supplies the initial baseline only. Advancing an
       // established watch here could hide document edits from its next since=.
       if (root === watchedRoot && generation === watchGeneration && baseline === null && watchedState === null) watchedState = state;
-      const dotted = (f: string) => f.split('/').some(part => part.startsWith('.'));
-      const shown = hidden ? files : files.filter(f => !dotted(f));
-      listedVirtual.set(root, hidden ? virtual : virtual.filter(v => !dotted(v.path)));
-      return { files: shown, emptyFolders: [], truncated };
+      const shown = shownListing(files, hidden);
+      const visible = new Set(shown.files);
+      listedVirtual.set(root, hidden ? virtual : virtual.filter(v => visible.has(v.path)));
+      return { ...shown, truncated };
     },
     search: async (root, query, _hidden, rank) => {
       const { space } = locate(root);
@@ -310,7 +354,13 @@ export const backend: Backend = {
       await writeFile(path, `# ${title}\n`, true);
       return path;
     },
-    createFolder: () => notOnTheSite('Making an empty folder'),
+    // A space has no empty folders: a new folder starts with its AGENTS.md (and the server adds
+    // its .metatrash.json), both hidden, so the listing shows it as an empty folder.
+    createFolder: async (parent, name) => {
+      const path = `${parent}/${name}`;
+      await writeFile(`${path}/AGENTS.md`, FOLDER_AGENTS_STARTER, true);
+      return path;
+    },
     rename: async (from, to) => {
       const a = locate(from), b = locate(to);
       const out = await call<Mutation>('POST', spaceUrl(a.space, 'move'), { from: a.rel, to: b.rel, ifInState: await stateFor(from), strict: false });
@@ -469,7 +519,7 @@ export const backend: Backend = {
       await call('POST', spaceUrl(space, 'acknowledgements'), { path: rel, version });
     },
     readers: async folder => call<ReaderReport>('GET', spaceUrl(locate(folder).space, 'acknowledgements', { report: 'true' })),
-    emailAddress: async (root, folder) => (await call<{ address: string }>('GET', spaceUrl(locate(root).space, 'email', { folder }))).address,
+    emailAddress: async (root, folder, name) => (await call<{ address: string }>('GET', spaceUrl(locate(root).space, 'email', { folder, name: name || undefined }))).address,
   },
 
   app: {

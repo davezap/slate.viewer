@@ -14,7 +14,7 @@ import type { Receipt, SubmitResult, SubmitRefusal } from '../forms';
 import type { Policies, ReaderReport } from '../policies';
 import type { HistoryPage } from '../history';
 import type { VirtualFile } from '../space';
-import type { Backend } from './types';
+import type { Backend, FolderListing } from './types';
 
 const appWindow = getCurrentWindow();
 
@@ -49,7 +49,14 @@ export const backend: Backend = {
   files: {
     read: path => invoke('read_document', { path }),
     write: (path, text, hasBom) => invoke('write_document', { path, text, hasBom }),
-    list: (root, hidden) => invoke('list_folder', { root, hidden }),
+    list: async (root, hidden, only) => {
+      const listing = await invoke<FolderListing>('list_folder', { root, hidden });
+      if (!only) return listing;
+      const prefix = only.prefix ?? '';
+      const files = listing.files.filter(f => f.startsWith(prefix));
+      const limit = only.limit ?? files.length;
+      return { files: files.slice(0, limit), emptyFolders: listing.emptyFolders.filter(f => f.startsWith(prefix)), truncated: listing.truncated || files.length > limit };
+    },
     search: (root, query, hidden, rank) => invoke(rank ? 'rank_folder' : 'search_folder', { root, query, hidden }),
     createNote: (folder, name, title) => invoke('create_note', { folder, name, title }),
     createFolder: (parent, name) => invoke('create_folder', { parent, name }),

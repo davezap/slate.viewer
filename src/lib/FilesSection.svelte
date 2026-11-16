@@ -48,6 +48,9 @@
     onDelete?: (path: string, folder: boolean) => void;
     /** Opens a folder's Properties (its .metatrash.json settings); "" is the top of the space. Spaces only. */
     onProperties?: (folder: string) => void;
+    /** Hidden files (AGENTS.md, names starting with a dot) are listed; the switch in the header changes it. */
+    showHidden?: boolean;
+    onToggleHidden?: () => void;
     /** Files (relative) the person still has to read: published, and not confirmed yet. */
     unread?: string[];
     /**
@@ -75,7 +78,7 @@
   let {
     root, files, truncated, current, recentFolders, rootKind = 'folder', onOpen, onCreate, onCloseFolder, onChooseFolder, onOpenFolder,
     descriptions = [], reveal = null, onOpenSpace, emptyFolders = [], editable = true, locked = [],
-    onCreateFolder, onRename, onMove, onDuplicate, onDelete, onProperties, unread = [], toReview = [], toFix = [], approved = [], onPublish,
+    onCreateFolder, onRename, onMove, onDuplicate, onDelete, onProperties, showHidden = false, onToggleHidden, unread = [], toReview = [], toFix = [], approved = [], onPublish,
     virtualFiles = {}, onConvert, onUpload, activity = [], onDismissUpload,
   }: Props = $props();
 
@@ -519,6 +522,10 @@
       separate();
       items.push({ text: version ? `&Publish Version ${version + 1}…` : 'P&ublish This Folder…', action: () => onPublish(which) });
     }
+    if (onToggleHidden && !node) {
+      separate();
+      items.push({ text: 'Show Hidden Fil&es', checked: showHidden, action: onToggleHidden });
+    }
     if (onProperties && (!node || node.folder)) {
       separate();
       const which = node ? node.path : '';
@@ -547,6 +554,21 @@
             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13.5H2.5a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1h3.5l1.5 2h6a1 1 0 0 1 1 1V8M12 10v5M9.5 12.5h5" /></svg>
           </button>
         {/if}
+      {/if}
+      {#if onToggleHidden}
+        <button
+          class:on={showHidden}
+          aria-pressed={showHidden}
+          title={showHidden ? 'Hide hidden files (AGENTS.md, settings and other names starting with a dot)' : 'Show hidden files (AGENTS.md, settings and other names starting with a dot)'}
+          aria-label={showHidden ? 'Hide hidden files' : 'Show hidden files'}
+          onclick={onToggleHidden}
+        >
+          {#if showHidden}
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8s-2.4 4.5-6.5 4.5S1.5 8 1.5 8zM8 6a2 2 0 1 1 0 4a2 2 0 0 1 0-4z" /></svg>
+          {:else}
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8s2.4-4.5 6.5-4.5c1.2 0 2.3.4 3.2.9M14.5 8s-2.4 4.5-6.5 4.5c-1.2 0-2.3-.4-3.2-.9M6.6 9.4a2 2 0 0 1 2.8-2.8M2.5 13.5l11-11" /></svg>
+          {/if}
+        </button>
       {/if}
       <!-- On the website the page is the space: there is nothing to go back to without it. -->
       {#if capabilities.kind === 'desktop'}<button title="Close folder" aria-label="Close folder" onclick={onCloseFolder}>×</button>{/if}

@@ -43,5 +43,6 @@
     font: inherit; font-size: 16px; line-height: 1; color: var(--side-muted); background: none;
   }
   .actions :global(button:hover) { background: var(--side-hover); color: var(--side-fg); }
+  .actions :global(button[aria-pressed="true"]) { color: var(--side-accent); }
   .body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 </style>

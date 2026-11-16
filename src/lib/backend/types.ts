@@ -14,6 +14,9 @@ import type { UpdateCheck } from '../UpdateDialog.svelte';
 export interface LoadedDocument { path: string; text: string; hasBom: boolean }
 export interface FolderListing { files: string[]; emptyFolders: string[]; truncated: boolean }
 
+/** A narrower file list: see Backend.files.list. */
+export interface ListOnly { prefix?: string; limit?: number }
+
 /** What this build can do. The same components read it to show or hide what only one build has. */
 export interface Capabilities {
   /** 'desktop' for Slate Viewer, 'web' for metatrash.com. */
@@ -57,7 +60,10 @@ export interface Backend {
   files: {
     read(path: string): Promise<LoadedDocument>;
     write(path: string, text: string, hasBom: boolean): Promise<void>;
-    list(root: string, hidden: boolean): Promise<FolderListing>;
+    /** `only` narrows the list: files under `prefix` ("notes/" style, relative to root), at most
+     *  `limit` of them (`truncated` when there were more). The website then asks the server for
+     *  just those; the desktop app filters its local list. */
+    list(root: string, hidden: boolean, only?: ListOnly): Promise<FolderListing>;
     /** `rank`: best matching notes by word, best first, each with its best lines (a note found
      *  by name alone has one match at line 0); otherwise every line holding the text. */
     search(root: string, query: string, hidden: boolean, rank?: boolean): Promise<{ matches: SearchMatch[]; truncated: boolean }>;
@@ -129,7 +135,8 @@ export interface Backend {
     readers(folder: string): Promise<ReaderReport>;
     /** The email address of `folder` ("" or "notes/" style) in the space at `root`, for the space's
      *  owner (Metatrash 0.97.0). Absent where it can't be asked yet (the desktop app). */
-    emailAddress?(root: string, folder: string): Promise<string>;
+    /** A folder's email address: its service called `name` ("" for the unnamed one; Metatrash 0.97.2). */
+    emailAddress?(root: string, folder: string, name?: string): Promise<string>;
   };
 
   /** The app itself. */

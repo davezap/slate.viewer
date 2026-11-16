@@ -130,10 +130,14 @@
         oninput={scheduleSearch}
         onkeydown={event => { if (event.key === 'Enter') { clearTimeout(searchTimer); void runSearch(); } }}
       />
-      <div class="modes" role="radiogroup" aria-label="Search for">
-        <button role="radio" aria-checked={mode === 'best'} class:on={mode === 'best'} title="Notes that best match the words, in any order, best first" onclick={() => setMode('best')}>Best matches</button>
-        <button role="radio" aria-checked={mode === 'exact'} class:on={mode === 'exact'} title="Every line holding the exact text" onclick={() => setMode('exact')}>Exact text</button>
-      </div>
+      <button
+        class="mode"
+        role="switch"
+        aria-checked={mode === 'exact'}
+        class:on={mode === 'exact'}
+        title={mode === 'exact' ? 'Exact text is on: every line holding the exact text. Click for best matches by words.' : 'Best matches by words, in any order, best first. Click to search for the exact text.'}
+        onclick={() => setMode(mode === 'exact' ? 'best' : 'exact')}
+      ><span class="track"><span class="knob"></span></span>Exact</button>
     </div>
     <div class="scroll">
       {#if searching && results.length === 0}
@@ -161,20 +165,21 @@
 
 <style>
   .scroll { flex: 1; overflow: auto; padding: 2px 0 12px; }
-  .search { flex: none; padding: 8px 10px 4px; }
+  .search { flex: none; display: flex; gap: 6px; align-items: center; padding: 8px 10px 4px; }
   button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
   .field {
-    box-sizing: border-box; width: 100%; padding: 5px 8px;
+    box-sizing: border-box; flex: 1; min-width: 0; padding: 5px 8px;
     font: inherit; color: var(--side-fg); background: var(--side-input);
     border: 1px solid var(--side-border); border-radius: 5px; outline: none;
   }
   .field:focus { border-color: var(--side-accent); }
-  .modes { display: flex; gap: 4px; margin-top: 6px; }
-  .modes button {
-    flex: 1; padding: 2px 6px; font-size: 11px; color: var(--side-muted);
-    border: 1px solid var(--side-border); border-radius: 4px;
-  }
-  .modes button.on { color: var(--side-fg); border-color: var(--side-accent); background: var(--side-hover); }
+  .mode { flex: none; display: flex; align-items: center; gap: 5px; padding: 2px 2px; font-size: 11px; color: var(--side-muted); }
+  .mode:hover, .mode.on { color: var(--side-fg); }
+  .track { position: relative; width: 22px; height: 12px; border-radius: 6px; background: var(--side-border); transition: background .15s; }
+  .knob { position: absolute; top: 2px; left: 2px; width: 8px; height: 8px; border-radius: 50%; background: var(--side-input); transition: left .15s; }
+  .mode.on .track { background: var(--side-accent); }
+  .mode.on .knob { left: 12px; }
+  .mode:focus-visible { outline: 1px solid var(--side-accent); border-radius: 4px; }
   .row {
     display: block; width: 100%; text-align: left; padding: 3px 10px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;

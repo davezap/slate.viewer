@@ -10,8 +10,8 @@
   import { account as siteAccount, type Agent } from './siteAccount';
   import {
     SETTINGS_FILE, LOCK_KEYS, LOCK_KEY_LABELS, MAX_FOOTER, check, defaultSettingsText, effectiveLocks, effectiveSettings, folderChain,
-    footerFrom, frozenKeys, isLockLevel, lockedBy, parentFolder, parseObject, stableJson, toObject, toSavedVersion, toSettings, toText,
-    type FolderSettings, type LockKey, type LockLevel, type Problem, type PushMode, type SpaceContext,
+    MAX_EMAILS, footerFrom, frozenKeys, isLockLevel, lockedBy, newEmail, parentFolder, parseObject, stableJson, toObject, toSavedVersion, toSettings, toText,
+    type EmailService, type FolderSettings, type LockKey, type LockLevel, type Problem, type PushMode, type SpaceContext,
   } from './folderSettings';
   import { fetchReaders, type ReaderReport } from './policies';
   import { formatWhen } from './history';
@@ -82,7 +82,12 @@
   let texts = $state(new Map<string, string | null>());
   let original = $state<Record<string, unknown>>({});
   let form = $state<FolderSettings | null>(null);
+  /** Files in this folder and below (relative to the space), the first FILES_SHOWN of them. */
   let files = $state<string[]>([]);
+  const FILES_SHOWN = 100;
+  /** The folder holds more than FILES_SHOWN files, so counts of matches are a lower bound. */
+  let filesCut = $state(false);
+  const among = $derived(filesCut ? ` (among its first ${FILES_SHOWN} files)` : '');
   let agentsFile = $state<string | null>(null);
   let agentsExcerpt = $state('');
   /** Who is signed in, for whose actions they may change ('' account: not known, so nothing is held back). */
@@ -100,8 +105,6 @@
         const chain = folderChain(folder);
         const read = await Promise.all(chain.map(f => readText(f + SETTINGS_FILE)));
         texts = new Map(chain.map((f, i) => [f, read[i]]));
-        const listing = await backend.files.list(root, true).catch(() => null);
-        files = listing?.files ?? [];
         const parsed = parseObject(read[0] ?? defaultSettingsText(folder));
         if (typeof parsed === 'string') {
           loadError = `${ownPath} can't be read as settings. ${parsed}`;
@@ -116,17 +119,33 @@
         if (capabilities.kind === 'web' && space.space.includes('/')) {
           void siteAccount.services().then(s => { myAgents = s.agents?.list ?? []; }, () => {});
         }
-        agentsFile = files.find(f => f.toLowerCase() === (folder + 'agents.md').toLowerCase()) ?? null;
-        if (agentsFile) {
-          const text = await readText(agentsFile);
-          agentsExcerpt = (text ?? '').split(/\r?\n/).map(l => l.trim()).filter(l => l && !l.startsWith('#')).slice(0, 3).join(' ');
-          if (agentsExcerpt.length > 280) agentsExcerpt = agentsExcerpt.slice(0, 280) + '…';
-        }
+        // This folder's files (pattern suggestions, read-only matches, the AGENTS.md excerpt) come
+        // after the dialog opens, and only the first FILES_SHOWN: enough to suggest and show matches.
+        void loadFiles();
       } finally {
         loading = false;
       }
     })();
   });
+
+  async function loadFiles() {
+    const listing = await backend.files.list(root, true, { prefix: folder, limit: FILES_SHOWN }).catch(() => null);
+    files = listing?.files ?? [];
+    filesCut = !!listing?.truncated;
+    agentsFile = files.find(f => f.toLowerCase() === (folder + 'agents.md').toLowerCase()) ?? null;
+    // A folder of more than FILES_SHOWN files may hold these beyond the first page: look for them directly.
+    let agentsText: string | null = null;
+    if (!agentsFile && filesCut) {
+      agentsText = await readText(folder + 'AGENTS.md');
+      if (agentsText !== null) agentsFile = folder + 'AGENTS.md';
+    }
+    if (filesCut && !files.includes(folder + RUNNER_LOG)) runnerFound = (await readText(folder + RUNNER_LOG)) !== null;
+    if (agentsFile) {
+      const text = agentsText ?? await readText(agentsFile);
+      agentsExcerpt = (text ?? '').split(/\r?\n/).map(l => l.trim()).filter(l => l && !l.startsWith('#')).slice(0, 3).join(' ');
+      if (agentsExcerpt.length > 280) agentsExcerpt = agentsExcerpt.slice(0, 280) + '…';
+    }
+  }
 
   // ---- What the form writes, and what's wrong with it -------------------------------------
 
@@ -152,6 +171,13 @@
     return '';
   };
   const disabled = (key: LockKey) => readOnlySpace || frozen.has(key);
+  /** The lock note for one key, or for several (each labelled when they differ), for a section's padlock. */
+  const lockNotes = (keys: LockKey | LockKey[]) => {
+    const list = Array.isArray(keys) ? keys : [keys];
+    const notes = list.map(k => ({ k, note: lockNote(k) })).filter(x => x.note);
+    if (new Set(notes.map(x => x.note)).size <= 1) return notes[0]?.note ?? '';
+    return notes.map(x => `${LOCK_KEY_LABELS[x.k]?.title ?? x.k}: ${x.note}`).join('\n');
+  };
 
   /** What the parent folder's settings give this folder when it inherits. */
   const parentEffective = $derived(!isRoot ? effectiveSettings(texts, parentFolder(folder)) : null);
@@ -233,100 +259,114 @@
     }
   }
 
-  // ---- Receiving email (Metatrash 0.97.0) ----------------------------------------------------------
+  // ---- Receiving email (Metatrash 0.97.0; several per folder, by name, 0.97.2) ---------------------
 
-  /** The email service as saved, or null: the address shown is the saved one's. */
-  const savedEmail = $derived(toSettings(original).email);
-  let emailAddress = $state('');
-  let emailAddressError = $state('');
-  let emailAddressLoading = $state(false);
-  let emailCopied = $state(false);
+  /** The email services as saved: the addresses shown are the saved ones'. */
+  const savedEmails = $derived(toSettings(original).emails);
+  const savedEmailOf = (e: EmailService) => (e.saved === null ? null : savedEmails.find(x => x.name === e.saved) ?? null);
+  /** Addresses fetched so far, by the saved service's name. */
+  let emailAddresses = $state<Record<string, string>>({});
+  let emailAddressErrors = $state<Record<string, string>>({});
+  let emailAddressLoading = $state<Record<string, boolean>>({});
+  let emailCopied = $state('');
   const emailWhy = $derived(
     !ownedSpace ? 'Only your own spaces can receive email, not the public space.'
       : form?.github || githubAround ? 'A folder that mirrors a GitHub repository can\'t receive email.'
       : null,
   );
-  /** Where the space's owner reads the address on the website (the desktop app can't ask yet). */
-  const emailAddressPage = $derived(`${space.server}/api/v1/site/spaces/${space.space}/email?folder=${encodeURIComponent(folder)}`);
+  /** Where the space's owner reads an address on the website (the desktop app can't ask yet). */
+  const emailAddressPage = (name: string) => `${space.server}/api/v1/site/spaces/${space.space}/email?folder=${encodeURIComponent(folder)}${name ? `&name=${encodeURIComponent(name)}` : ''}`;
 
-  async function loadEmailAddress() {
+  async function loadEmailAddress(name: string) {
     if (!backend.sync.emailAddress) return;
-    emailAddressLoading = true;
-    emailAddressError = '';
+    emailAddressLoading = { ...emailAddressLoading, [name]: true };
+    emailAddressErrors = { ...emailAddressErrors, [name]: '' };
     try {
-      emailAddress = await backend.sync.emailAddress(root, folder);
+      const address = await backend.sync.emailAddress(root, folder, name);
+      emailAddresses = { ...emailAddresses, [name]: address };
     } catch (e) {
-      emailAddressError = e instanceof Error ? e.message : String(e);
+      emailAddressErrors = { ...emailAddressErrors, [name]: e instanceof Error ? e.message : String(e) };
     } finally {
-      emailAddressLoading = false;
+      emailAddressLoading = { ...emailAddressLoading, [name]: false };
     }
   }
 
   $effect(() => {
-    if (page === 'automation' && savedEmail && !emailAddress && !emailAddressLoading && !emailAddressError) void loadEmailAddress();
+    if (page !== 'automation') return;
+    for (const e of savedEmails) {
+      if (!emailAddresses[e.name] && !emailAddressLoading[e.name] && !emailAddressErrors[e.name]) void loadEmailAddress(e.name);
+    }
   });
 
-  /** The website can save the email service on its own and show the address straight away. */
+  /** The website can save an email service on its own and show the address straight away. */
   const emailNow = $derived(capabilities.kind === 'web' && !!backend.sync.emailAddress);
-  let emailCreating = $state(false);
-  let emailCreateError = $state('');
+  /** The email service (by its place in the list) being saved on its own, and why that failed. */
+  let emailCreating = $state<EmailService | null>(null);
+  let emailCreateErrors = $state(new Map<EmailService, string>());
+  const setCreateError = (e: EmailService, text: string) => { emailCreateErrors = new Map(emailCreateErrors).set(e, text); };
 
-  function setEmail(on: boolean) {
+  function addEmail() {
     if (!form) return;
-    form.email = on ? (savedEmail ? { ...savedEmail } : { allow: '', block: '', history: 'strip', address: 1 }) : null;
-    if (on && !savedEmail && emailNow) void saveEmailNow();
+    const email = newEmail(form.emails.map(e => e.name.trim()));
+    form.emails.push(email);
+    openItem = `email-${form.emails.length - 1}`;
+    if (emailNow) void saveEmailNow(form.emails[form.emails.length - 1]);
   }
 
   /**
-   * Saves only the email service as it is in the form (the other edits stay pending for Save) and
-   * shows the folder's address: on ticking Receive email, and for a new address.
+   * Saves only this email service as it is in the form (other edits stay pending for Save) and shows its
+   * address: on adding Receive email, and for a new address.
    */
-  async function saveEmailNow() {
-    if (!form?.email || readOnlySpace || emailCreating) return;
-    emailCreating = true;
-    emailCreateError = '';
+  async function saveEmailNow(email: EmailService) {
+    if (!form || readOnlySpace || emailCreating) return;
+    emailCreating = email;
+    setCreateError(email, '');
     try {
       const now = await readText(ownPath);
       if (now !== texts.get(folder)) {
-        emailCreateError = `${ownPath} changed while this was open (perhaps a sync). Close and open Properties again.`;
+        setCreateError(email, `${ownPath} changed while this was open (perhaps a sync). Close and open Properties again.`);
         return;
       }
       const next = toSettings(original);
-      next.email = { ...form.email };
+      const copy = { ...email, name: email.name.trim() };
+      const at = email.saved === null ? -1 : next.emails.findIndex(x => x.name === email.saved);
+      if (at >= 0) next.emails[at] = copy; else next.emails.push(copy);
       const value = toObject(next, original, isRoot);
       const text = toText(value);
       const issues = check(next, text, folder, context).filter(p => p.page === 'automation');
       if (issues.length) {
-        emailCreateError = issues[0].text;
+        setCreateError(email, issues[0].text);
         return;
       }
       await backend.files.write(joinPath(root, ownPath), text, false);
       texts = new Map(texts).set(folder, text);
       original = value;
       onSaved();
-      emailAddress = '';
-      emailAddressError = '';
-      await loadEmailAddress();
+      email.name = copy.name;
+      email.saved = copy.name;
+      const { [copy.name]: _gone, ...rest } = emailAddresses;
+      emailAddresses = rest;
+      await loadEmailAddress(copy.name);
     } catch (e) {
-      emailCreateError = e instanceof Error ? e.message : String(e);
+      setCreateError(email, e instanceof Error ? e.message : String(e));
     } finally {
-      emailCreating = false;
+      emailCreating = null;
     }
   }
 
   /** Raises the address's version by one from the saved one: saving retires the address. */
-  function newEmailAddress() {
-    if (!form?.email || !savedEmail) return;
-    form.email.address = savedEmail.address + 1;
+  function newEmailAddress(email: EmailService) {
+    const saved = savedEmailOf(email);
+    if (saved) email.address = saved.address + 1;
   }
 
-  async function copyEmailAddress() {
+  async function copyEmailAddress(address: string) {
     try {
-      await navigator.clipboard.writeText(emailAddress);
-      emailCopied = true;
-      setTimeout(() => (emailCopied = false), 2000);
+      await navigator.clipboard.writeText(address);
+      emailCopied = address;
+      setTimeout(() => (emailCopied = ''), 2000);
     } catch {
-      emailCopied = false;
+      emailCopied = '';
     }
   }
 
@@ -374,23 +414,27 @@
     const entry = name.trim();
     if (!entry) return '';
     const hits = lockedBy(entry, folder, files);
-    if (!hits.length) return entry.endsWith('/') ? 'No files in a subfolder of that name yet.' : 'No file matches yet.';
+    if (!hits.length) return (entry.endsWith('/') ? 'No files in a subfolder of that name yet' : 'No file matches yet') + `${among}.`;
     const shown = hits.slice(0, 3).map(h => h.slice(folder.length)).join(', ');
-    return `Locks ${hits.length === 1 ? '' : `${hits.length} files: `}${shown}${hits.length > 3 ? ', …' : ''}`;
+    return `Locks ${hits.length === 1 ? '' : `${hits.length}${filesCut ? '+' : ''} files: `}${shown}${hits.length > 3 ? ', …' : ''}${among}`;
   }
 
   // ---- Automation (folder actions) ---------------------------------------------------------------
 
   const owning = $derived(isOwner(writer));
-  /** The action whose details are open, by its place in the list. */
-  let openAction = $state<number | null>(null);
+  /** The Automation entry whose details are open: `email-<i>` or `action-<i>`, by place in its list. */
+  let openItem = $state<string | null>(null);
+  /** The entry whose delete is waiting for a yes. */
+  let confirmRemove = $state<string | null>(null);
   /** Actions whose model is typed rather than picked. */
   let typedModel = $state(new Set<number>());
 
   const savedActionNames = $derived(new Set(toSettings(original).actions.map(a => a.name)));
   const canEditAction = (a: ActionForm) => !readOnlySpace && !frozen.has('actions') && ownedSpace && (owning ? !a.member : a.member === writer.account);
   const canRemoveAction = (a: ActionForm) => !readOnlySpace && !frozen.has('actions') && (owning || a.member === writer.account);
-  const runnerLog = $derived(files.includes(folder + RUNNER_LOG) ? folder + RUNNER_LOG : null);
+  /** runner.md exists though it wasn't among the first FILES_SHOWN files. */
+  let runnerFound = $state(false);
+  const runnerLog = $derived(files.includes(folder + RUNNER_LOG) || runnerFound ? folder + RUNNER_LOG : null);
 
   /** Markdown files in this folder and below, relative to it, for instructions kept in a file. */
   const instructionFiles = $derived(
@@ -434,14 +478,50 @@
   function addAction() {
     if (!form) return;
     form.actions.push(newAction(owning ? '' : writer.account, form.actions.map(a => a.name)));
-    openAction = form.actions.length - 1;
+    openItem = `action-${form.actions.length - 1}`;
   }
 
   function removeAction(i: number) {
     if (!form) return;
     form.actions.splice(i, 1);
-    openAction = null;
+    openItem = null;
+    confirmRemove = null;
     typedModel = new Set([...typedModel].filter(x => x !== i).map(x => (x > i ? x - 1 : x)));
+    onlyTools = new Set([...onlyTools].filter(x => x !== i).map(x => (x > i ? x - 1 : x)));
+  }
+
+  function removeEmail(i: number) {
+    if (!form) return;
+    form.emails.splice(i, 1);
+    openItem = null;
+    confirmRemove = null;
+  }
+
+  /** Add action: what kind. */
+  let addKind = $state('');
+  function addItem(kind: string) {
+    addKind = '';
+    if (kind === 'agent') addAction();
+    else if (kind === 'email') addEmail();
+  }
+
+  // Drag to reorder: within its own kind, since email services and agent actions are kept in
+  // separate lists of the settings file (services and actions). The order is saved as shown.
+  let dragging = $state<{ kind: 'email' | 'action'; from: number } | null>(null);
+  let dropAt = $state<string | null>(null);
+  function moveItem(kind: 'email' | 'action', from: number, to: number) {
+    if (!form || from === to) return;
+    const list: unknown[] = kind === 'email' ? form.emails : form.actions;
+    const [item] = list.splice(from, 1);
+    list.splice(to, 0, item);
+    openItem = null;
+    confirmRemove = null;
+    if (kind === 'action') { typedModel = new Set(); onlyTools = new Set(); }
+  }
+  function onDrop(kind: 'email' | 'action', to: number) {
+    if (dragging && dragging.kind === kind) moveItem(kind, dragging.from, to);
+    dragging = null;
+    dropAt = null;
   }
 
   function setTrigger(a: ActionForm, trigger: 'files' | 'schedule') {
@@ -495,9 +575,9 @@
 
   function matchNote(a: ActionForm): string {
     const hits = matchingFiles(a.on, folder, files);
-    if (!hits.length) return 'No files here match yet. Only files that arrive after you save start a job.';
+    if (!hits.length) return `No files here match yet${among}. Only files that arrive after you save start a job.`;
     const shown = hits.slice(0, 3).map(h => h.slice(folder.length)).join(', ');
-    return `${hits.length === 1 ? 'One file matches' : `${hits.length} files match`} now (${shown}${hits.length > 3 ? ', …' : ''}). They don't start a job: only files that arrive after you save do.`;
+    return `${hits.length === 1 ? 'One file matches' : `${hits.length}${filesCut ? '+' : ''} files match`} now${among} (${shown}${hits.length > 3 ? ', …' : ''}). They don't start a job: only files that arrive after you save do.`;
   }
 
   function openAgentsSettings() {
@@ -545,6 +625,17 @@
 </script>
 
 <svelte:window onkeydown={onKeydown} />
+
+{#snippet lockMark(keys: LockKey | LockKey[])}
+  {@const note = lockNotes(keys)}
+  {#if note}
+    <span class="lock-mark" role="img" aria-label={note} title={note}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 7V5a3.5 3.5 0 0 1 7 0v2M3.5 7h9a1 1 0 0 1 1 1v5.5a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1z" /></svg></span>
+  {/if}
+{/snippet}
+
+{#snippet binIcon()}
+  <svg class="bin" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.6a1 1 0 0 0 1 .9h4.6a1 1 0 0 0 1-.9L12 4M6.6 6.5v5M9.4 6.5v5" /></svg>
+{/snippet}
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 <div class="backdrop" onclick={close}>
@@ -596,11 +687,10 @@
                 <label class="check">
                   <input type="checkbox" checked={form.inherit} disabled={disabled('inherit')} onchange={event => setInherit(event.currentTarget.checked)} />
                   <span>
-                    <b>Use the settings of {folderLabel(parentFolder(folder))}</b>
+                    <b>Use the settings of {folderLabel(parentFolder(folder))}</b>{@render lockMark('inherit')}
                     <span class="hint">This folder takes its parent's summary, descriptions and locks, except where it sets its own. Read-only files and connections always belong to one folder and are never passed down. New folders start this way.</span>
                   </span>
                 </label>
-                {#if lockNote('inherit')}<p class="lock-note">{lockNote('inherit')}</p>{/if}
               </section>
             {/if}
 
@@ -618,7 +708,7 @@
             </section>
 
             <section>
-              <h3>Summary</h3>
+              <h3>Summary{@render lockMark('purpose')}</h3>
               <p class="hint">A sentence or two about what this folder is for. Slate Viewer shows it when you point at the folder in Files, and agents see it in the settings. Longer guidance belongs in AGENTS.md.</p>
               <textarea
                 rows="3"
@@ -630,11 +720,10 @@
                 {#if inheritedPurpose}<span>Showing the summary passed down from {folderLabel(inheritedPurpose.from)}; type to give this folder its own.</span>{/if}
                 <span class="grow"></span><span class:over={form.purpose.length > 2000}>{form.purpose.length} / 2000</span>
               </p>
-              {#if lockNote('purpose')}<p class="lock-note">{lockNote('purpose')}</p>{/if}
             </section>
 
             <section>
-              <h3>Descriptions of what's inside</h3>
+              <h3>Descriptions of what's inside{@render lockMark('children')}</h3>
               <p class="hint">A line about a file or subfolder (subfolders end in <code>/</code>). Slate Viewer shows it when you point at the entry.</p>
               {#if inheritedChildren}
                 <p class="hint">Using the descriptions from {folderLabel(inheritedChildren.from)} until this folder has its own.</p>
@@ -648,7 +737,6 @@
                 </div>
               {/each}
               <button class="small" disabled={disabled('children')} onclick={addChild}>Add a Description</button>
-              {#if lockNote('children')}<p class="lock-note">{lockNote('children')}</p>{/if}
             </section>
 
           {:else if page === 'security'}
@@ -657,7 +745,7 @@
             </section>
 
             <section>
-              <h3>Read-only files</h3>
+              <h3>Read-only files{@render lockMark('readOnly')}</h3>
               <p class="hint">Lock files in this folder so they can't be written, edited, renamed, moved or deleted, and no file of that name can be created. Name one file (<code>plan.md</code>), a pattern (<code>*.pdf</code>, <code>2025-*.md</code>) or a subfolder for everything in it (<code>archive/</code>). Only this folder's files: a subfolder sets its own.</p>
               {#each form.readOnly as entry, i (i)}
                 <div class="pair">
@@ -672,7 +760,6 @@
               <datalist id="folder-entries">{#each entries as e (e)}<option value={e}></option>{/each}</datalist>
               <button class="small" disabled={disabled('readOnly')} onclick={() => addReadOnly()}>Add a Read-only File</button>
               <p class="hint small-print">A file locked for everyone stays as it is: if it is changed on this computer anyway, Metatrash Sync puts the space's version back and keeps yours as a conflict copy. {SETTINGS_FILE} itself can be locked for agents at most, so its locks can always be lifted.</p>
-              {#if lockNote('readOnly')}<p class="lock-note">{lockNote('readOnly')}</p>{/if}
             </section>
 
             <section>
@@ -716,7 +803,7 @@
 
           {:else if page === 'connections'}
             <section>
-              <h3>GitHub repository</h3>
+              <h3>GitHub repository{@render lockMark('services')}</h3>
               <p class="hint">Mirror a GitHub repository in this folder. Agents pull it in, edit the files, and push their changes back with a commit message; GitHub records the commit as the Metatrash app. Files outside the folder stay in the space only.</p>
               <label class="check">
                 <input type="checkbox" checked={form.github !== null} disabled={disabled('services') || (githubWhy !== null && form.github === null)} onchange={event => setGithub(event.currentTarget.checked)} />
@@ -750,12 +837,11 @@
                   <p class="hint"><b>Before the first pull:</b> connect GitHub on <button class="link" onclick={() => void backend.opener.url(`${space.server}/account`)}>your Metatrash account</button> for the repository's owner. The folder should be empty, or hold only files identical to the repository's. Files in <code>.github/workflows/</code> are changed on GitHub directly. Names starting with a dot are allowed only inside GitHub folders.</p>
                 </div>
               {/if}
-              {#if lockNote('services')}<p class="lock-note">{lockNote('services')}</p>{/if}
             </section>
 
           {:else if page === 'publishing'}
             <section>
-              <h3>Published versions</h3>
+              <h3>Published versions{@render lockMark('publishedVersion')}</h3>
               <p class="hint">Publish this folder's files as numbered versions, like an official edition. Everyone opens the published text by default, and History marks it. Edits after it are a draft, visible to the space, until you publish the next version. A subfolder can publish on its own.</p>
               <label class="check">
                 <input type="checkbox" checked={form.publishedVersion !== null} disabled={disabled('publishedVersion')} onchange={event => setPublishing(event.currentTarget.checked)} />
@@ -779,11 +865,10 @@
                 </div>
                 <p class="hint small-print">Save any edits to the files first, and let Metatrash Sync send them: a version is the files as the space has them when this setting arrives. The number only goes up. Agents can publish too when asked, unless the published version is locked for agents on the Security page.</p>
               {/if}
-              {#if lockNote('publishedVersion')}<p class="lock-note">{lockNote('publishedVersion')}</p>{/if}
             </section>
 
             <section>
-              <h3>Ask people to confirm they've read them</h3>
+              <h3>Ask people to confirm they've read them{@render lockMark('services')}</h3>
               <p class="hint">Everyone in the space sees a dot on each published file, and a count on Slate Viewer's taskbar button, until they open it and choose I Have Read This. A new version asks again for the files whose text changed. Metatrash keeps who confirmed what, and when.</p>
               <label class="check">
                 <input type="checkbox" checked={form.acknowledge !== null} disabled={disabled('services') || (servicesWhy !== null && form.acknowledge === null)} onchange={event => setAcknowledge(event.currentTarget.checked)} />
@@ -810,19 +895,17 @@
                   <button class="small" disabled={disabled('services')} onclick={() => form!.acknowledge!.files.push('')}>Add a File</button>
                 {/if}
               {/if}
-              {#if lockNote('services')}<p class="lock-note">{lockNote('services')}</p>{/if}
             </section>
 
             <section>
-              <h3>Printed copies</h3>
+              <h3>Printed copies{@render lockMark('print')}</h3>
               <p class="hint">An image, such as a logo, printed centred at the top of the first page, above the title, on every document printed from this folder{isRoot ? '' : ' (and from subfolders that use its settings)'}. It is never added to the files. Give the image's web address; it is loaded when you print.</p>
               <input class="address" bind:value={form.printImage} placeholder={inheritedPrintImage ?? 'https://example.com/logo.png'} spellcheck="false" disabled={disabled('print')} />
               {#if inheritedPrintImage}<p class="hint small-print">Empty uses the image from {folderLabel(inherited('print')!.from)}.</p>{/if}
-              {#if lockNote('print')}<p class="lock-note">{lockNote('print')}</p>{/if}
             </section>
 
             <section>
-              <h3>Page footer</h3>
+              <h3>Page footer{@render lockMark('footer')}</h3>
               <p class="hint">Up to three lines shown centred below a rule at the bottom of every page of this folder{isRoot ? '' : ' and its subfolders'} on the website, such as a notice or a link. Subfolders get it whether or not they use this folder's settings, unless they set their own. It is never added to the files.</p>
               <textarea class="address" rows="3" bind:value={form.footer} placeholder={footerAbove?.footer || ':metatrash: is a [Zaptronics](https://zaptronics.co.nz/) product'} spellcheck="false" maxlength={MAX_FOOTER} disabled={disabled('footer') || form.footerOff}></textarea>
               <p class="hint small-print">Markdown, up to three lines (Enter starts a new line): <code>[text](https://…)</code> for a link (or a page of the site, such as <code>/docs/about.md</code>), <code>**bold**</code>, <code>*italic*</code> and <code>`code`</code>; no HTML. {#each footerMarks() as mark, n}{n ? ', ' : ''}<code>:{mark.name}:</code> shows the {mark.label} wordmark{/each}.</p>
@@ -831,7 +914,6 @@
                 <input type="checkbox" bind:checked={form.footerOff} disabled={disabled('footer')} />
                 <span>No footer here{isRoot ? '' : ', even if a folder above sets one'}, nor in subfolders that set none</span>
               </label>
-              {#if lockNote('footer')}<p class="lock-note">{lockNote('footer')}</p>{/if}
             </section>
 
             {#if toSettings(original).acknowledge && savedVersion !== null}
@@ -871,92 +953,144 @@
 
           {:else if page === 'automation'}
             <section>
-              <h3>Receive email</h3>
-              <p class="hint">The folder gets its own email address. Each message sent to it becomes a Markdown file here, with its attachments kept beside it, and the actions below run on that file like on any new file: an agent can triage security notices as they arrive, say.</p>
-              <label class="check">
-                <input type="checkbox" checked={form.email !== null} disabled={disabled('services') || (emailWhy !== null && form.email === null)} onchange={event => setEmail(event.currentTarget.checked)} />
-                <span><b>Receive email in this folder</b>
-                  {#if emailWhy && form.email === null}<span class="hint">{emailWhy}</span>{/if}
-                </span>
-              </label>
-              {#if form.email}
-                <div class="card">
-                  {#if emailCreating}
-                    <p class="hint">Creating the address…</p>
-                  {:else if !savedEmail && emailNow}
-                    <p class="hint">{emailCreateError ? `The address couldn't be created: ${emailCreateError}` : 'This folder has no address yet.'}</p>
-                    <div class="buttons"><button class="small" disabled={disabled('services')} onclick={() => void saveEmailNow()}>Create the Address</button></div>
-                  {:else if !savedEmail}
-                    <p class="hint">Save, and once Metatrash Sync has sent the change, <button class="link" onclick={() => void backend.opener.url(emailAddressPage)}>open the address on the website</button>, signed in as the space's owner.</p>
-                  {:else if form.email.address !== savedEmail.address}
-                    <p class="hint"><b>A new address retires the current one:</b> mail sent to it is refused from then on.{emailNow ? '' : ' The change takes effect when you save.'}</p>
-                    {#if emailCreateError}<p class="hint">The new address couldn't be created: {emailCreateError}</p>{/if}
-                    <div class="buttons">
-                      {#if emailNow}<button class="small" disabled={disabled('services')} onclick={() => void saveEmailNow()}>Retire It and Create the New Address</button>{/if}
-                      <button class="small" onclick={() => { form!.email!.address = savedEmail.address; emailCreateError = ''; }}>Keep the Current Address</button>
-                    </div>
-                  {:else}
-                    {#if emailAddress}
-                      <p class="mail-address"><code>{emailAddress}</code> <button class="small" onclick={copyEmailAddress}>{emailCopied ? 'Copied' : 'Copy'}</button></p>
-                      <p class="hint">Anyone who has this address can send to the folder unless you list allowed senders below, so share it only where it's needed. Anything after a + is ignored, so you can tag where you gave it out (…+aws@…).</p>
-                    {:else if emailAddressLoading}
-                      <p class="hint">Getting the address…</p>
-                    {:else if backend.sync.emailAddress}
-                      <p class="hint">The address couldn't be fetched{emailAddressError ? `: ${emailAddressError}` : '.'} Only the space's owner sees it. <button class="link" onclick={() => void loadEmailAddress()}>Try again</button></p>
-                    {:else}
-                      <p class="hint">Slate Viewer can't show the address yet. <button class="link" onclick={() => void backend.opener.url(emailAddressPage)}>Open it on the website</button>, signed in as the space's owner.</p>
-                    {/if}
-                    <div class="buttons"><button class="small" disabled={disabled('services')} onclick={newEmailAddress}>Get a New Address</button></div>
-                  {/if}
-                </div>
-                <h4>Who can send</h4>
-                <p class="hint">One sender per line: an address (alerts@example.com), a domain (example.com) or a domain and its subdomains (*.example.com). With no allowed senders, anyone can send. Blocked senders are always refused, and an allowed sender whose mail fails its domain's DMARC check is refused as forged.</p>
-                <div class="mail-rules">
-                  <label><span>Allowed senders</span><textarea rows="4" bind:value={form.email.allow} disabled={disabled('services')} placeholder="alerts@example.com" spellcheck="false"></textarea></label>
-                  <label><span>Blocked senders</span><textarea rows="4" bind:value={form.email.block} disabled={disabled('services')} spellcheck="false"></textarea></label>
-                </div>
-                <h4>Replies</h4>
-                <div class="choice">
-                  <label>
-                    <input type="radio" name="mail-history" checked={form.email.history === 'strip'} disabled={disabled('services')} onchange={() => (form!.email!.history = 'strip')} />
-                    <span><b>Leave out what they quote</b> <span class="hint">When the earlier message is already in the space, the reply's file links to it and keeps only the new text. The default.</span></span>
-                  </label>
-                  <label>
-                    <input type="radio" name="mail-history" checked={form.email.history === 'keep'} disabled={disabled('services')} onchange={() => (form!.email!.history = 'keep')} />
-                    <span><b>Keep the whole message</b> <span class="hint">Replies keep the earlier messages they quote.</span></span>
-                  </label>
-                </div>
-                <p class="hint small-print">Everything in an email was written by whoever sent it, so give actions that read email only the tools they need. The original message is kept beside each file. A message can bring up to 25 MB of attachments, and a folder takes up to 200 messages an hour.</p>
-              {/if}
-              {#if lockNote('services')}<p class="lock-note">{lockNote('services')}</p>{/if}
-            </section>
-
-            <section>
-              <h3>Actions</h3>
-              <p class="hint">An action is an agent that works in this folder by itself: when files arrive (tidy every draft dropped in <code>inbound/</code>, say), or on a schedule (a news summary every morning). It follows your instructions with Metatrash's file tools, sees only this folder and the folders inside it, and notes each job in <code>{RUNNER_LOG}</code> here. Jobs run on an agent from <button class="link" onclick={openAgentsSettings}>Settings → Services → Agents</button> and use its tokens.</p>
+              <h3>Actions{@render lockMark(['actions', 'services'])}</h3>
+              <p class="hint">What happens in this folder by itself. <b>Receive email</b> gives the folder an address, and each message becomes a Markdown file here. <b>Run an agent</b> starts an agent when files arrive, email included, or on a schedule; it sees only this folder and those inside it, notes each job in <code>{RUNNER_LOG}</code>, and runs on an agent from <button class="link" onclick={openAgentsSettings}>Settings → Services → Agents</button>.</p>
               {#if !ownedSpace}
                 <div class="card"><p class="hint">Actions run only in your own spaces, the ones under your name on {space.server.replace(/^https?:\/\//, '')}, not in the public space.</p></div>
               {:else}
                 {#if !owning}
-                  <p class="note">You're a member of this space. Actions you add are your own: they run on your agent and only for files you bring. The owner's and other members' actions are shown, but only they can change them.</p>
+                  <p class="note">You're a member of this space. Agent actions you add are your own: they run on your agent and only for files you bring. The owner's and other members' actions are shown, but only they can change them.</p>
                 {/if}
+
+                {#each form.emails as email, i (i)}
+                  {@const key = `email-${i}`}
+                  {@const isOpen = openItem === key}
+                  {@const saved = savedEmailOf(email)}
+                  {@const savedName = saved ? saved.name : null}
+                  {@const address = savedName !== null ? emailAddresses[savedName] : ''}
+                  {@const canChange = !disabled('services') && !emailWhy}
+                  {@const createError = emailCreateErrors.get(email) ?? ''}
+                  <div class="action" class:open={isOpen} class:drop={dropAt === key}
+                    ondragover={event => { if (dragging?.kind === 'email') { event.preventDefault(); dropAt = key; } }}
+                    ondragleave={() => { if (dropAt === key) dropAt = null; }}
+                    ondrop={event => { event.preventDefault(); onDrop('email', i); }}>
+                    <!-- svelte-ignore a11y_no_static_element_interactions -->
+                    <div class="action-head" draggable={canChange && form.emails.length > 1}
+                      ondragstart={event => { dragging = { kind: 'email', from: i }; event.dataTransfer?.setData('text/plain', key); }}
+                      ondragend={() => { dragging = null; dropAt = null; }}>
+                      {#if canChange && form.emails.length > 1}<span class="grip" title="Drag to reorder" aria-hidden="true">⠿</span>{/if}
+                      <button class="action-toggle" aria-expanded={isOpen} onclick={() => { openItem = isOpen ? null : key; confirmRemove = null; }}>
+                        <span class="chevron" aria-hidden="true">{isOpen ? '▾' : '▸'}</span>
+                        <span class="kind-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M2 3.5h12a.5.5 0 0 1 .5.5v8a.5.5 0 0 1-.5.5H2a.5.5 0 0 1-.5-.5V4a.5.5 0 0 1 .5-.5zM1.8 4l6.2 5 6.2-5" /></svg></span>
+                        <span class="action-text">
+                          <span class="action-name">Receive email{#if email.name.trim()}<span class="tag">{email.name.trim()}</span>{/if}{#if !saved}<span class="tag new">New</span>{/if}</span>
+                          <span class="hint">{address || (saved ? 'Its own address' : 'Saving creates its address')}</span>
+                        </span>
+                      </button>
+                      {#if canChange && confirmRemove !== key}
+                        <button class="remove" aria-label="Delete this Receive email action" title="Delete this action" onclick={() => (confirmRemove = key)}>{@render binIcon()}</button>
+                      {/if}
+                    </div>
+                    {#if confirmRemove === key}
+                      <div class="confirm-remove">
+                        <span>Delete this action?{saved ? ' Its address stops working when you save, and mail sent to it is refused.' : ''}</span>
+                        <button class="small" onclick={() => (confirmRemove = null)}>Keep It</button>
+                        <button class="small danger" onclick={() => removeEmail(i)}>Delete</button>
+                      </div>
+                    {/if}
+                    {#if isOpen}
+                      <fieldset class="action-body" disabled={!canChange}>
+                        {#if emailWhy}<p class="hint">{emailWhy}</p>{/if}
+                        <label class="field">
+                          <span>Name</span>
+                          <input bind:value={email.name} spellcheck="false" maxlength="40" placeholder={form.emails.length > 1 ? 'alerts' : 'Optional while it is the only one'} />
+                          <span class="hint">Tells this folder's addresses apart: lowercase letters, digits and hyphens.{#if saved && email.name.trim() !== saved.name} <b>Renaming gives it a new address</b>, and the current one stops working when you save.{/if}</span>
+                        </label>
+                        <div class="card mail-card">
+                          {#if emailCreating === email}
+                            <p class="hint">Creating the address…</p>
+                          {:else if !saved && emailNow}
+                            <p class="hint">{createError ? `The address couldn't be created: ${createError}` : 'This action has no address yet.'}</p>
+                            <div class="buttons"><button class="small" onclick={() => void saveEmailNow(email)}>Create the Address</button></div>
+                          {:else if !saved}
+                            <p class="hint">Save, and once Metatrash Sync has sent the change, <button class="link" onclick={() => void backend.opener.url(emailAddressPage(email.name.trim()))}>open the address on the website</button>, signed in as the space's owner.</p>
+                          {:else if email.address !== saved.address}
+                            <p class="hint"><b>A new address retires the current one:</b> mail sent to it is refused from then on.{emailNow ? '' : ' The change takes effect when you save.'}</p>
+                            {#if createError}<p class="hint">The new address couldn't be created: {createError}</p>{/if}
+                            <div class="buttons">
+                              {#if emailNow}<button class="small" onclick={() => void saveEmailNow(email)}>Retire It and Create the New Address</button>{/if}
+                              <button class="small" onclick={() => { email.address = saved.address; setCreateError(email, ''); }}>Keep the Current Address</button>
+                            </div>
+                          {:else}
+                            {#if address}
+                              <p class="mail-address"><code>{address}</code> <button class="small" onclick={() => void copyEmailAddress(address)}>{emailCopied === address ? 'Copied' : 'Copy'}</button></p>
+                              <p class="hint">Anyone who has this address can send to the folder unless you list allowed senders below, so share it only where it's needed. Anything after a + is ignored, so you can tag where you gave it out (…+aws@…).</p>
+                            {:else if emailAddressLoading[saved.name]}
+                              <p class="hint">Getting the address…</p>
+                            {:else if backend.sync.emailAddress}
+                              <p class="hint">The address couldn't be fetched{emailAddressErrors[saved.name] ? `: ${emailAddressErrors[saved.name]}` : '.'} Only the space's owner sees it. <button class="link" onclick={() => void loadEmailAddress(saved.name)}>Try again</button></p>
+                            {:else}
+                              <p class="hint">Slate Viewer can't show the address yet. <button class="link" onclick={() => void backend.opener.url(emailAddressPage(saved.name))}>Open it on the website</button>, signed in as the space's owner.</p>
+                            {/if}
+                            <div class="buttons"><button class="small" onclick={() => newEmailAddress(email)}>Get a New Address</button></div>
+                          {/if}
+                        </div>
+                        <h4>Who can send</h4>
+                        <p class="hint">One sender per line: an address (alerts@example.com), a domain (example.com) or a domain and its subdomains (*.example.com). With no allowed senders, anyone can send. Blocked senders are always refused, and an allowed sender whose mail fails its domain's DMARC check is refused as forged.</p>
+                        <div class="mail-rules">
+                          <label><span>Allowed senders</span><textarea rows="4" bind:value={email.allow} placeholder="alerts@example.com" spellcheck="false"></textarea></label>
+                          <label><span>Blocked senders</span><textarea rows="4" bind:value={email.block} spellcheck="false"></textarea></label>
+                        </div>
+                        <h4>Replies</h4>
+                        <div class="choice">
+                          <label>
+                            <input type="radio" name="mail-history-{i}" checked={email.history === 'strip'} onchange={() => (email.history = 'strip')} />
+                            <span><b>Leave out what they quote</b> <span class="hint">When the earlier message is already in the space, the reply's file links to it and keeps only the new text. The default.</span></span>
+                          </label>
+                          <label>
+                            <input type="radio" name="mail-history-{i}" checked={email.history === 'keep'} onchange={() => (email.history = 'keep')} />
+                            <span><b>Keep the whole message</b> <span class="hint">Replies keep the earlier messages they quote.</span></span>
+                          </label>
+                        </div>
+                        <p class="hint small-print">Everything in an email was written by whoever sent it, so give agent actions that read email only the tools they need. The original message is kept beside each file. A message can bring up to 25 MB of attachments, and a folder takes up to 200 messages an hour.</p>
+                      </fieldset>
+                    {/if}
+                  </div>
+                {/each}
 
                 {#each form.actions as action, i (i)}
                   {@const editable = canEditAction(action)}
-                  {@const isOpen = openAction === i}
-                  <div class="action" class:open={isOpen}>
-                    <div class="action-head">
-                      <button class="action-toggle" aria-expanded={isOpen} onclick={() => (openAction = isOpen ? null : i)}>
+                  {@const key = `action-${i}`}
+                  {@const isOpen = openItem === key}
+                  {@const canDrag = owning && !readOnlySpace && !frozen.has('actions') && form.actions.length > 1}
+                  <div class="action" class:open={isOpen} class:drop={dropAt === key}
+                    ondragover={event => { if (dragging?.kind === 'action') { event.preventDefault(); dropAt = key; } }}
+                    ondragleave={() => { if (dropAt === key) dropAt = null; }}
+                    ondrop={event => { event.preventDefault(); onDrop('action', i); }}>
+                    <!-- svelte-ignore a11y_no_static_element_interactions -->
+                    <div class="action-head" draggable={canDrag}
+                      ondragstart={event => { dragging = { kind: 'action', from: i }; event.dataTransfer?.setData('text/plain', key); }}
+                      ondragend={() => { dragging = null; dropAt = null; }}>
+                      {#if canDrag}<span class="grip" title="Drag to reorder" aria-hidden="true">⠿</span>{/if}
+                      <button class="action-toggle" aria-expanded={isOpen} onclick={() => { openItem = isOpen ? null : key; confirmRemove = null; }}>
                         <span class="chevron" aria-hidden="true">{isOpen ? '▾' : '▸'}</span>
+                        <span class="kind-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M8 1.5v2M4.5 4.5h7a1.5 1.5 0 0 1 1.5 1.5v5a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 3 11V6a1.5 1.5 0 0 1 1.5-1.5zM6 8h.01M10 8h.01M6.5 10.5h3M1.5 7.5v2M14.5 7.5v2" /></svg></span>
                         <span class="action-text">
                           <span class="action-name">{action.name.trim() || 'Unnamed action'}{#if !action.raw}<span class="tag new">New</span>{/if}{#if action.member}<span class="tag">{action.member === writer.account ? 'Yours' : `${action.member}'s`}</span>{/if}</span>
-                          <span class="hint">{describeTrigger(action)} · {agentLabel(action)}</span>
+                          <span class="hint">Run an agent · {describeTrigger(action)} · {agentLabel(action)}</span>
                         </span>
                       </button>
-                      {#if canRemoveAction(action)}
-                        <button class="remove" aria-label="Remove {action.name}" title="Remove this action" onclick={() => removeAction(i)}>×</button>
+                      {#if canRemoveAction(action) && confirmRemove !== key}
+                        <button class="remove" aria-label="Delete {action.name}" title="Delete this action" onclick={() => (confirmRemove = key)}>{@render binIcon()}</button>
                       {/if}
                     </div>
+                    {#if confirmRemove === key}
+                      <div class="confirm-remove">
+                        <span>Delete {action.name.trim() || 'this action'}?{action.raw ? ' It stops running when you save.' : ''}</span>
+                        <button class="small" onclick={() => (confirmRemove = null)}>Keep It</button>
+                        <button class="small danger" onclick={() => removeAction(i)}>Delete</button>
+                      </div>
+                    {/if}
 
                     {#if isOpen && owning && action.member}
                       <div class="card adopt">
@@ -1113,14 +1247,19 @@
                 {/each}
 
                 <div class="buttons">
-                  <button class="small" disabled={readOnlySpace || frozen.has('actions') || form.actions.length >= 20 || (!owning && !writer.account)} onclick={addAction}>Add an Action</button>
+                  <select class="add-action" aria-label="Add an action" bind:value={addKind} onchange={() => addItem(addKind)} disabled={readOnlySpace || (frozen.has('actions') && frozen.has('services'))}>
+                    <option value="" disabled>Add Action…</option>
+                    <option value="email" disabled={disabled('services') || !!emailWhy || form.emails.length >= MAX_EMAILS || !!emailCreating}>Receive email</option>
+                    <option value="agent" disabled={frozen.has('actions') || form.actions.length >= 20 || (!owning && !writer.account)}>Run an agent</option>
+                  </select>
                   {#if runnerLog}<button class="small" onclick={() => { onOpenFile(runnerLog!); onClose(); }}>Open the Run Log</button>{/if}
                 </div>
-                {#if !form.actions.length}
+                {#if !form.actions.length && !form.emails.length}
                   <p class="hint small-print">No actions here yet. Saving writes them to {SETTINGS_FILE}; a subfolder never runs this folder's actions.</p>
+                {:else if form.actions.length > 1 || form.emails.length > 1}
+                  <p class="hint small-print">Drag an action by its handle to reorder it among those of its kind. Order doesn't change what runs yet.</p>
                 {/if}
               {/if}
-              {#if lockNote('actions')}<p class="lock-note">{lockNote('actions')}</p>{/if}
             </section>
 
             <section>
@@ -1214,8 +1353,10 @@
   .note { padding: 8px 10px; border-radius: 6px; background: var(--side-accent-soft); }
   .problem { padding: 7px 10px; border-radius: 6px; color: #8f2318; background: #fbe4e1; }
   :global([data-theme="dark"]) .problem { color: #ffb4a8; background: #4a2420; }
-  .lock-note { margin-top: 6px; font-size: 12px; color: var(--side-accent); }
-  .lock-note::before { content: '🔒 '; }
+  h3 { display: flex; align-items: center; gap: 6px; }
+  .lock-mark { display: inline-flex; margin-left: auto; padding: 2px; color: var(--side-accent); cursor: help; }
+  .lock-mark svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linejoin: round; }
+  .check .lock-mark { margin-left: 6px; vertical-align: -2px; }
   .error { color: #c0392b; }
   .card { padding: 10px 12px; border: 1px solid var(--side-border); border-radius: 8px; background: var(--side-bg); }
   .card p:last-child { margin-bottom: 0; }
@@ -1297,6 +1438,19 @@
   .action-name { font-weight: 600; }
   .tag { margin-left: 8px; padding: 0 6px; border-radius: 9px; font-size: 11px; font-weight: 500; color: var(--side-accent); background: var(--side-accent-soft); }
   .tag.new { color: var(--side-muted); background: var(--side-hover); }
+  .grip { flex: none; padding: 0 0 0 8px; color: var(--side-muted); cursor: grab; user-select: none; }
+  .action-head[draggable="true"] { cursor: grab; }
+  .action.drop { border-color: var(--side-accent); box-shadow: 0 -2px 0 var(--side-accent); }
+  .kind-icon { display: inline-flex; padding-top: 2px; }
+  .kind-icon svg { width: 15px; height: 15px; fill: none; stroke: var(--side-muted); stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; }
+  .bin { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; vertical-align: -2px; }
+  .remove:has(.bin):hover:not(:disabled) { color: #c0392b; }
+  .confirm-remove { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 10px 8px 28px; padding: 7px 10px; border-radius: 6px; color: #8f2318; background: #fbe4e1; }
+  :global([data-theme="dark"]) .confirm-remove { color: #ffb4a8; background: #4a2420; }
+  .confirm-remove span { flex: 1; min-width: 180px; }
+  button.small.danger { color: #fff; background: #c0392b; border-color: #c0392b; }
+  .mail-card { margin-top: 10px; }
+  select.add-action { padding: 5px 10px; cursor: pointer; }
   fieldset.action-body { margin: 0; padding: 4px 12px 12px 28px; border: 0; min-width: 0; }
   .card.adopt { margin: 0 12px 6px 28px; background: var(--side-input); }
   .field { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; font-weight: 600; font-size: 12px; }

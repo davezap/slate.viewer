@@ -71,8 +71,24 @@ export interface AcknowledgeService { files: string[] }
  * The email service (Metatrash 0.97.0): the folder has its own address, and each message sent to it
  * becomes a Markdown file here. allow and block are one sender per line; address is the address's
  * version (raising it retires the address); history says whether replies keep the text they quote.
+ * A folder may have several (Metatrash 0.97.2), told apart by name; the unnamed one keeps the address
+ * it had before names. `saved` is the name it was saved under (null: new), which finds its address.
  */
-export interface EmailService { allow: string; block: string; history: 'strip' | 'keep'; address: number }
+export interface EmailService { name: string; allow: string; block: string; history: 'strip' | 'keep'; address: number; saved: string | null }
+
+/** An email service's name (email_in.go, like an action's name): lowercase letters, digits and hyphens. */
+export const EMAIL_NAME = /^[a-z0-9][a-z0-9-]{0,39}$/;
+export const MAX_EMAILS = 6;
+
+/** A new email service for the form, named so it differs from those in `taken` (the first needs no name). */
+export function newEmail(taken: string[]): EmailService {
+  let name = '';
+  if (taken.includes('')) {
+    name = 'mail-2';
+    for (let i = 3; taken.includes(name); i++) name = `mail-${i}`;
+  }
+  return { name, allow: '', block: '', history: 'strip', address: 1, saved: null };
+}
 
 const MAX_EMAIL_RULES = 200;
 export const MAX_EMAIL_ADDRESS_VERSION = 1000;
@@ -108,8 +124,8 @@ export interface FolderSettings {
   /** The published version, or null when the folder doesn't publish. Publishing raises it. */
   publishedVersion: number | null;
   acknowledge: AcknowledgeService | null;
-  /** Receiving email in this folder, or null. */
-  email: EmailService | null;
+  /** Receiving email in this folder: none, one, or several told apart by name. */
+  emails: EmailService[];
   /** Services the dialog doesn't edit (such as email), written back exactly as they were. */
   otherServices?: Record<string, unknown>[];
   /** An https address of an image printed centred above the first page's title, or "" for none. */
@@ -192,7 +208,6 @@ export function toSettings(raw: Record<string, unknown>): FolderSettings {
   const services = Array.isArray(raw.services) ? raw.services as Record<string, unknown>[] : [];
   const gh = services.find(s => s && s.type === 'github');
   const ack = services.find(s => s && s.type === 'acknowledge');
-  const em = services.find(s => s && s.type === 'email');
   const lines = (v: unknown) => (Array.isArray(v) ? v.map(String).join('\n') : '');
   return {
     inherit: raw.inherit === true,
@@ -206,9 +221,10 @@ export function toSettings(raw: Record<string, unknown>): FolderSettings {
       : null,
     publishedVersion: typeof raw.publishedVersion === 'number' ? raw.publishedVersion : null,
     acknowledge: ack ? { files: Array.isArray(ack.files) ? (ack.files as unknown[]).map(String) : [] } : null,
-    email: em
-      ? { allow: lines(em.allow), block: lines(em.block), history: em.history === 'keep' ? 'keep' : 'strip', address: typeof em.address === 'number' && em.address > 0 ? em.address : 1 }
-      : null,
+    emails: services.filter(s => s && s.type === 'email').map(em => {
+      const name = typeof em.name === 'string' ? em.name : '';
+      return { name, allow: lines(em.allow), block: lines(em.block), history: em.history === 'keep' ? 'keep' : 'strip', address: typeof em.address === 'number' && em.address > 0 ? em.address : 1, saved: name };
+    }),
     otherServices: services.filter(s => s && s.type !== 'github' && s.type !== 'acknowledge' && s.type !== 'email'),
     printImage: raw.print && typeof raw.print === 'object' && typeof (raw.print as Record<string, unknown>).image === 'string' ? (raw.print as Record<string, string>).image : '',
     footer: typeof raw.footer === 'string' ? raw.footer : '',
@@ -244,14 +260,15 @@ function keyValues(s: FolderSettings, isRoot: boolean): Record<string, unknown> 
     const files = s.acknowledge.files.map(f => f.trim()).filter(Boolean);
     services.push(files.length ? { type: 'acknowledge', files } : { type: 'acknowledge' });
   }
-  if (s.email) {
+  for (const email of s.emails) {
     const svc: Record<string, unknown> = { type: 'email' };
-    const allow = senderRules(s.email.allow);
-    const block = senderRules(s.email.block);
+    if (email.name.trim()) svc.name = email.name.trim();
+    const allow = senderRules(email.allow);
+    const block = senderRules(email.block);
     if (allow.length) svc.allow = allow;
     if (block.length) svc.block = block;
-    if (s.email.address > 1) svc.address = s.email.address;
-    if (s.email.history === 'keep') svc.history = 'keep';
+    if (email.address > 1) svc.address = email.address;
+    if (email.history === 'keep') svc.history = 'keep';
     services.push(svc);
   }
   services.push(...(s.otherServices ?? []));
@@ -477,22 +494,31 @@ export function check(s: FolderSettings, text: string, folder: string, ctx: Spac
     }
   }
 
-  if (s.email) {
+  if (s.emails.length) {
     if (!ctx.ownedSpace) problems.push({ page: 'automation', text: 'Only your own spaces can receive email, not the public space.' });
     if (s.github) problems.push({ page: 'automation', text: 'A folder that mirrors a GitHub repository can\'t also receive email; use an ordinary folder.' });
     else {
       const around = ctx.githubFolders.find(g => g !== folder && folder.startsWith(g));
       if (around) problems.push({ page: 'automation', text: `This folder is inside ${around}, which mirrors a GitHub repository, so email can't be filed here.` });
     }
-    for (const [name, text] of [['allowed', s.email.allow], ['blocked', s.email.block]] as const) {
-      const rules = senderRules(text);
-      if (rules.length > MAX_EMAIL_RULES) problems.push({ page: 'automation', text: `There are ${rules.length} ${name} senders; ${MAX_EMAIL_RULES} is the most.` });
-      for (const rule of rules) {
-        if (!validSenderRule(rule)) problems.push({ page: 'automation', text: `"${rule}" (${name} senders) should be an email address (a@example.com), a domain (example.com) or a domain and its subdomains (*.example.com).` });
+    if (s.emails.length > MAX_EMAILS) problems.push({ page: 'automation', text: `This folder receives email at ${s.emails.length} addresses; ${MAX_EMAILS} is the most.` });
+    const names = new Set<string>();
+    for (const email of s.emails) {
+      const label = email.name.trim() ? `Receive email "${email.name.trim()}"` : 'Receive email';
+      const n = email.name.trim();
+      if (n && !EMAIL_NAME.test(n)) problems.push({ page: 'automation', text: `${label}: the name should be lowercase letters, digits and hyphens (up to 40), such as alerts.` });
+      if (names.has(n)) problems.push({ page: 'automation', text: n ? `Two Receive email actions are called "${n}": each needs its own name.` : 'Only one Receive email action can be left without a name: name the others.' });
+      names.add(n);
+      for (const [name, text] of [['allowed', email.allow], ['blocked', email.block]] as const) {
+        const rules = senderRules(text);
+        if (rules.length > MAX_EMAIL_RULES) problems.push({ page: 'automation', text: `${label}: there are ${rules.length} ${name} senders; ${MAX_EMAIL_RULES} is the most.` });
+        for (const rule of rules) {
+          if (!validSenderRule(rule)) problems.push({ page: 'automation', text: `${label}: "${rule}" (${name} senders) should be an email address (a@example.com), a domain (example.com) or a domain and its subdomains (*.example.com).` });
+        }
       }
+      const v = email.address;
+      if (!Number.isInteger(v) || v < 1 || v > MAX_EMAIL_ADDRESS_VERSION) problems.push({ page: 'automation', text: `${label}: the address can be replaced at most ${MAX_EMAIL_ADDRESS_VERSION - 1} times.` });
     }
-    const v = s.email.address;
-    if (!Number.isInteger(v) || v < 1 || v > MAX_EMAIL_ADDRESS_VERSION) problems.push({ page: 'automation', text: `The address can be replaced at most ${MAX_EMAIL_ADDRESS_VERSION - 1} times.` });
   }
 
   const image = s.printImage.trim();

@@ -2659,7 +2659,8 @@
       return;
     }
     if (!inAssets) {
-      await backend.files.createFolder(joinPath(space, folder), 'assets').catch(() => undefined); // there already
+      // On the website the move makes the folder (and its AGENTS.md) by itself.
+      if (!web) await backend.files.createFolder(joinPath(space, folder), 'assets').catch(() => undefined); // there already
       try {
         await backend.files.rename(joinPath(space, relative), joinPath(space, `${assetFolder}/${name}`));
       } catch (error) {
@@ -2801,7 +2802,7 @@
     toggleSection('outline');
   }
 
-  /** View > Show Hidden Files: AGENTS.md, .metatrash.json, images and other files that aren't notes. */
+  /** View > Show Hidden Files, or the switch in Files: AGENTS.md, .metatrash.json and other dot names (and, on the computer, files that aren't notes). */
   function toggleShowHidden() {
     showHidden = !showHidden;
     setShowHiddenPref(showHidden);
@@ -3723,12 +3724,14 @@
               onCreate={createNoteFromSidebar}
               editable={canManageFiles}
               locked={lockedFiles}
-              onCreateFolder={web ? undefined : createFolder}
+              onCreateFolder={createFolder}
               onRename={renameEntry}
               onMove={moveEntry}
               onDuplicate={relative => void duplicateEntry(relative)}
               onDelete={(relative, isFolder) => void deleteEntry(relative, isFolder)}
               onProperties={openedSpace ? (relative => { propertiesPage = 'general'; propertiesFor = relative; }) : undefined}
+              {showHidden}
+              onToggleHidden={toggleShowHidden}
               unread={unreadFiles}
               toReview={policies?.toReview ?? []}
               toFix={policies?.toFix ?? []}
