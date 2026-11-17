@@ -13,6 +13,21 @@ export interface SiteConfig {
   addressRoot?: string;
 }
 
+/** The page's own <title>, as Metatrash wrote it, before the app names the open document. */
+const pageTitle = typeof document === 'undefined' ? '' : document.title;
+
+/**
+ * The tab title to keep instead of the open document's (0.43.0): the page's own title while no
+ * document has opened yet, so the tab never reads "Untitled" on the site, and on the home page's
+ * own file (collumii.com/), whose title is the site's. null otherwise.
+ */
+export function siteTitle(path: string | null): string | null {
+  const config = readSiteConfig();
+  if (!config || !pageTitle) return null;
+  if (path === null) return pageTitle;
+  return config.address && path === config.file ? pageTitle : null;
+}
+
 export function readSiteConfig(): SiteConfig | null {
   const content = document.querySelector<HTMLMetaElement>('meta[name="metatrash-app"]')?.content;
   if (!content) return null;

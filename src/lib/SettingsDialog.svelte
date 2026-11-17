@@ -13,7 +13,7 @@
   import { onMount, tick, untrack } from 'svelte';
   import ConfirmSheet from './ConfirmSheet.svelte';
   import SecurityPanel from './SecurityPanel.svelte';
-  import { settingsAdditions, securityAdditions } from '$edition';
+  import { brand, settingsAdditions, securityAdditions } from '$edition';
   import ServicesPanel from './ServicesPanel.svelte';
   import {
     account, AccountError, browserZone, downloadAddress, formatBytes, formatDay, measuredAgo, openAddress, timeZones,
@@ -573,7 +573,8 @@
           {:else}
           {@const own = acct.spaces.filter(s => !s.owner)}
           {@const managed = [...new Set(acct.spaces.filter(s => s.owner).map(s => s.owner!))]}
-          <h2>Your spaces <span class="muted">{own.length} of {acct.maxSpaces}</span></h2>
+          <!-- Without a plan there is no allowance to count (0.43.0): the offer below says what a plan gives. -->
+          <h2>Your spaces{#if !(acct.createNeeds && !own.length)}{' '}<span class="muted">{own.length} of {acct.maxSpaces}</span>{/if}</h2>
           {#if acct.invitations.length + acct.offers.length}
             <p class="note">{acct.invitations.length + acct.offers.length === 1 ? 'A space is' : `${acct.invitations.length + acct.offers.length} spaces are`} waiting for you in <button class="link" onclick={() => go('settings/spaces/invitations')}>Invitations</button>.</p>
           {/if}
@@ -591,7 +592,7 @@
                 {/if}
               </li>
             {:else}
-              <li class="empty">You have no spaces of your own yet.</li>
+              {#if !acct.createNeeds}<li class="empty">You have no spaces of your own yet.</li>{/if}
             {/each}
           </ul>
 
@@ -601,7 +602,18 @@
               <input id="settings-new-space" bind:value={newName} maxlength="120" placeholder="New space name" required />
               <button type="submit" class="primary" disabled={busy}>Create space</button>
             </form>
-            <p class="hint">The address is made from the name and is permanent: “Bartco Notes” becomes {acct.username}/bartco-notes.</p>
+            <p class="hint">The address is made from the name and is permanent: “Acme Notes” becomes {acct.username}/acme-notes.</p>
+          {:else if acct.createNeeds}
+            <!-- The server's billing gate would refuse a new space (Metatrash 0.98.1): offer the plan instead of a form that fails. -->
+            {#if brand.spaceOffer}
+              <div class="offer">
+                <h3>{brand.spaceOffer.heading}</h3>
+                <p>{brand.spaceOffer.text}</p>
+                <a class="button primary" href={brand.spaceOffer.href}>{brand.spaceOffer.button}</a>
+              </div>
+            {:else}
+              <p class="hint">{acct.createNeeds}</p>
+            {/if}
           {:else if !acct.username}
             <p class="hint">To make a space of your own, first <button class="link" onclick={() => go('settings/profile')}>choose a public username</button>.</p>
           {:else}
@@ -755,6 +767,9 @@
   p { margin: 0 0 10px; }
   .muted, .hint { color: var(--side-muted); }
   .hint { font-size: 12px; }
+  .offer { margin: 12px 0; padding: 12px 14px; border-radius: 8px; background: var(--side-accent-soft); }
+  .offer h3 { margin: 0 0 6px; }
+  .offer p { margin: 0 0 10px; }
   .mono, code { font-family: Consolas, "Cascadia Mono", ui-monospace, monospace; }
   .big { font-size: 15px; }
   /* Floats over the top of the box, so a result shows without scrolling the page away. */

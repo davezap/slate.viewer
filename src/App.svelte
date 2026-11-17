@@ -2,7 +2,7 @@
   import { isRunning, uploadItem, type ActivityItem, type UploadRow } from './lib/activity';
   import { onMount, tick, untrack } from 'svelte';
   import { backend, capabilities, type FolderListing, type LoadedDocument } from './lib/backend';
-  import { showAddress, siteLink } from './lib/site';
+  import { showAddress, siteLink, siteTitle } from './lib/site';
   import { rememberSpace, spaceOfPath } from './lib/siteSpaces';
   import SettingsDialog from './lib/SettingsDialog.svelte';
   import type { SlateChangesEndDetail, SlateCompareEndDetail, SlateEditorApi, SlateFillEndDetail, SlateForm, SlateFormAnswers, SlateFormSubmitDetail, SlateModeChangeDetail, SlateOutline, SlateOutlineHeading, SlateUploadedAttachment, SlateWorkspaceMode } from '../public/slate/slate-editor';
@@ -182,7 +182,10 @@
 
   $effect(() => {
     const flags = `${dirty ? '• ' : ''}${name}${missingOnDisk ? ' (deleted on disk)' : ''}${readOnly && !web ? ' [read only]' : ''}${root ? ` - ${basename(root)}` : ''}`;
-    void appWindow.setTitle(`${flags} - Slate Viewer`);
+    // On the site, the page's own title until a document opens, and on the home page (0.43.0).
+    const own = web && !dirty ? siteTitle(path) : null;
+    if (own !== null) document.title = own;
+    else void appWindow.setTitle(`${flags} - Slate Viewer`);
   });
 
   // ---- Guards ---------------------------------------------------------------

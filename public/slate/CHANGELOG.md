@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.23.1 — 2026-11-17
+
+- The optional light theme is now `themes/green.css` (was `themes/bartco.css`, same rules); `index.html`, the README and an old CHANGELOG line follow it. No editor change. Released with Company 0.96.55; see docs/release-0.23.1.md.
+
+## 0.23.0 — 2026-11-14
+
+- Named embeds: an edition (`src/edition.js`) can offer `embeds`, `{ name: { label, mount(element) } }`, and a fenced block tagged `embed` whose only line is one of those names is drawn by it in Preview, Edit (as a block like a diagram, with a ✎ button for the source), Show Changes and fill mode. Any other name, a block of several lines or an embed that throws stays an ordinary code block, so documents still can't carry script or styles. The public edition has none. Collumii's site uses it for the support card on its home page (Company 0.96.46).
+- `test/embeds-check.mjs` builds Slate with `test/embed-edition.js` and checks embeds in Preview and Edit (drawn, their own buttons work, other names stay code); `test/hostile.md` gains `embed` blocks naming markup and `__proto__`. Claude ran it, `hostile-check.mjs` and `blockquotes-check.mjs`; see docs/release-0.23.0.md.
+
+## 0.22.0 — 2026-11-09
+
+- Forms: fields take `default=` and `show-if=`, read as Metatrash Core 0.95.19 reads them (`src/forms.js`). Fill mode starts each field at its default; `startFill()` takes `person: { name, email }` for `@name` and `@email`, and a field whose person value isn't given stays blank with "Your name, added when sent", left out of the answers so the server fills it in. Questions whose `show-if` isn't met are hidden with their block and drawn again as answers change, keeping the person's place; Send checks and hands over only the questions asked. `getForm()` fields carry `default` and `showIf`.
+- Forms: `autoFlow: true` in the front matter makes the headings steps. What comes before the first heading always shows; each later step appears once every question asked in the steps before it is answered, with "The next step appears when this one is done." below the last one shown.
+- Forms: `{{photo name=… max=N required}}` (1 to 10 photos, default 1; 20 in a form; not in quizzes, not a default or show-if). Fill mode offers Take photo (phones: the camera) and Choose photo, scales each picture to at most 1600 pixels on its long side as a JPEG at 85% (which drops its Exif, including location), and shows thumbnails with a remove button. Send hands the answer over as a list of data URLs; `fillSnapshot()`, `slate:form-input` and `endFill()` leave photos out so hosts don't keep them in drafts. New styles in `slate.css`.
+- `test/forms-flow-check.mjs` (run with Node) checks the parser, defaults, auto flow, photo fields and show-if against `test/guided-form.md`, the same template as Core's Go tests. Claude ran it and a browser check of fill mode; David runs the release. See docs/release-0.22.0.md.
+
+## 0.21.2 — 2026-11-08
+
+- Tables preserve whole words when allocating column widths, so short keys such as `name`, `when` and `every` are no longer squeezed into letter fragments beside long descriptions. Oversized words and URLs can still wrap. Applies to rendered editing, Preview and print. See docs/release-0.21.2.md. David runs builds and acceptance checks; none run by Codex.
+
+## 0.21.1 — 2026-11-04
+
+- Preview groups consecutive quoted lines into one blockquote. A bare `>` separates paragraphs inside that quote instead of creating an empty strip; ordinary wrapped lines form one paragraph. Nested quotes, headings, lists and code are rendered inside their quote container.
+- Quote blocks keep their original source and line counts when switching modes. Quoted task checkboxes update their own source line without losing quote markers or modifying neighbouring tasks.
+- Added `test/blockquotes-check.mjs` for browser regression coverage, including the Metatrash plans announcement and blocked script URLs. David runs builds and tests; none were run while preparing this release. Follow `docs/release-0.21.1.md`.
+
 ## 0.20.1 — 2026-10-31
 
 - A link or image whose address holds a control character or tab, such as `[x](\u0001javascript:…)` with a real U+0001 before `javascript:`, is no longer made a link. Browsers drop those characters before reading the address's scheme, so such a link was a `javascript:` link that the check for `javascript:` missed. It shows as text, like other refused links. (Pages that forbid inline script, such as metatrash.com, never ran it.)
@@ -129,5 +155,5 @@
 - Extracted the current Wire-bundled Slate 0.9.2 editor into a standalone reusable component project.
 - Kept all editor markup, navigation, formatting controls and behaviour inside `slate.js`.
 - Preserved direct host mounting, scoped CSS, host-controlled Markdown, attachment callbacks, outline navigation, document completion, read-only Preview and interactive checklist support.
-- Split Wire's Bartco light-theme overrides into optional `themes/bartco.css` so the editor can be reused without Bartco branding while retaining the exact theme when desired.
+- Split Wire's light-theme overrides into an optional theme file (now `themes/green.css`) so the editor can be reused without that branding while retaining the exact theme when desired.
 - Added standalone and host-integration examples plus TypeScript declarations and attachment API documentation.

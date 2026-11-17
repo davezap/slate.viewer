@@ -21,7 +21,13 @@ export interface SecurityAddition {
  * page title. The public edition is Metatrash, shown as the text wordmark; an edition may give
  * its own name and a wordmark component (an inline SVG, sized by the header's .brand rule).
  */
-export interface Brand { name: string; wordmark?: Component; footerMarks?: Record<string, FooterMark> }
+export interface Brand { name: string; wordmark?: Component; footerMarks?: Record<string, FooterMark>; spaceOffer?: SpaceOffer }
+/**
+ * What Settings → Spaces shows in place of the count and the Create space form when the account
+ * can't create a space without a plan (0.43.0; the server's createNeeds): the edition's offer,
+ * such as a free trial. Without one the page shows the server's own words.
+ */
+export interface SpaceOffer { heading: string; text: string; button: string; href: string }
 /**
  * A mark people can put in a page footer as :name: (0.40.0), next to the built-in :metatrash:,
  * such as the edition's own wordmark. `render` returns a fresh node each time (footer.ts); the

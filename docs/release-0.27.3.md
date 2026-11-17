@@ -77,20 +77,20 @@ pin. Follow the private guide to adopt the committed Core and
 Viewer revisions and rebuild company website assets. No separate frontend
 deployment is performed by Codex.
 
-## Publish the app's change notes — required, pending
+## Publish the app's change notes — completed
 
-Once v0.27.3 is available, Codex must copy the exact text of
-`docs/change-notes/changenotes_0.27.3.md` to the connected
+Completed 2026-11-06 at David's request: Codex copied the exact text of
+`docs/change-notes/changenotes_0.27.3.md` into the connected
 `dave-zap/metatrash-com` space at
-`tools/slate-viewer/change-logs/changenotes_0.27.3.md` using the Metatrash tools.
-Read the space and folder AGENTS.md instructions first, use a current state for
-the write, and read back the saved file to verify its contents match the release
-source. The public URL is
+`tools/slate-viewer/change-logs/changenotes_0.27.3.md` and read it back to verify
+an exact match. The public page is
 https://metatrash.com/docs/tools/slate-viewer/change-logs/changenotes_0.27.3.md.
-The app discovers notes through the folder's generated llms.txt; no manual index
-entry is needed. A local note alone does not complete this step. Keep it pending
-until the actual release: the app immediately displays the newest listed note,
-so publishing ahead of the release would advertise unshipped changes.
+The folder's generated llms.txt supplies the app's list; no manual index entry
+was needed. The missing 0.27.2 note was also published and verified.
+
+Every subsequent Viewer release still requires its matching local note to be
+published and read back once the release is available. Do not publish future
+notes early: the app immediately displays the newest listed note.
 
 ## Recovery
 

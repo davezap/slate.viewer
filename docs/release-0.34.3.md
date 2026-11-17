@@ -5,7 +5,7 @@ schema or configuration change. `npm run check` (svelte-check) passed with 0
 errors; no build was run (David builds).
 
 Dave asked (2026-11-09) for a site address to a heading to work:
-`https://metatrash.com/spaces/bartco/r-d/protocols/LiveLinkBench/README.md#Run%20it%20from%20Windows%20(PowerShell)`.
+`https://metatrash.com/spaces/acme/notes/README.md#Run%20it%20from%20Windows%20(PowerShell)`.
 Clicking a `#heading` link inside a document already worked; opening an address
 with `#heading` did not. On load the site only read the hash for `#settings`,
 then put the document back where the reader last left it (0.34.1).

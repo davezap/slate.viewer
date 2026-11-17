@@ -27,6 +27,11 @@ export interface Account {
   username?: string;
   maxSpaces: number;
   canCreate: boolean;
+  /**
+   * Why the account can't create a space of its own just now (Metatrash 0.98.1): the billing
+   * gate's refusal, such as "Creating a space needs a membership." canCreate is then false.
+   */
+  createNeeds?: string;
   defaultTimezone: string;
   /** Connected AI apps are on (sharing shows what members' apps may do). */
   apps?: boolean;

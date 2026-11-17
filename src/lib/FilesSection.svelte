@@ -468,7 +468,7 @@
   let menu = $state<{ x: number; y: number; items: MenuEntry[] } | null>(null);
   const revealLabel = /Mac/i.test(navigator.userAgent) ? 'Reveal in &Finder' : /Windows/i.test(navigator.userAgent) ? 'Show in &Explorer' : 'Show in File &Manager';
 
-  /** New File/Folder here (in a folder, or beside a file) and in the root, rename, delete and the usual extras. */
+  /** New File/Folder here (in a folder, beside a file, or in the root on empty space), rename, delete and the usual extras. */
   function showMenu(event: MouseEvent, node: Node | null) {
     if (!root) return;
     event.preventDefault();
@@ -478,16 +478,15 @@
     const folder = node ? (node.folder ? node.path : parentOf(node.path)) : '';
     if (editable) {
       const here = folder.split('/').pop()!.replace(/&/g, '&&');
-      if (folder) {
-        items.push({ text: `&New File in ${here}…`, action: () => void startCreate(folder) });
-        if (onCreateFolder) items.push({ text: `New &Folder in ${here}…`, action: () => void startCreate(folder, 'folder') });
-      }
-      items.push({ text: 'New File in &Root…', action: () => void startCreate('') });
-      if (onCreateFolder) items.push({ text: 'New Folder in Roo&t…', action: () => void startCreate('', 'folder') });
+      // One New File/Folder (0.43.0): in the folder clicked, beside the file clicked, or at the
+      // top of the space when the click was on empty space. The Files buttons still make them in
+      // the root.
+      const suffix = folder ? ` in ${here}` : '';
+      items.push({ text: `&New File${suffix}…`, action: () => void startCreate(folder) });
+      if (onCreateFolder) items.push({ text: `New &Folder${suffix}…`, action: () => void startCreate(folder, 'folder') });
       if (onUpload) {
         separate();
-        if (folder) items.push({ text: `Up&load Files to ${here}…`, action: () => pickFiles(folder) });
-        items.push({ text: 'Upload Files to Root…', action: () => pickFiles('') });
+        items.push({ text: `Up&load Files${folder ? ` to ${here}` : ''}…`, action: () => pickFiles(folder) });
       }
     }
     if (node && !node.folder) {
@@ -659,6 +658,8 @@
                   <ul class="children" style:--guide="{15 + depth * 14}px">{@render branch(node.children, depth + 1, node.path)}</ul>
                 {/if}
               {:else if node.folder}
+                <!-- A folder's line: the row, and on hover a "…" for its Properties (0.43.0). -->
+                <div class="folder-line" class:with-more={!!onProperties}>
                 <button
                   class="row"
                   class:drop={dropTarget === node.path}
@@ -682,6 +683,10 @@
                   {@render chips(node.path)}
                   {#if !expanded.has(node.path) && busyIn(node.path)}<span class="spinner" title="Something is under way in here"></span>{/if}
                 </button>
+                {#if onProperties}
+                  <button class="more" title="Properties of {node.name} (Alt+Enter)" aria-label="Properties of {node.name}" tabindex="-1" onclick={() => onProperties(node.path)}>…</button>
+                {/if}
+                </div>
                 {#if expanded.has(node.path)}
                   <ul class="children" style:--guide="{15 + depth * 14}px">{@render branch(node.children, depth + 1, node.path)}</ul>
                 {/if}
@@ -759,6 +764,16 @@
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .row:hover { background: var(--side-hover); }
+  /* The "…" at the far right of a folder's row, shown while pointing at it (0.43.0). */
+  .folder-line { position: relative; }
+  .folder-line.with-more:hover .row, .folder-line.with-more:focus-within .row { padding-right: 30px; background: var(--side-hover); }
+  .more {
+    position: absolute; top: 50%; right: 4px; transform: translateY(-50%); display: none;
+    width: 22px; height: 20px; padding: 0; line-height: 1; border: 0; border-radius: 4px;
+    color: var(--side-muted); background: none; cursor: pointer;
+  }
+  .folder-line:hover .more, .folder-line:focus-within .more { display: block; }
+  .more:hover { color: var(--side-fg); background: var(--side-border); }
   .row.current { background: var(--side-accent-soft); color: var(--side-accent); font-weight: 600; }
   .row.drop, .scroll.drop-root { background: var(--side-accent-soft); box-shadow: inset 0 0 0 1px var(--side-accent); }
   .row.dragged { opacity: .5; }

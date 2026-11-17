@@ -641,11 +641,11 @@ mod tests {
     #[test]
     fn parses_spaces() {
         let text = "dave-zap/notes                           read and write  Notes\n\
-                    dave-zap/bartco                          read only       Bartco site\n\
+                    dave-zap/acme                          read only       Acme site\n\
                     public                                   read and write  Public\n";
         let rows = parse_spaces(text);
         assert_eq!(rows.len(), 3);
-        assert_eq!(rows[1], SpaceRow { space: "dave-zap/bartco".into(), access: "read only".into(), name: "Bartco site".into() });
+        assert_eq!(rows[1], SpaceRow { space: "dave-zap/acme".into(), access: "read only".into(), name: "Acme site".into() });
     }
 
     #[test]
