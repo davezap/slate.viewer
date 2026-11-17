@@ -14,6 +14,7 @@ import type { Receipt, SubmitResult, SubmitRefusal } from '../forms';
 import type { Policies, ReaderReport } from '../policies';
 import type { HistoryPage } from '../history';
 import type { VirtualFile } from '../space';
+import type { CardQueryResult, NoticeStatus } from '../cards';
 import type { Backend, FolderListing } from './types';
 
 const appWindow = getCurrentWindow();
@@ -109,6 +110,9 @@ export const backend: Backend = {
     policies: async folder => JSON.parse(await invoke<string>('mtsync_policies', { folder })) as Policies,
     acknowledge: (file, version) => invoke('mtsync_ack', { file, version }),
     readers: async folder => JSON.parse(await invoke<string>('mtsync_readers', { folder })) as ReaderReport,
+    query: async (dashboard, query) => JSON.parse(await invoke<string>('mtsync_query', { dashboard, query: JSON.stringify(query) })) as CardQueryResult,
+    notices: async files => (JSON.parse(await invoke<string>('mtsync_notices', { files })) as { notices: NoticeStatus[] }).notices,
+    notice: (file, blob) => invoke('mtsync_notice', { file, blob }),
   },
 
   app: {

@@ -21,8 +21,8 @@ export type FileLockLevel = Exclude<LockLevel, ''>;
 export const LOCK_LEVELS: FileLockLevel[] = ['folderAgents', 'connectedAgents', 'agents', 'everyone'];
 export const isLockLevel = (v: unknown): v is FileLockLevel => typeof v === 'string' && (LOCK_LEVELS as string[]).includes(v);
 /** Settings keys, and fillForms and takeQuizzes: who may send the folder's forms and quizzes. */
-export type LockKey = 'purpose' | 'children' | 'services' | 'inherit' | 'readOnly' | 'publishedVersion' | 'print' | 'footer' | 'actions' | 'fillForms' | 'takeQuizzes' | 'locked';
-export const LOCK_KEYS: LockKey[] = ['purpose', 'children', 'readOnly', 'services', 'publishedVersion', 'print', 'footer', 'actions', 'fillForms', 'takeQuizzes', 'inherit', 'locked'];
+export type LockKey = 'purpose' | 'children' | 'services' | 'inherit' | 'readOnly' | 'publishedVersion' | 'print' | 'footer' | 'home' | 'actions' | 'fillForms' | 'takeQuizzes' | 'locked';
+export const LOCK_KEYS: LockKey[] = ['purpose', 'children', 'home', 'readOnly', 'services', 'publishedVersion', 'print', 'footer', 'actions', 'fillForms', 'takeQuizzes', 'inherit', 'locked'];
 /** The locks a new space starts with in its top folder (Metatrash 0.95.12). */
 export const DEFAULT_LOCKS: Partial<Record<LockKey, FileLockLevel>> = { actions: 'folderAgents', publishedVersion: 'folderAgents', readOnly: 'folderAgents', services: 'folderAgents', takeQuizzes: 'agents' };
 export type PushMode = 'agent' | 'auto' | 'review';
@@ -36,6 +36,7 @@ export const LOCK_KEY_LABELS: Record<LockKey, { title: string; about: string }> 
   publishedVersion: { title: 'Published version', about: 'Who can publish a new version of this folder.' },
   print: { title: 'Printout image', about: 'The image at the top of printed documents.' },
   footer: { title: 'Page footer', about: 'The line below every page on the website.' },
+  home: { title: 'Opens on', about: 'The file the folder opens on, such as its dashboard.' },
   actions: { title: 'Actions', about: 'The actions on the Automation page. Where this allows, an agent connected as you or a member, or another action\'s agent, may change them for that person; an action never changes itself.' },
   fillForms: { title: 'Fill in forms', about: 'Sending this folder\'s forms. An agent sends as the person it works for and never signs; a form with a signature is always the person\'s.' },
   takeQuizzes: { title: 'Take quizzes', about: 'Sending this folder\'s quizzes. Locked for agents in new spaces, so a quiz shows what the person knows.' },
@@ -47,7 +48,7 @@ const MAX_PURPOSE = 2000;
 const MAX_CHILDREN = 200;
 const MAX_CHILD_TEXT = 1000;
 const MAX_LOCKS = 200;
-const KNOWN_KEYS = ['inherit', 'purpose', 'children', 'locked', 'readOnly', 'publishedVersion', 'print', 'footer', 'services', 'actions'];
+const KNOWN_KEYS = ['inherit', 'purpose', 'children', 'home', 'locked', 'readOnly', 'publishedVersion', 'print', 'footer', 'services', 'actions'];
 export const MAX_PUBLISHED_VERSION = 1_000_000;
 const MAX_ACKNOWLEDGE_FILES = 50;
 const MAX_PRINT_IMAGE = 2000;
@@ -136,6 +137,9 @@ export interface FolderSettings {
   footerOff: boolean;
   /** The folder's actions (never inherited). */
   actions: ActionForm[];
+  /** The Markdown file in this folder it opens on (Metatrash 0.99.0), or "" for the usual
+   *  (the top of a space: dashboard.md, then README.md). Never inherited. */
+  home: string;
 }
 
 /** One folder's settings file: `folder` is "" for the root or "notes/" style. */
@@ -192,7 +196,7 @@ export function lockMap(value: unknown): Record<string, string> {
   return {};
 }
 
-const emptyLocks = (): Record<LockKey, LockLevel> => ({ purpose: '', children: '', services: '', inherit: '', readOnly: '', publishedVersion: '', print: '', footer: '', actions: '', fillForms: '', takeQuizzes: '', locked: '' });
+const emptyLocks = (): Record<LockKey, LockLevel> => ({ purpose: '', children: '', services: '', inherit: '', readOnly: '', publishedVersion: '', print: '', footer: '', home: '', actions: '', fillForms: '', takeQuizzes: '', locked: '' });
 
 /** The form for a settings object. */
 export function toSettings(raw: Record<string, unknown>): FolderSettings {
@@ -229,6 +233,7 @@ export function toSettings(raw: Record<string, unknown>): FolderSettings {
     printImage: raw.print && typeof raw.print === 'object' && typeof (raw.print as Record<string, unknown>).image === 'string' ? (raw.print as Record<string, string>).image : '',
     footer: typeof raw.footer === 'string' ? raw.footer : '',
     footerOff: raw.footer === '',
+    home: typeof raw.home === 'string' ? raw.home : '',
     actions: Array.isArray(raw.actions)
       ? (raw.actions as unknown[]).filter((a): a is Record<string, unknown> => !!a && typeof a === 'object' && !Array.isArray(a)).map(toActionForm)
       : [],
@@ -278,6 +283,7 @@ function keyValues(s: FolderSettings, isRoot: boolean): Record<string, unknown> 
   if (s.footerOff) out.footer = '';
   else if (cleanFooter(s.footer)) out.footer = cleanFooter(s.footer);
   if (s.actions.length) out.actions = actionsValue(s.actions);
+  if (s.home.trim()) out.home = s.home.trim();
   return out;
 }
 
@@ -299,7 +305,7 @@ export function toObject(s: FolderSettings, original: Record<string, unknown>, i
     if (!(key in values)) continue;
     out[key] = comparable(key, values[key]) === comparable(key, original[key]) ? original[key] : values[key];
   }
-  for (const key of ['inherit', 'purpose', 'children', 'locked', 'readOnly', 'publishedVersion', 'print', 'footer', 'services', 'actions']) {
+  for (const key of ['inherit', 'purpose', 'children', 'home', 'locked', 'readOnly', 'publishedVersion', 'print', 'footer', 'services', 'actions']) {
     if (key in values && !(key in out)) out[key] = values[key];
   }
   return out;
@@ -323,7 +329,7 @@ export interface Effective { keys: Record<string, string>; from: Record<string, 
 /**
  * A folder's settings with inherited ones filled in, as Metatrash's effectiveSettings: `texts` maps
  * a folder to its settings text (missing folders start as Metatrash makes them). Services,
- * readOnly, publishedVersion, actions and inherit itself are never inherited.
+ * readOnly, publishedVersion, actions, home and inherit itself are never inherited.
  */
 export function effectiveSettings(texts: Map<string, string | null>, folder: string): Effective {
   const own = texts.get(folder) ?? defaultSettingsText(folder);
@@ -332,7 +338,7 @@ export function effectiveSettings(texts: Map<string, string | null>, folder: str
   if (folder === '' || keys.inherit !== 'true') return { keys, from };
   const parent = effectiveSettings(texts, parentFolder(folder));
   for (const [k, v] of Object.entries(parent.keys)) {
-    if (!(k in keys) && k !== 'services' && k !== 'readOnly' && k !== 'publishedVersion' && k !== 'actions' && k !== 'inherit') {
+    if (!(k in keys) && k !== 'services' && k !== 'readOnly' && k !== 'publishedVersion' && k !== 'actions' && k !== 'home' && k !== 'inherit') {
       keys[k] = v;
       from[k] = parent.from[k];
     }
@@ -444,6 +450,11 @@ export function check(s: FolderSettings, text: string, folder: string, ctx: Spac
     } else if (names.has(name)) problems.push({ page: 'general', text: `"${name}" is described twice.` });
     names.add(name);
     if (c.text.length > MAX_CHILD_TEXT) problems.push({ page: 'general', text: `The description of "${name}" is over ${MAX_CHILD_TEXT} characters.` });
+  }
+
+  const home = s.home.trim();
+  if (home && (home.includes('/') || home.includes('\\') || !/\.md$/i.test(home) || home.toLowerCase() === 'agents.md' || storageNameProblem(home) !== null)) {
+    problems.push({ page: 'general', text: 'Opens on is the name of a Markdown file in this folder, such as dashboard.md.' });
   }
 
   const readOnly = s.readOnly.filter(r => r.name.trim());

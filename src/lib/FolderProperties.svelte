@@ -739,6 +739,15 @@
               <button class="small" disabled={disabled('children')} onclick={addChild}>Add a Description</button>
             </section>
 
+            {#if folder === ''}
+              <section>
+                <h3>Opens on{@render lockMark('home')}</h3>
+                <p class="hint">The file the space opens on, at the top of the space. Empty opens dashboard.md when there is one, else README.md.</p>
+                <datalist id="folder-notes">{#each entries.filter(e => /\.md$/i.test(e)) as e (e)}<option value={e}></option>{/each}</datalist>
+                <input class="name wide" list="folder-notes" bind:value={form.home} placeholder="dashboard.md" spellcheck="false" disabled={disabled('home')} />
+              </section>
+            {/if}
+
           {:else if page === 'security'}
             <section class="card">
               <p class="hint"><b>People and agents.</b> A change you make here, in Files or through Metatrash Sync counts as a person's, and so does one by a member with write access. Everything else is an agent, of one of two kinds: <b>folder actions</b>, the agents on the Automation page, and <b>connected agents</b>, such as Claude and other AI apps, space keys and the public connection. Anything not locked can be changed by anyone with write access.</p>

@@ -17,7 +17,8 @@
     SECTION_IDS, type ThemePref, type SectionId, rememberPositionsPref, setRememberPositionsPref,
   } from './lib/prefs';
   import { resolveWikiLink, noteFileName } from './lib/wiki';
-  import { firstNote, isHiddenFile, isSpaceFolderFile } from './lib/types';
+  import { firstNote, homeNote, isHiddenFile, isSpaceFolderFile } from './lib/types';
+  import { cardHost, hasCards } from './lib/cards';
   import ActivityBar from './lib/ActivityBar.svelte';
   import SidePanel from './lib/SidePanel.svelte';
   import FilesSection from './lib/FilesSection.svelte';
@@ -46,7 +47,7 @@
     answerKeyName, answerKeyText, clearDraft, fetchAccountTodo, fetchReceipt, fetchReceipts, loadDraft, parseFiledCopy, reusableAnswers, reviewCopy,
     saveDraft, submitForm, todoWords, type AccountReceipt, type AccountTodo, type FiledCopy, type FormDraft, type Receipt, type Review, needsInfo } from './lib/forms';
   import ReviewBanner from './lib/ReviewBanner.svelte';
-  import { SETTINGS_FILE, effectiveSettings, folderChain, frozenKeys, pageFooter, printImage, publishText, toSavedVersion } from './lib/folderSettings';
+  import { SETTINGS_FILE, effectiveSettings, folderChain, frozenKeys, pageFooter, parseObject, printImage, publishText, toSavedVersion } from './lib/folderSettings';
   import { renderFooter } from './lib/footer';
   import { fadeTheme } from './lib/themeFade';
 
@@ -241,6 +242,7 @@
       if (pushHistory && path) { history = [...history, path]; forward = []; }
       setDocument(doc);
       await editor.setMarkdown(doc.text);
+      cardsOpened(doc.text);
       baseline = editor.getMarkdown();
       dirty = false;
       // A saved folder place (opening a folder, a new launch) puts its own view back after this.
@@ -461,7 +463,8 @@
 
   /**
    * Picks up where the folder was left: its file, mode, scroll and cursor. The first time (or when
-   * that file is gone) it opens the README, or the folder's only note, and shows Preview.
+   * that file is gone) it opens the home page (the top folder's `home` setting, dashboard.md or
+   * README.md, Metatrash 0.99.0), or the folder's only note, and shows Preview.
    */
   async function enterFolder(dir: string) {
     if (!editor) return;
@@ -472,7 +475,7 @@
     };
     const savedFile = inFolder(saved?.file);
     const notes = folderFiles.filter(f => !isHiddenFile(f));
-    const target = savedFile ?? notes.find(f => f.toLowerCase() === 'readme.md') ?? (notes.length === 1 ? notes[0] : null);
+    const target = savedFile ?? homeNote(notes, await homeSetting(dir)) ?? (notes.length === 1 ? notes[0] : null);
     await whileRestoring(async () => {
       if (target && !(path && sameFolder(path, joinPath(dir, target)))) {
         if (!(await confirmDiscard())) return;
@@ -484,6 +487,16 @@
         await showDocumentPlace();
       }
     });
+  }
+
+  /** The top folder's `home` setting (Metatrash 0.99.0), or '' (not a space, not set, unreadable). */
+  async function homeSetting(dir: string): Promise<string> {
+    try {
+      const raw = parseObject((await backend.files.read(joinPath(dir, SETTINGS_FILE))).text);
+      return typeof raw !== 'string' && typeof raw.home === 'string' ? raw.home : '';
+    } catch {
+      return '';
+    }
   }
 
   /** A plain launch: reopens the last session's folder (where it was left) or file. */
@@ -575,6 +588,31 @@
   function onFolderChange() {
     clearTimeout(folderRefreshTimer);
     folderRefreshTimer = setTimeout(() => void refreshFolder(), 300);
+    refreshCardsSoon();
+  }
+
+  // ---- Dashboard cards (Slate 0.24.0, Metatrash 0.99.0) --------------------------------------
+  // The server answers each card from the space as it is there, so after a change on this computer
+  // the cards ask again once mtsync has had time to send it (Slate also asks every minute).
+
+  let cardRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Who is looking, for @me and form defaults on cards. */
+  let cardPerson = $state<{ name: string; email: string } | undefined>(undefined);
+
+  function refreshCardsSoon() {
+    if (!editor || !hasCards(editor.getMarkdown())) return;
+    clearTimeout(cardRefreshTimer);
+    cardRefreshTimer = setTimeout(() => editor?.refreshCards(), web ? 500 : 4000);
+  }
+
+  /** Learns who is looking when a dashboard opens, then draws its cards again with @me. */
+  function cardsOpened(text: string) {
+    if (!hasCards(text) || cardPerson) return;
+    void formPerson().then(person => {
+      if (!person.name && !person.email) return;
+      cardPerson = person;
+      editor?.refreshCards();
+    });
   }
 
   /** One listing at a time: changes that arrive meanwhile are picked up by one more listing after it. */
@@ -2790,7 +2828,7 @@
     // The first download can take a while; open the note as soon as it appears.
     const deadline = Date.now() + (wanted ? 5 * 60_000 : 60_000);
     while (root === dir && Date.now() < deadline) {
-      const target = wanted || firstNote(folderFiles);
+      const target = wanted || firstNote(folderFiles, await homeSetting(dir));
       if (target && folderFiles.includes(target)) {
         if (!path && !dirty) await openFromFolder(target);
         else if (wanted) await openFromFolder(target);
@@ -3601,6 +3639,12 @@
         attachmentHandler: handleAttachments,
         resolveUrl,
         outlinePanel: false,
+        cardHost: cardHost({
+          dashboard: () => path,
+          root: () => root,
+          person: () => cardPerson,
+          open: relative => { void openFromFolder(relative).catch(showError); },
+        }),
         outlineOpen: sections.outline,
       });
       outline = editor.getOutline();

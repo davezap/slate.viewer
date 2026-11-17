@@ -11,6 +11,7 @@ import type { Policies, ReaderReport } from '../policies';
 import type { SpaceRow, VirtualFile } from '../space';
 import type { ActivityResult } from '../activity';
 import type { SearchMatch } from '../types';
+import type { CardQueryResult, NoticeStatus } from '../cards';
 import type { Backend, BackendEvents, FileFilter, FolderListing, ListOnly, MessageOptions, Unlisten } from './types';
 import { createPoller, retryAfterMilliseconds } from './polling';
 import { brand } from '$edition';
@@ -520,6 +521,25 @@ export const backend: Backend = {
     },
     readers: async folder => call<ReaderReport>('GET', spaceUrl(locate(folder).space, 'acknowledgements', { report: 'true' })),
     emailAddress: async (root, folder, name) => (await call<{ address: string }>('GET', spaceUrl(locate(root).space, 'email', { folder, name: name || undefined }))).address,
+    query: async (dashboard, query) => {
+      const { space, rel } = locate(dashboard);
+      return call<CardQueryResult>('POST', spaceUrl(space, 'query'), { ...query, base: rel });
+    },
+    notices: async files => {
+      if (!files.length) return [];
+      const { space } = locate(files[0]);
+      const rels = files.map(f => {
+        const at = locate(f);
+        if (at.space !== space) throw new Error('A dashboard shows notices from its own space only.');
+        return at.rel;
+      });
+      if (space === 'public' || !(await siteSession()).signedIn) throw new Error('Sign in to see and acknowledge notices.');
+      return (await call<{ notices: NoticeStatus[] }>('GET', spaceUrl(space, 'notices', { paths: rels.join(',') }))).notices;
+    },
+    notice: async (file, blob) => {
+      const { space, rel } = locate(file);
+      await call('POST', spaceUrl(space, 'notices'), { path: rel, blob });
+    },
   },
 
   app: {

@@ -10,6 +10,7 @@ import type { HistoryPage } from '../history';
 import type { AccountReceipt, AccountTodo, Receipt, SubmitResult } from '../forms';
 import type { Policies, ReaderReport } from '../policies';
 import type { UpdateCheck } from '../UpdateDialog.svelte';
+import type { CardQuery, CardQueryResult, NoticeStatus } from '../cards';
 
 export interface LoadedDocument { path: string; text: string; hasBom: boolean }
 export interface FolderListing { files: string[]; emptyFolders: string[]; truncated: boolean }
@@ -137,6 +138,13 @@ export interface Backend {
      *  owner (Metatrash 0.97.0). Absent where it can't be asked yet (the desktop app). */
     /** A folder's email address: its service called `name` ("" for the unnamed one; Metatrash 0.97.2). */
     emailAddress?(root: string, folder: string, name?: string): Promise<string>;
+    /** A dashboard card's data (Metatrash 0.99.0): `dashboard` is the dashboard's full path, which
+     *  the card's source is relative to; row files come back relative to the space (or synced folder). */
+    query?(dashboard: string, query: CardQuery): Promise<CardQueryResult>;
+    /** Whether the person has done each notice or form (full paths), in the same order. */
+    notices?(files: string[]): Promise<NoticeStatus[]>;
+    /** Acknowledges a notice as its text is now (`blob` from notices). */
+    notice?(file: string, blob: string): Promise<void>;
   };
 
   /** The app itself. */

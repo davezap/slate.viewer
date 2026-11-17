@@ -411,6 +411,68 @@ pub async fn mtsync_readers(folder: String) -> Result<String, String> {
     Ok(out.stdout)
 }
 
+/// Dashboards need mtsync 0.99.0 (`query`, `notices`, `notice`); an older one has no such commands.
+const DASHBOARDS_VERSION: (u32, u32, u32) = (0, 99, 0);
+
+async fn require_dashboards() -> Result<(), String> {
+    let out = run(None, vec!["version".into()]).await?;
+    match parse_version(&out.stdout) {
+        Some(v) if out.ok && v >= DASHBOARDS_VERSION => Ok(()),
+        _ => Err("Dashboard cards need mtsync 0.99.0 or later. Update mtsync and try again.".into()),
+    }
+}
+
+/// The server's error message in mtsync's `-json` output, else mtsync's own.
+fn json_error(out: &Output) -> String {
+    serde_json::from_str::<serde_json::Value>(out.stdout.trim())
+        .ok()
+        .and_then(|v| v.pointer("/error/message").and_then(|m| m.as_str()).map(str::to_string))
+        .unwrap_or_else(|| out.message())
+}
+
+/// One dashboard card's data: `mtsync -json query DASHBOARD -` with the card's query (JSON) on
+/// standard input (mtsync 0.99.0). The server computes it from the space with the person's access.
+#[tauri::command]
+pub async fn mtsync_query(dashboard: String, query: String) -> Result<String, String> {
+    require_dashboards().await?;
+    let out = tauri::async_runtime::spawn_blocking(move || {
+        run_with_input_blocking(&["-json", "query", dashboard.as_str(), "-"], query.as_bytes())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    if !out.ok {
+        return Err(json_error(&out));
+    }
+    Ok(out.stdout)
+}
+
+/// Whether this person has done each notice or form a dashboard shows: `mtsync -json notices FILE...`.
+#[tauri::command]
+pub async fn mtsync_notices(files: Vec<String>) -> Result<String, String> {
+    if files.is_empty() || files.len() > 50 {
+        return Err("A dashboard asks about 1 to 50 notices at a time.".into());
+    }
+    require_dashboards().await?;
+    let mut args = vec!["-json".to_string(), "notices".to_string()];
+    args.extend(files);
+    let out = run(None, args).await?;
+    if !out.ok {
+        return Err(json_error(&out));
+    }
+    Ok(out.stdout)
+}
+
+/// Acknowledges a notice as its text is now (`blob`, from mtsync_notices): `mtsync -json notice FILE BLOB`.
+#[tauri::command]
+pub async fn mtsync_notice(file: String, blob: String) -> Result<(), String> {
+    if blob.len() != 40 || !blob.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("That notice can't be acknowledged: its version is not valid.".into());
+    }
+    require_dashboards().await?;
+    let out = run(None, vec!["-json".into(), "notice".into(), file, blob]).await?;
+    if out.ok { Ok(()) } else { Err(json_error(&out)) }
+}
+
 /// Forms need mtsync 0.49.0 (`submit`, `submissions`, `submission`).
 const FORMS_VERSION: (u32, u32, u32) = (0, 49, 0);
 

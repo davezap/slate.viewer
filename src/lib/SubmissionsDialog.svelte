@@ -165,7 +165,7 @@
           {/if}
           {#each receipts as r (r.id)}
             <button class:selected={r.id === selected} onclick={() => void show(r.id)}>
-              <b>{#if r.status === 'approved'}<span class="tick" title={r.quiz ? 'Passed' : 'Approved'} aria-label={r.quiz ? 'Passed' : 'Approved'}>✓</span>{:else if r.status === 'needs-info'}<span class="dot" title="Sent back: the reviewer needs more from you" aria-label="Sent back">●</span>{/if}{r.title || r.form}</b>
+              <b>{#if r.status === 'approved' || r.status === 'complete'}<span class="tick" title={r.quiz ? 'Passed' : reviewText(r)} aria-label={r.quiz ? 'Passed' : reviewText(r)}>✓</span>{:else if r.status === 'needs-info'}<span class="dot" title="Sent back: the reviewer needs more from you" aria-label="Sent back">●</span>{/if}{r.title || r.form}</b>
               {#if everywhere && r.space}<span class="space">{r.space}</span>{/if}
               <span class:asked={r.status === 'needs-info'}>{formatWhen(r.submittedAt)}{reviewText(r) ? ` · ${reviewText(r)}` : ''}</span>
             </button>

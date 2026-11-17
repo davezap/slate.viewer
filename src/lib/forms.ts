@@ -110,9 +110,10 @@ export function reusableAnswers(answers: SlateFormAnswers | undefined): SlateFor
   return out;
 }
 
-export type ReviewStatus = 'submitted' | 'approved' | 'declined' | 'needs-info' | 'resent';
+/** complete: the form says `review: none` (Metatrash 0.99.0), so the copy is filed done, with no review. */
+export type ReviewStatus = 'submitted' | 'approved' | 'declined' | 'needs-info' | 'resent' | 'complete';
 
-const reviewStatuses: ReviewStatus[] = ['submitted', 'approved', 'declined', 'needs-info', 'resent'];
+const reviewStatuses: ReviewStatus[] = ['submitted', 'approved', 'declined', 'needs-info', 'resent', 'complete'];
 
 /** What the review of a receipt says, in a few words. */
 export function reviewText(r: Pick<Receipt, 'status' | 'quiz' | 'score'>): string {
@@ -125,6 +126,7 @@ export function reviewText(r: Pick<Receipt, 'status' | 'quiz' | 'score'>): strin
   if (r.status === 'declined') return 'Declined';
   if (r.status === 'needs-info') return 'Needs more information';
   if (r.status === 'resent') return 'Sent again';
+  if (r.status === 'complete') return 'Done';
   return r.status ? 'Waiting for review' : '';
 }
 

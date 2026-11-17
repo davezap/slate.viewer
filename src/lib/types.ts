@@ -21,8 +21,18 @@ export const isHiddenFile = (path: string) => {
   return !/\.(md|markdown|mdown|mkd)$/i.test(name) || name.toLowerCase() === 'agents.md' || name.startsWith('.');
 };
 
-/** The note a folder opens on: its top-level README.md, else its first top-level note. */
-export function firstNote(files: string[]): string | null {
+/**
+ * A space's home page among its top-level files (Metatrash 0.99.0): the top folder's `home`
+ * setting when that file is there, else dashboard.md, else README.md; null when none is.
+ */
+export function homeNote(files: string[], home = ''): string | null {
+  const top = files.filter(f => !f.includes('/'));
+  const find = (name: string) => (name ? top.find(f => f.toLowerCase() === name.toLowerCase()) ?? null : null);
+  return find(home.trim()) ?? find('dashboard.md') ?? find('readme.md');
+}
+
+/** The note a folder opens on: its home page (see homeNote), else its first top-level note. */
+export function firstNote(files: string[], home = ''): string | null {
   const top = files.filter(f => !f.includes('/') && !isHiddenFile(f));
-  return top.find(f => f.toLowerCase() === 'readme.md') ?? top[0] ?? null;
+  return homeNote(files, home) ?? top[0] ?? null;
 }

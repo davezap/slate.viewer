@@ -108,7 +108,7 @@
         {/each}
       </div>
     {/if}
-    {#if !resent && (!copy.quiz || toTick.length)}
+    {#if !resent && copy.status !== 'complete' && (!copy.quiz || toTick.length)}
       <div class="actions">
         <input type="text" maxlength="2000" class:wanted={askNote} placeholder={askNote ? `What should ${copy.submittedBy || 'they'} add or change?` : `Note for ${copy.submittedBy || 'them'} (optional)`} bind:value={note} disabled={busy} />
         {#if copy.quiz}
