@@ -9,7 +9,8 @@ const API = '/api/v1/site/account';
 
 /** owner (Metatrash 0.95.23) is set on a space of an account this person manages, such as an organisation they are an
  * admin of; it is absent on their own spaces. */
-export interface AccountSpace { id: string; name: string; slug: string; space?: string; ready: boolean; web?: boolean; timezone?: string; usage?: Usage; owner?: string }
+/** limit: the owner's storage limit for the space in bytes, absent for none (Metatrash 0.99.3). */
+export interface AccountSpace { id: string; name: string; slug: string; space?: string; ready: boolean; web?: boolean; timezone?: string; usage?: Usage; owner?: string; limit?: number }
 /** Storage in bytes (Metatrash 0.89.0): git is the space's text with every version, files its virtual files (every version
  * kept), bytes both. measured is when the oldest number was measured. */
 export interface Usage { bytes: number; git: number; files: number; measured?: string }
@@ -33,6 +34,8 @@ export interface Account {
    */
   createNeeds?: string;
   defaultTimezone: string;
+  /** Owners may limit each space's storage (Metatrash 0.99.3, when the server has the column). */
+  spaceLimits?: boolean;
   /** Connected AI apps are on (sharing shows what members' apps may do). */
   apps?: boolean;
   fresh?: boolean;

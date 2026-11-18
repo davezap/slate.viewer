@@ -108,6 +108,18 @@ async function stateFor(path: string): Promise<string> {
   return (await call<ListResult>('GET', spaceUrl(space, 'files', { limit: 1 }))).state;
 }
 
+/**
+ * A new file whose name is taken (0.45.0): said plainly, not as a save conflict. `name` is
+ * 'FileExists' so callers can tell; showError shows only the message.
+ */
+function fileExists(rel: string): Error {
+  const slash = rel.lastIndexOf('/');
+  const where = slash < 0 ? 'the top of this space' : `${rel.slice(0, slash)}/`;
+  const error = new Error(`A file called ${rel.slice(slash + 1)} already exists in ${where}. Choose another name.`);
+  error.name = 'FileExists';
+  return error;
+}
+
 /** Saves, creating the file if need be; a file changed on the server meanwhile is refused. */
 async function writeFile(path: string, text: string, createOnly = false): Promise<Mutation> {
   const { space, rel } = locate(path);
@@ -119,6 +131,7 @@ async function writeFile(path: string, text: string, createOnly = false): Promis
     fileIds.set(path, out.file.id);
     return out;
   } catch (error) {
+    if (createOnly && error instanceof SiteError && error.code === 'destination_exists') throw fileExists(rel);
     if (error instanceof SiteError && error.status === 409) {
       // App.svelte asks what to do, with the server's version (read again, so the state is fresh).
       const conflict = new Error(`${rel} changed on the server while you were editing.`);
@@ -361,7 +374,19 @@ export const backend: Backend = {
     // its .metatrash.json), both hidden, so the listing shows it as an empty folder.
     createFolder: async (parent, name) => {
       const path = `${parent}/${name}`;
-      await writeFile(`${path}/AGENTS.md`, FOLDER_AGENTS_STARTER, true);
+      try {
+        await writeFile(`${path}/AGENTS.md`, FOLDER_AGENTS_STARTER, true);
+      } catch (error) {
+        // Its AGENTS.md is there already: the folder exists.
+        if (error instanceof Error && error.name === 'FileExists') {
+          const { rel } = locate(path);
+          const slash = rel.lastIndexOf('/');
+          const named = new Error(`A folder called ${rel.slice(slash + 1)} already exists in ${slash < 0 ? 'the top of this space' : `${rel.slice(0, slash)}/`}. Choose another name.`);
+          named.name = 'FileExists';
+          throw named;
+        }
+        throw error;
+      }
       return path;
     },
     rename: async (from, to) => {
@@ -378,7 +403,8 @@ export const backend: Backend = {
       for (let n = 1; n < 100; n++) {
         const copy = `${base}-copy${n > 1 ? `-${n}` : ''}${ext}`;
         try { await writeFile(copy, text, true); return copy; } catch (error) {
-          if (!(error instanceof SiteError) || error.status !== 409) throw error;
+          const taken = (error instanceof Error && error.name === 'FileExists') || (error instanceof SiteError && error.status === 409);
+          if (!taken) throw error;
         }
       }
       throw new Error('Could not find a free name for the copy.');

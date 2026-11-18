@@ -3,6 +3,7 @@
   // answer) and the web-readable spaces this browser visited, with a filter; picking one opens
   // it at /spaces/owner/slug/.
   import { onMount, tick } from 'svelte';
+  import { brand } from '$edition';
   import {
     forgetSpace, groupSpaces, pickerSession, spaceAddress, visitedSpaces,
     type PickerSession, type PickerSpace, type VisitedSpace,
@@ -26,15 +27,20 @@
   let input = $state<HTMLInputElement>();
 
   const groups = $derived(session ? groupSpaces(session, visited, filter, current) : null);
+  // A heading shows only when something is under it. The public space sits under Help, below the
+  // documentation (0.45.0).
   const sections = $derived(groups ? ([
     ['Recent', groups.recent],
-    ['Public', groups.public],
     ['Your spaces', groups.yours],
     ['Shared with you', groups.shared],
     ['Visited', groups.visited],
   ] as [string, PickerSpace[]][]).filter(([, list]) => list.length) : []);
+  const helpSpaces = $derived(groups?.public ?? []);
   /** Every row in order, for the arrow keys. */
-  const rows = $derived(sections.flatMap(([label, list]) => list.map(s => ({ label, s }))));
+  const rows = $derived([
+    ...sections.flatMap(([label, list]) => list.map(s => ({ label, s }))),
+    ...helpSpaces.map(s => ({ label: 'Help', s })),
+  ]);
 
   // Under the button, kept on screen; a phone gets the full width.
   const style = $derived.by(() => {
@@ -88,6 +94,41 @@
   });
 </script>
 
+{#snippet spaceRow(label: string, s: PickerSpace)}
+  {@const i = indexOf(label, s)}
+  <div
+    class="row"
+    class:active={i === active}
+    class:current={s.space === current}
+    role="option"
+    tabindex="-1"
+    aria-selected={i === active}
+    onclick={() => open(s)}
+    onkeydown={() => {}}
+    onpointermove={() => (active = i)}
+  >
+    <span class="tick" aria-hidden="true">{s.space === current ? '✓' : ''}</span>
+    <span class="what">
+      <!-- A visited space's name may be unknown here: its slug stands in for it. -->
+      <span class="name">{s.name === s.space && s.owner ? s.space.slice(s.owner.length + 1) : s.name}</span>
+      {#if s.owner}<span class="address">{s.space}</span>{/if}
+    </span>
+    <span class="pills">
+      {#if label !== 'Visited'}
+        <span class="pill">{s.access === 'read_write' ? 'can edit' : 'read only'}</span>
+      {/if}
+      {#if s.web && s.owner}<span class="pill web" title="Anyone can read it on the website">public</span>{/if}
+    </span>
+    {#if label === 'Visited'}
+      <button class="forget" title="Forget this space" aria-label="Forget {s.name}" onclick={event => forget(event, s)}>×</button>
+    {:else if s.owned}
+      <a class="gear" href="#settings/spaces/{s.space}" title="Sharing and settings" aria-label="Settings for {s.name}" onclick={event => { event.stopPropagation(); onClose(); }}>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 1 0 0-6a3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3a1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5a1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8a1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1a1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5a1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></svg>
+      </a>
+    {/if}
+  </div>
+{/snippet}
+
 <div class="picker" bind:this={box} {style} role="dialog" aria-label="Change space" tabindex="-1" onkeydown={onKeydown}>
   <input
     bind:this={input}
@@ -111,52 +152,26 @@
         {#if label === 'Visited'}<hr />{/if}
         <div class="label">{label}</div>
         {#each list as s (label + s.space)}
-          {@const i = indexOf(label, s)}
-          <div
-            class="row"
-            class:active={i === active}
-            class:current={s.space === current}
-            role="option"
-            tabindex="-1"
-            aria-selected={i === active}
-            onclick={() => open(s)}
-            onkeydown={() => {}}
-            onpointermove={() => (active = i)}
-          >
-            <span class="tick" aria-hidden="true">{s.space === current ? '✓' : ''}</span>
-            <span class="what">
-              <!-- A visited space's name may be unknown here: its slug stands in for it. -->
-              <span class="name">{s.name === s.space && s.owner ? s.space.slice(s.owner.length + 1) : s.name}</span>
-              {#if s.owner}<span class="address">{s.space}</span>{/if}
-            </span>
-            <span class="pills">
-              {#if label !== 'Visited'}
-                <span class="pill">{s.access === 'read_write' ? 'can edit' : 'read only'}</span>
-              {/if}
-              {#if s.web && s.owner}<span class="pill web" title="Anyone can read it on the website">public</span>{/if}
-            </span>
-            {#if label === 'Visited'}
-              <button class="forget" title="Forget this space" aria-label="Forget {s.name}" onclick={event => forget(event, s)}>×</button>
-            {:else if s.owned}
-              <a class="gear" href="#settings/spaces/{s.space}" title="Sharing and settings" aria-label="Settings for {s.name}" onclick={event => { event.stopPropagation(); onClose(); }}>
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 1 0 0-6a3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3a1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5a1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8a1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1a1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5a1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></svg>
-              </a>
-            {/if}
-          </div>
+          {@render spaceRow(label, s)}
         {/each}
       {/each}
-      {#if showDocs && session.docs}
+      {#if (showDocs && session.docs) || helpSpaces.length}
         <div class="label">Help</div>
-        <a class="row docs" href={session.docs} title="Guides and reference for Metatrash, Slate Viewer and mtsync">
+      {/if}
+      {#if showDocs && session.docs}
+        <a class="row docs" href={session.docs} title="Guides and reference for {brand.name}, Slate Viewer and mtsync">
           <span class="tick book" aria-hidden="true">
             <svg viewBox="0 0 24 24"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v15H5.5A1.5 1.5 0 0 0 4 20.5zM20 5.5A1.5 1.5 0 0 0 18.5 4H13v15h5.5a1.5 1.5 0 0 1 1.5 1.5z" /></svg>
           </span>
           <span class="what">
-            <span class="name">Metatrash documentation</span>
+            <span class="name">{brand.name} documentation</span>
             <span class="address">{location.host}{session.docs}</span>
           </span>
         </a>
       {/if}
+      {#each helpSpaces as s ('Help' + s.space)}
+        {@render spaceRow('Help', s)}
+      {/each}
     {/if}
   </div>
   {#if session?.signedIn}

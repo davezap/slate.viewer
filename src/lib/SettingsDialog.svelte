@@ -10,6 +10,9 @@
   // 0.84.0: each tab is split into pages, listed under it in the side: #settings/<tab>/<page>.
   // Spaces: Your spaces, shared, invitations, and each owned space's …/<space>/general|members|ownership.
   // Profile: Username and email, delete. An address without a page (as in emails) opens the first.
+  // 0.45.0: the first group is General: Profile (username, email, and the Danger zone that was the
+  // Delete account page; …/profile/delete still opens it there) and Settings, for the options few
+  // people change (document positions, from the account menu). The address stays #settings/profile.
   import { onMount, tick, untrack } from 'svelte';
   import ConfirmSheet from './ConfirmSheet.svelte';
   import SecurityPanel from './SecurityPanel.svelte';
@@ -27,13 +30,17 @@
     current: string | null;
     onNavigate: (address: string) => void;
     onClose: () => void;
+    /** General → Settings: whether each document reopens where it was left, in this browser. */
+    rememberPositions?: boolean;
+    onRememberPositions?: () => void;
+    onForgetPositions?: () => void;
   }
-  let { address, current, onNavigate, onClose }: Props = $props();
+  let { address, current, onNavigate, onClose, rememberPositions = true, onRememberPositions, onForgetPositions }: Props = $props();
 
   /** The tabs and their pages; a page's id '' is the tab's first page. */
   const TABS = [
-    { id: 'profile', label: 'Profile', pages: [
-      { id: '', label: 'Username and email' }, { id: 'delete', label: 'Delete account' },
+    { id: 'profile', label: 'General', pages: [
+      { id: '', label: 'Profile' }, { id: 'settings', label: 'Settings' },
     ] },
     { id: 'spaces', label: 'Spaces', pages: [
       { id: '', label: 'Your spaces' }, { id: 'shared', label: 'Shared with you' }, { id: 'invitations', label: 'Invitations' },
@@ -64,7 +71,12 @@
   const spacesPage = $derived(rest.length === 1 && (rest[0] === 'shared' || rest[0] === 'invitations') ? rest[0] : '');
   /** Services' own page: apps, agents, actions, github, apps/<id> or actions/<job>. */
   const sub = $derived(tab === 'services' ? parts.slice(2).join('/') : '');
-  const profilePage = $derived(tab === 'profile' && parts[2] === 'delete' ? 'delete' : '');
+  const profilePage = $derived(tab === 'profile' && parts[2] === 'settings' ? 'settings' : '');
+  /** …/profile/delete (the old Delete account page) opens Profile at its Danger zone. */
+  let dangerZone = $state<HTMLElement>();
+  $effect(() => {
+    if (tab === 'profile' && parts[2] === 'delete' && dangerZone) void tick().then(() => dangerZone?.scrollIntoView({ block: 'start' }));
+  });
   /** The page highlighted in the side, under its tab. */
   const pageOf = (t: string): string => {
     if (t === 'spaces') return spacesPage;
@@ -96,6 +108,8 @@
   let username = $state('');
   let inviteEmail = $state('');
   let zone = $state('');
+  /** The space's storage limit in GB as typed; '' for none (0.45.0). */
+  let limitGb = $state('');
   let transferTo = $state('');
   let moveTo = $state('');
   let deleteName = $state('');
@@ -214,6 +228,7 @@
     deleteName = '';
     if (!id) return;
     zone = selected?.timezone ?? '';
+    limitGb = selected?.limit ? String(Math.round((selected.limit / 1024 ** 3) * 100) / 100) : '';
     void loadSharing(id);
   }
   // A problem belongs to its tab; a result may follow the person to the next page.
@@ -387,6 +402,28 @@
           </form>
           <datalist id="settings-zones">{#each zones as z (z)}<option value={z}></option>{/each}</datalist>
           <p class="hint">When folder actions with <code>every</code> run, and the times in runner.md. Leave it empty for the server’s ({acct.defaultTimezone}).</p>
+
+          {#if acct.spaceLimits}
+          <h3>Storage limit</h3>
+          <form class="row" onsubmit={event => {
+            event.preventDefault();
+            const gb = Number(limitGb.trim().replace(',', '.'));
+            if (limitGb.trim() && !(gb >= 0.01)) { say('Type a size in GB, such as 2 or 0.5, or leave it empty for no limit.', true); return; }
+            const limit = limitGb.trim() ? Math.round(gb * 1024 ** 3) : null;
+            void run(() => account.space(selected.id, 'storage-limit', { limit }));
+          }}>
+            <label class="vh" for="settings-limit">Storage limit in GB</label>
+            <input id="settings-limit" bind:value={limitGb} inputmode="decimal" maxlength="12" placeholder="No limit" autocomplete="off" />
+            <span class="unit">GB</span>
+            <button type="submit" disabled={busy}>Save</button>
+            {#if selected.limit}<button type="button" disabled={busy} onclick={() => { limitGb = ''; void run(() => account.space(selected.id, 'storage-limit', { limit: null })); }}>Remove limit</button>{/if}
+          </form>
+          <p class="hint">
+            Empty means no limit of its own: the space grows up to what your account allows, shared by all your spaces.
+            With a limit, changes that would take it over are refused (removing files still works, though every version is kept).
+            {#if selected.usage}It uses {formatBytes(selected.usage.bytes)} now.{/if}
+          </p>
+          {/if}
 
           {:else if sharingError}
             <p class="error" role="alert">Sharing can’t be loaded just now: {sharingError}</p>
@@ -584,7 +621,7 @@
                 {#if s.space}
                   <a class="main" href={openAddress(s.space)}><strong>{s.name}</strong><span class="sub mono">{s.space}</span></a>
                   {#if s.web}<span class="pill web" title="Anyone can read it on the website">public</span>{/if}
-                  {#if s.usage}<span class="size" title={`Text with its history ${formatBytes(s.usage.git)}, files ${formatBytes(s.usage.files)}`}>{formatBytes(s.usage.bytes)}</span>{/if}
+                  {#if s.usage}<span class="size" title={`Text with its history ${formatBytes(s.usage.git)}, files ${formatBytes(s.usage.files)}${s.limit ? `; limited to ${formatBytes(s.limit)}` : ''}`}>{formatBytes(s.usage.bytes)}{#if s.limit} of {formatBytes(s.limit)}{/if}</span>{/if}
                   <button onclick={() => go(`settings/spaces/${s.id}`)}>Sharing and settings</button>
                 {:else}
                   <span class="main"><strong>{s.name}</strong><span class="sub">Not finished being set up</span></span>
@@ -628,7 +665,7 @@
                   {#if s.space}
                     <a class="main" href={openAddress(s.space)}><strong>{s.name}</strong><span class="sub mono">{s.space}</span></a>
                     {#if s.web}<span class="pill web" title="Anyone can read it on the website">public</span>{/if}
-                    {#if s.usage}<span class="size" title={`Text with its history ${formatBytes(s.usage.git)}, files ${formatBytes(s.usage.files)}`}>{formatBytes(s.usage.bytes)}</span>{/if}
+                    {#if s.usage}<span class="size" title={`Text with its history ${formatBytes(s.usage.git)}, files ${formatBytes(s.usage.files)}${s.limit ? `; limited to ${formatBytes(s.limit)}` : ''}`}>{formatBytes(s.usage.bytes)}{#if s.limit} of {formatBytes(s.limit)}{/if}</span>{/if}
                     <button onclick={() => go(`settings/spaces/${s.id}`)}>Sharing and settings</button>
                   {:else}
                     <span class="main"><strong>{s.name}</strong><span class="sub">Not ready</span></span>
@@ -656,7 +693,7 @@
 
         {:else if (tab || 'profile') === 'profile'}
           {#if profilePage === ''}
-          <h2>Username and email</h2>
+          <h2>Profile</h2>
           <h3>Public username</h3>
           {#if acct.username}
             <p class="big mono">{acct.username}</p>
@@ -675,20 +712,35 @@
           <p class="big mono">{acct.email}</p>
           <p class="muted">Kept private, for signing in. It is never shown in spaces. <button class="link" onclick={() => go('settings/security/email')}>Change it in Security</button>.</p>
 
+          <section class="danger-zone" bind:this={dangerZone} aria-labelledby="settings-danger-zone">
+            <h3 id="settings-danger-zone">Danger zone</h3>
+            <h4>Delete account</h4>
+            {#if acct.unavailable?.includes('spaces')}
+              <p class="error">Your spaces can’t be checked just now. Reload shortly.</p>
+            {:else if acct.spaces.length}
+              <p class="muted">You still own {acct.spaces.length === 1 ? 'a space' : `${acct.spaces.length} spaces`}. Before you can delete your account, delete each one or offer it to a member, in <button class="link" onclick={() => go('settings/spaces')}>Spaces</button>.</p>
+            {:else}
+              <p class="muted">You are signed out everywhere, and your connected apps and folder actions stop. For 30 days, signing in again cancels it; after that your sign-in methods, memberships, agents and email address are removed. What you wrote in other people’s spaces stays there. You’ll be asked to confirm it’s you.</p>
+              <form class="row" onsubmit={event => { event.preventDefault(); void run(() => account.post('/delete', { email: deleteEmail }), n => { if (n.signedOut) location.href = '/login'; }); }}>
+                <label class="vh" for="settings-delete-account">Type your email address to confirm</label>
+                <input id="settings-delete-account" type="email" bind:value={deleteEmail} maxlength="254" autocomplete="off" placeholder="Type your email address to confirm" required />
+                <button type="submit" class="danger" disabled={busy || deleteEmail.trim().toLowerCase() !== acct.email.toLowerCase()}>Delete account</button>
+              </form>
+            {/if}
+          </section>
+
           {:else}
-          <h2>Delete account</h2>
-          {#if acct.unavailable?.includes('spaces')}
-            <p class="error">Your spaces can’t be checked just now. Reload shortly.</p>
-          {:else if acct.spaces.length}
-            <p class="muted">You still own {acct.spaces.length === 1 ? 'a space' : `${acct.spaces.length} spaces`}. Before you can delete your account, delete each one or offer it to a member, in <button class="link" onclick={() => go('settings/spaces')}>Spaces</button>.</p>
-          {:else}
-            <p class="muted">You are signed out everywhere, and your connected apps and folder actions stop. For 30 days, signing in again cancels it; after that your sign-in methods, memberships, agents and email address are removed. What you wrote in other people’s spaces stays there. You’ll be asked to confirm it’s you.</p>
-            <form class="row" onsubmit={event => { event.preventDefault(); void run(() => account.post('/delete', { email: deleteEmail }), n => { if (n.signedOut) location.href = '/login'; }); }}>
-              <label class="vh" for="settings-delete-account">Type your email address to confirm</label>
-              <input id="settings-delete-account" type="email" bind:value={deleteEmail} maxlength="254" autocomplete="off" placeholder="Type your email address to confirm" required />
-              <button type="submit" class="danger" disabled={busy || deleteEmail.trim().toLowerCase() !== acct.email.toLowerCase()}>Delete account</button>
-            </form>
-          {/if}
+          <h2>Settings</h2>
+          <p class="muted">Options most people never need to change. They are kept in this browser.</p>
+          <h3>Documents</h3>
+          <label class="check">
+            <input type="checkbox" checked={rememberPositions} disabled={!onRememberPositions} onchange={() => onRememberPositions?.()} />
+            <span>Remember position in each document<span class="hint">Each document opens where you left it.</span></span>
+          </label>
+          <div class="row">
+            <button disabled={!onForgetPositions} onclick={() => onForgetPositions?.()}>Forget document positions</button>
+          </div>
+          <p class="hint">Documents then open at the top until you move in them again.</p>
           {/if}
 
         {:else if settingsAdditions.some(addition => addition.id === tab)}
@@ -791,6 +843,15 @@
   @keyframes toast-in { from { opacity: 0; transform: translate(-50%, -6px); } }
   @media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
   .error { color: #c0392b; }
+  .unit { align-self: center; color: var(--side-muted); }
+  #settings-limit { flex: 0 1 120px; min-width: 90px; }
+  /* Profile's Danger zone (0.45.0, was the Delete account page) and General → Settings. */
+  .danger-zone { margin-top: 30px; padding: 4px 16px 14px; border: 1px solid #c0392b80; border-radius: 8px; }
+  .danger-zone h3 { margin-top: 12px; color: #c0392b; }
+  .danger-zone h4 { margin: 10px 0 6px; font-size: 13px; font-weight: 600; }
+  .check { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 12px; cursor: pointer; }
+  .check input { margin-top: 2px; }
+  .check .hint { display: block; color: var(--side-muted); }
   :global([data-theme="dark"]) .error { color: #ff8a7a; }
   .warning { padding: 10px 12px; border: 1px solid #d9a33b; border-radius: 8px; background: rgb(217 163 59 / .1); }
   .head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }

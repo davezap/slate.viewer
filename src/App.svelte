@@ -207,7 +207,9 @@
 
   async function showError(error: unknown) {
     logFault('error', String(error));
-    await message(String(error), { title: 'Slate Viewer', kind: 'error' });
+    // The message alone (0.45.0): "SaveConflict: …" or "Error: …" told people nothing more.
+    const text = error instanceof Error ? error.message : String(error);
+    await message(text, { title: 'Slate Viewer', kind: error instanceof Error && error.name === 'FileExists' ? 'info' : 'error' });
   }
 
   // ---- Loading and saving -------------------------------------------------
@@ -3766,9 +3768,6 @@
   {signedIn}
   {account}
   space={web ? spaceOfPath(root) : null}
-  {rememberPositions}
-  onRememberPositions={toggleRememberPositions}
-  onForgetPositions={() => void forgetPositions()}
   onSubmissions={openedSpace || web ? () => showSubmissions() : undefined}
   todo={todoCount}
   {todoSpaces}
@@ -3983,6 +3982,9 @@
     current={web ? spaceOfPath(root) : null}
     onNavigate={next => { location.hash = next; }}
     onClose={closeSettings}
+    {rememberPositions}
+    onRememberPositions={toggleRememberPositions}
+    onForgetPositions={() => void forgetPositions()}
   />
 {/if}
 

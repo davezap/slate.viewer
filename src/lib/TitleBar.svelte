@@ -47,10 +47,6 @@
     account?: string;
     /** metatrash.com: the open space (owner/slug or public), ticked in the space picker. */
     space?: string | null;
-    /** metatrash.com: the account menu's Remember Position in Each Document (the desktop app has it in Go). */
-    rememberPositions?: boolean;
-    onRememberPositions?: () => void;
-    onForgetPositions?: () => void;
     /** metatrash.com: opens My Submissions, the forms sent from all the person's spaces (0.36.0). */
     onSubmissions?: () => void;
     /** metatrash.com: things waiting for this person in all their spaces (to read, to review, sent back; 0.36.0): a red number on the account icon. */
@@ -62,7 +58,7 @@
   let {
     menu, title, detail, dirty, backTo, forwardTo, onBack, onForward, onFind, sync = null, onSync, syncOpen = false,
     editing = null, onEditing, changes = null, onChanges, theme = 'system', onTheme, onPrint, signedIn = true, account = '', space = null,
-    rememberPositions = true, onRememberPositions, onForgetPositions, onSubmissions, todo = 0, todoSpaces = [],
+    onSubmissions, todo = 0, todoSpaces = [],
   }: Props = $props();
 
   /** metatrash.com: the space picker's anchor while it is open. */
@@ -276,24 +272,13 @@
               {/if}
               {#if onSubmissions}
                 <button role="menuitem" class="dropdown-row" onclick={() => { accountOpen = false; onSubmissions?.(); }}>
-                  <span class="dropdown-tick"></span>
+                  <span class="dropdown-tick menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 13l2.2-7.1A2 2 0 0 1 8.1 4.5h7.8a2 2 0 0 1 1.9 1.4L20 13M4 13v5a1.5 1.5 0 0 0 1.5 1.5h13A1.5 1.5 0 0 0 20 18v-5M4 13h4.5l1.5 2.5h4L15.5 13H20" /></svg></span>
                   <span class="dropdown-what"><span>My Submissions</span><span class="dropdown-sub">Forms you sent or started, in all your spaces</span></span>
                 </button>
               {/if}
               <a role="menuitem" class="dropdown-row" href="#settings/spaces" onclick={() => (accountOpen = false)}>
-                <span class="dropdown-tick"></span><span class="dropdown-what"><span>Settings</span><span class="dropdown-sub">Your spaces, sharing and account</span></span>
+                <span class="dropdown-tick menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 1 0 0-6a3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3a1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5a1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8a1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1a1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5a1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></svg></span><span class="dropdown-what"><span>Settings</span><span class="dropdown-sub">Your spaces, sharing and account</span></span>
               </a>
-              {#if onRememberPositions || onForgetPositions}<hr />{/if}
-              {#if onRememberPositions}
-                <button role="menuitemcheckbox" class="dropdown-row" aria-checked={rememberPositions} title="Each document opens where you left it, in this browser" onclick={() => { accountOpen = false; onRememberPositions?.(); }}>
-                  <span class="dropdown-tick" aria-hidden="true">{rememberPositions ? '✓' : ''}</span><span class="dropdown-what">Remember position in each document</span>
-                </button>
-              {/if}
-              {#if onForgetPositions}
-                <button role="menuitem" class="dropdown-row" onclick={() => { accountOpen = false; onForgetPositions?.(); }}>
-                  <span class="dropdown-tick"></span><span class="dropdown-what">Forget document positions</span>
-                </button>
-              {/if}
               <hr />
               <button role="menuitem" class="dropdown-row" onclick={() => void signOut()}>
                 <span class="dropdown-tick"></span><span class="dropdown-what">Sign out</span>
@@ -438,6 +423,9 @@
   }
   .controls { display: flex; align-self: stretch; }
   .control { width: 46px; height: 100%; border-radius: 0; color: var(--side-fg); }
+  /* Icons in the account menu (0.45.0), in the tick column, muted like the picker's. */
+  .menu-icon { display: grid; place-items: center; color: var(--side-muted); font-weight: 400; }
+  .menu-icon svg { width: 15px; height: 15px; stroke-width: 1.7; }
   .control svg { width: 11px; height: 11px; stroke-width: 1.1; stroke-linecap: butt; stroke-linejoin: miter; }
   .control.close:hover { background: #c42b1c; color: #fff; }
 </style>
