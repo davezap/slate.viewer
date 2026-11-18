@@ -73,13 +73,15 @@
     activity?: ActivityItem[];
     /** A failed upload's row was clicked. */
     onDismissUpload?: (path: string) => void;
+    /** A folder was opened in the tree: the app shows its home page, if it has one (0.44.3). */
+    onFolderOpen?: (folder: string) => void;
   }
 
   let {
     root, files, truncated, current, recentFolders, rootKind = 'folder', onOpen, onCreate, onCloseFolder, onChooseFolder, onOpenFolder,
     descriptions = [], reveal = null, onOpenSpace, emptyFolders = [], editable = true, locked = [],
     onCreateFolder, onRename, onMove, onDuplicate, onDelete, onProperties, showHidden = false, onToggleHidden, unread = [], toReview = [], toFix = [], approved = [], onPublish,
-    virtualFiles = {}, onConvert, onUpload, activity = [], onDismissUpload,
+    virtualFiles = {}, onConvert, onUpload, activity = [], onDismissUpload, onFolderOpen,
   }: Props = $props();
 
   // ---- Activity --------------------------------------------------------------------
@@ -216,6 +218,13 @@
     const next = new Set(expanded);
     if (next.has(path)) next.delete(path); else next.add(path);
     expanded = next;
+  }
+
+  /** A click on a folder's row: closing it only folds it; opening it also shows its home page (0.44.3). */
+  function openOrClose(path: string) {
+    const opening = !expanded.has(path);
+    toggle(path);
+    if (opening) onFolderOpen?.(path);
   }
 
   function fileTitle(node: Node): string {
@@ -668,7 +677,7 @@
                   data-folder={node.path}
                   title={describe(node.path, true) ?? undefined}
                   draggable={canChange(node) && !!onMove}
-                  onclick={() => toggle(node.path)}
+                  onclick={() => openOrClose(node.path)}
                   oncontextmenu={event => showMenu(event, node)}
                   onkeydown={event => onRowKeydown(event, node)}
                   ondragstart={event => onDragStart(event, node)}

@@ -1,0 +1,5 @@
+# Slate Viewer 0.44.3
+
+- **Dashboards ask for less while a space is busy.** After a change in the space, a dashboard draws its cards again soon after the first change, then at most once every 15 seconds while more changes come in, instead of after every change. On the website a busy folder could otherwise use up your requests and show "Rate limit reached". Cards still refresh every minute on their own.
+- **Folders open on their home page.** Clicking a folder in Files opens it and shows its dashboard.md, or else its README.md, the way a space does. A folder with neither only opens in the list. To pick another file, use the folder's Properties → General → Opens on, which every folder now has (before, only the top of the space had it). Clicking an open folder closes it and leaves the document where it is.
+- **The page footer stays at the bottom of a dashboard.** On the website, a folder's footer sat beside the last card when there was room; it now always takes the whole width below the cards.

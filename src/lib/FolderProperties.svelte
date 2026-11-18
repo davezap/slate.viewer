@@ -739,14 +739,12 @@
               <button class="small" disabled={disabled('children')} onclick={addChild}>Add a Description</button>
             </section>
 
-            {#if folder === ''}
-              <section>
-                <h3>Opens on{@render lockMark('home')}</h3>
-                <p class="hint">The file the space opens on, at the top of the space. Empty opens dashboard.md when there is one, else README.md.</p>
-                <datalist id="folder-notes">{#each entries.filter(e => /\.md$/i.test(e)) as e (e)}<option value={e}></option>{/each}</datalist>
-                <input class="name wide" list="folder-notes" bind:value={form.home} placeholder="dashboard.md" spellcheck="false" disabled={disabled('home')} />
-              </section>
-            {/if}
+            <section>
+              <h3>Opens on{@render lockMark('home')}</h3>
+              <p class="hint">{folder === '' ? 'The file the space opens on, at the top of the space.' : 'The file this folder opens on when you click it in Files.'} Empty opens dashboard.md when there is one, else README.md.</p>
+              <datalist id="folder-notes">{#each entries.filter(e => /\.md$/i.test(e)) as e (e)}<option value={e}></option>{/each}</datalist>
+              <input class="name wide" list="folder-notes" bind:value={form.home} placeholder="dashboard.md" spellcheck="false" disabled={disabled('home')} />
+            </section>
 
           {:else if page === 'security'}
             <section class="card">

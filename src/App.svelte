@@ -491,7 +491,22 @@
     });
   }
 
-  /** The top folder's `home` setting (Metatrash 0.99.0), or '' (not a space, not set, unreadable). */
+  /**
+   * A subfolder opened in Files shows its home page (0.44.3, Dave): its own `home` setting, else
+   * its dashboard.md, else its README.md. A folder with none of them only unfolds, as before.
+   */
+  async function openFolderHome(folder: string) {
+    if (!root) return;
+    const prefix = folder.toLowerCase() + '/';
+    const inside = folderFiles.filter(f => f.toLowerCase().startsWith(prefix)).map(f => f.slice(prefix.length));
+    const note = homeNote(inside.filter(f => !isHiddenFile(f) && isMarkdownName(f)), await homeSetting(joinPath(root, folder)));
+    if (!note) return;
+    const target = `${folder}/${note}`;
+    if (currentRelative?.toLowerCase() === target.toLowerCase()) return;
+    await openFromFolder(target);
+  }
+
+  /** A folder's `home` setting (Metatrash 0.99.0), or '' (not a space, not set, unreadable). */
   async function homeSetting(dir: string): Promise<string> {
     try {
       const raw = parseObject((await backend.files.read(joinPath(dir, SETTINGS_FILE))).text);
@@ -601,11 +616,23 @@
   /** Who is looking, for @me and form defaults on cards. */
   let cardPerson = $state<{ name: string; email: string } | undefined>(undefined);
 
+  let cardsRefreshedAt = 0;
+  /**
+   * After a change in the space, draws the cards again: soon after the first change, then at most
+   * once every 15 seconds while changes keep coming (0.44.3), so a folder that many people or an
+   * agent are writing to doesn't make each viewer ask for every card on every change.
+   */
   function refreshCardsSoon() {
     if (!editor || !hasCards(editor.getMarkdown())) return;
-    clearTimeout(cardRefreshTimer);
-    cardRefreshTimer = setTimeout(() => editor?.refreshCards(), web ? 500 : 4000);
+    if (cardRefreshTimer !== undefined) return;
+    const wait = Math.max(web ? 500 : 4000, cardsRefreshedAt + CARD_REFRESH_GAP_MS - Date.now());
+    cardRefreshTimer = setTimeout(() => {
+      cardRefreshTimer = undefined;
+      cardsRefreshedAt = Date.now();
+      editor?.refreshCards();
+    }, wait);
   }
+  const CARD_REFRESH_GAP_MS = 15000;
 
   /** Learns who is looking when a dashboard opens, then draws its cards again with @me. */
   function cardsOpened(text: string) {
@@ -3772,6 +3799,7 @@
               {recentFolders}
               {rootKind}
               onOpen={(relative, options) => void openFromFolder(relative, options)}
+              onFolderOpen={relative => void openFolderHome(relative)}
               onCreate={createNoteFromSidebar}
               editable={canManageFiles}
               locked={lockedFiles}

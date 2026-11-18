@@ -69,6 +69,9 @@ body {
   margin: 48px 0 0; padding: 14px 0 0; border-top: 1px solid var(--border);
   text-align: center; color: var(--text-muted); font: 14px/1.5 var(--font-ui); user-select: text; cursor: auto;
 }
+/* On a dashboard the pane is a flex row of cards (Slate 0.24.0): the footer takes a whole row of
+   its own, below the last card, instead of flowing in beside it (0.44.3). */
+.slate-editor-host .preview-pane > .page-footer { flex: 0 0 100%; box-sizing: border-box; }
 .slate-editor-host .page-footer p { margin: 0; }
 .slate-editor-host .page-footer p + p { margin-top: 2px; }
 .slate-editor-host .page-footer a { color: var(--accent); text-decoration: none; }
