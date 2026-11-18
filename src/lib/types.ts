@@ -5,7 +5,6 @@ export type OpenOptions = { newWindow: boolean; find?: string; line?: number };
 
 export const isNewWindowClick = (event: MouseEvent) => event.ctrlKey || event.metaKey || event.shiftKey || event.button === 1;
 
-export const displayName = (name: string) => name.replace(/\.(md|markdown|mdown|mkd)$/i, '');
 
 const fileName = (path: string) => path.slice(path.lastIndexOf('/') + 1);
 
@@ -20,6 +19,15 @@ export const isSpaceFolderFile = (path: string) => {
  * not digits only, so "Plan v1.2" has none) or starts with a dot (.gitignore).
  */
 export const hasOwnExtension = (name: string) => name.startsWith('.') || /\.(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0-9_-]{1,16}$/.test(name);
+
+/**
+ * A file's name in Files and Search: a Markdown note without its .md, unless what is left still
+ * says a type of its own (jobs.csv.md stays jobs.csv.md, 0.44.2), so the real name can be seen.
+ */
+export const displayName = (name: string) => {
+  const stem = name.replace(/\.(md|markdown|mdown|mkd)$/i, '');
+  return stem !== name && !hasOwnExtension(stem) ? stem : name;
+};
 
 /** The name a new file or a rename gets: as typed when it says its type, else `fallback` (.md) added. */
 export const withOwnExtension = (name: string, fallback = '.md') => (hasOwnExtension(name) ? name : name + fallback);

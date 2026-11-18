@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import { basename } from './paths';
+  import { displayName } from './types';
 
   export interface SearchMatch { path: string; line: number; text: string }
 
@@ -69,8 +70,6 @@
     if (next.has(path)) next.delete(path); else next.add(path);
     expanded = next;
   }
-
-  const displayName = (name: string) => name.replace(/\.(md|markdown|mdown|mkd)$/i, '');
 
   // ---- New note ------------------------------------------------------------------
 

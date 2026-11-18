@@ -74,11 +74,13 @@
       <button
         class="item"
         class:active={i === row}
-        role="menuitem"
+        role={entry.checked === undefined ? 'menuitem' : 'menuitemcheckbox'}
+        aria-checked={entry.checked === undefined ? undefined : entry.checked}
         disabled={entry.enabled === false}
         onpointerenter={() => (row = i)}
         onclick={() => run(entry)}
       >
+        <span class="check" aria-hidden="true">{entry.checked ? '✓' : ''}</span>
         <span class="text">{menuText(entry.text)}</span>
         <span class="keys">{entry.keys ?? ''}</span>
       </button>
@@ -94,12 +96,13 @@
     font: 13px/1.4 "Segoe UI", system-ui, sans-serif;
   }
   .item {
-    display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 6px;
-    width: 100%; height: 28px; padding: 0 10px; border: 0; border-radius: 4px;
+    display: grid; grid-template-columns: 14px 1fr auto; align-items: center; gap: 6px;
+    width: 100%; height: 28px; padding: 0 10px 0 6px; border: 0; border-radius: 4px;
     font: inherit; color: inherit; background: none; cursor: default; text-align: left; white-space: nowrap;
   }
   .item.active:not(:disabled) { background: var(--side-accent-soft); }
   .item:disabled { opacity: .45; }
+  .check { color: var(--side-accent, currentColor); font-size: 12px; text-align: center; }
   .text { overflow: hidden; text-overflow: ellipsis; }
   .keys { color: var(--side-muted); font-size: 12px; padding-left: 24px; }
   .separator { height: 1px; margin: 4px 6px; background: var(--side-border); }

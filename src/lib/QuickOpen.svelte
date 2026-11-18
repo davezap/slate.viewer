@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { basename, dirname } from './paths';
   import { fuzzyFilter } from './fuzzy';
+  import { displayName } from './types';
 
   interface Props {
     files: string[];
@@ -39,7 +40,7 @@
       {#each hits as hit, i (hit.item)}
         <li>
           <button class:selected={i === selected} onmousemove={() => (selected = i)} onclick={event => onPick(hit.item, event.ctrlKey || event.shiftKey)}>
-            {basename(hit.item).replace(/\.(md|markdown|mdown|mkd)$/i, '')}
+            {displayName(basename(hit.item))}
             {#if dirname(hit.item) !== hit.item && hit.item.includes('/')}<span>{dirname(hit.item)}</span>{/if}
           </button>
         </li>

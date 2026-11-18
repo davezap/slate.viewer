@@ -782,7 +782,7 @@
       filters: MARKDOWN_FILTERS,
     }));
     if (!target) return;
-    const noteName = basename(target).replace(/\.(md|markdown|mdown|mkd)$/i, '');
+    const noteName = basename(target);
     const created = await createNote(noteName, dirname(target));
     if (created) await openNewNote(created);
   }
