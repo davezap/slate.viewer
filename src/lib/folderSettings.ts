@@ -1,4 +1,5 @@
 import { storageNameProblem } from './filenames';
+import { withOwnExtension } from './types';
 import { actionProblems, actionsValue, toActionForm, writerProblems, type ActionForm, type ActionWriter } from './folderActions';
 
 // A folder's settings in a Metatrash space: its .metatrash.json, read into a form the Properties
@@ -283,7 +284,8 @@ function keyValues(s: FolderSettings, isRoot: boolean): Record<string, unknown> 
   if (s.footerOff) out.footer = '';
   else if (cleanFooter(s.footer)) out.footer = cleanFooter(s.footer);
   if (s.actions.length) out.actions = actionsValue(s.actions);
-  if (s.home.trim()) out.home = s.home.trim();
+  // A name without an extension is the .md file of that name (0.44.1): dashboard is dashboard.md.
+  if (s.home.trim()) out.home = withOwnExtension(s.home.trim());
   return out;
 }
 

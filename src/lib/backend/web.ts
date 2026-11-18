@@ -10,7 +10,7 @@ import type { AccountReceipt, AccountTodo, Receipt, SubmitRefusal, SubmitResult 
 import type { Policies, ReaderReport } from '../policies';
 import type { SpaceRow, VirtualFile } from '../space';
 import type { ActivityResult } from '../activity';
-import type { SearchMatch } from '../types';
+import { isMarkdownName, withOwnExtension, type SearchMatch } from '../types';
 import type { CardQueryResult, NoticeStatus } from '../cards';
 import type { Backend, BackendEvents, FileFilter, FolderListing, ListOnly, MessageOptions, Unlisten } from './types';
 import { createPoller, retryAfterMilliseconds } from './polling';
@@ -350,9 +350,11 @@ export const backend: Backend = {
         spaceUrl(space, 'search', { query, ignoreCase: 'true', limit: 200 }));
       return { matches: out.matches.map(({ path, line, text }) => ({ path, line, text })), truncated: out.matches.length >= 200 };
     },
+    // A name with its own extension (.csv, .txt, any) or a leading dot keeps it as typed, and a
+    // file that isn't Markdown starts empty (0.44.1); otherwise .md is added.
     createNote: async (folder, name, title) => {
-      const path = `${folder}/${name.endsWith('.md') ? name : `${name}.md`}`;
-      await writeFile(path, `# ${title}\n`, true);
+      const path = `${folder}/${withOwnExtension(name)}`;
+      await writeFile(path, isMarkdownName(path) ? `# ${title}\n` : '', true);
       return path;
     },
     // A space has no empty folders: a new folder starts with its AGENTS.md (and the server adds

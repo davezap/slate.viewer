@@ -37,8 +37,11 @@
 
   let { form, unavailable, editing, draft, sent, onFill, onDiscardDraft, onSubmissions, quiz = null, canRetry = false, onFixAnswers, onStartAgain, sentBack = null, canFixSentBack = false, onFixSentBack }: Props = $props();
 
-  /** Where the copies go, without the person's own folder: owner/space. */
-  const reviewSpace = $derived(form.submitTo.split('/').slice(0, 2).join('/'));
+  /**
+   * Where the copies go, without the person's own folder: owner/space for /owner/space/folder/,
+   * else this space (any other path is a folder of the form's own space, Metatrash 0.99.1).
+   */
+  const reviewSpace = $derived(form.submitTo.startsWith('/') ? form.submitTo.slice(1).split('/').slice(0, 2).join('/') : 'this space');
   const filedIn = $derived(sent ? sent.target.split('/').slice(0, 2).join('/') : '');
   const name = (p: string) => p.split('/').pop() ?? p;
   /** What it covers, in a few words. */

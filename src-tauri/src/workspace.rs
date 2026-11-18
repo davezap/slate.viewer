@@ -59,11 +59,33 @@ pub fn is_markdown(path: &Path) -> bool {
         .is_some_and(|e| MARKDOWN_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
 }
 
-/// A file the listing hides unless hidden files are shown: not Markdown, a folder's
-/// AGENTS.md, or a name starting with a dot (.metatrash.json, .gitignore).
+/// Whether a typed name says its own type (0.44.1): it ends in an extension of up to 16 letters,
+/// digits, `_` or `-`, not digits only (so "Plan v1.2" has none), or starts with a dot.
+fn has_own_extension(name: &str) -> bool {
+    if name.starts_with('.') {
+        return true;
+    }
+    match name.rsplit_once('.') {
+        Some((_, ext)) => {
+            !ext.is_empty()
+                && ext.len() <= 16
+                && ext.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                && ext.chars().any(|c| c.is_ascii_alphabetic())
+        }
+        None => false,
+    }
+}
+
+fn extension_of(path: &Path) -> String {
+    path.extension().and_then(|e| e.to_str()).unwrap_or_default().to_ascii_lowercase()
+}
+
+/// A file the listing hides unless hidden files are shown: not Markdown or CSV (a
+/// dashboard's source, 0.44.1), a folder's AGENTS.md, or a name starting with a dot
+/// (.metatrash.json, .gitignore).
 pub fn is_hidden_file(path: &Path) -> bool {
     let name = path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
-    !is_markdown(path) || name.eq_ignore_ascii_case("AGENTS.md") || name.starts_with('.')
+    !(is_markdown(path) || extension_of(path) == "csv") || name.eq_ignore_ascii_case("AGENTS.md") || name.starts_with('.')
 }
 
 /// True when `root` is a folder Metatrash Sync keeps in step with a space.
@@ -257,20 +279,28 @@ fn trim_line(line: &str) -> String {
     }
 }
 
-/// Creates `<folder>/<name>.md` with a heading, unless it already exists. Returns its path.
+/// Creates `<folder>/<name>.md` with a heading, unless it already exists. A name that gives its
+/// own extension (`jobs.csv`, `.gitignore`, 0.44.1) is kept as typed, and a file that isn't
+/// Markdown starts empty. Returns its path.
 #[tauri::command(async)]
 pub fn create_note(folder: String, name: String, title: Option<String>) -> Result<String, String> {
-    let name = name.strip_suffix(".md").unwrap_or(&name);
-    if name.is_empty() { return Err("A name is needed.".into()); }
-    if let Some(problem) = crate::files::name_problem(&format!("{name}.md")) {
+    let file = if has_own_extension(&name) { name.clone() } else { format!("{name}.md") };
+    let stem = Path::new(&file).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    if name.trim().is_empty() || stem.is_empty() { return Err("A name is needed.".into()); }
+    if let Some(problem) = crate::files::name_problem(&file) {
         return Err(problem);
     }
-    let path = PathBuf::from(folder).join(format!("{name}.md"));
+    let path = PathBuf::from(folder).join(&file);
     if path.exists() {
         return Err(format!("{} already exists.", path.display()));
     }
-    let title = title.filter(|t| !t.trim().is_empty()).unwrap_or_else(|| name.to_string());
-    fs::write(&path, format!("# {}\n", title.trim())).map_err(|e| format!("Could not create {}: {e}", path.display()))?;
+    let text = if is_markdown(&path) {
+        let title = title.filter(|t| !t.trim().is_empty()).unwrap_or_else(|| stem.clone());
+        format!("# {}\n", title.trim())
+    } else {
+        String::new()
+    };
+    fs::write(&path, text).map_err(|e| format!("Could not create {}: {e}", path.display()))?;
     Ok(path.to_string_lossy().into_owned())
 }
 
@@ -398,6 +428,11 @@ mod tests {
 
         let created = create_note(root.join("notes").to_string_lossy().into(), "New idea".into(), None).unwrap();
         assert!(created.ends_with("New idea.md"));
+        let csv = create_note(root.join("notes").to_string_lossy().into(), "jobs.csv".into(), None).unwrap();
+        assert!(csv.ends_with("jobs.csv") && fs::read_to_string(&csv).unwrap().is_empty());
+        assert!(create_note(root.join("notes").to_string_lossy().into(), "v1.2".into(), None).unwrap().ends_with("v1.2.md"));
+        assert!(create_note(root.join("notes").to_string_lossy().into(), "report.final".into(), None).unwrap().ends_with("report.final"));
+        assert!(has_own_extension(".gitignore") && has_own_extension("a.7z") && !has_own_extension("Mr. Smith"));
         assert!(create_note(root.to_string_lossy().into(), "a/b".into(), None).is_err());
 
         assert!(in_skipped_folder(&root, &root.join(".git").join("index")));

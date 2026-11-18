@@ -17,7 +17,7 @@
     SECTION_IDS, type ThemePref, type SectionId, rememberPositionsPref, setRememberPositionsPref,
   } from './lib/prefs';
   import { resolveWikiLink, noteFileName } from './lib/wiki';
-  import { firstNote, homeNote, isHiddenFile, isSpaceFolderFile } from './lib/types';
+  import { firstNote, homeNote, isHiddenFile, hasOwnExtension, isMarkdownName, isSpaceFolderFile, withOwnExtension } from './lib/types';
   import { cardHost, hasCards } from './lib/cards';
   import ActivityBar from './lib/ActivityBar.svelte';
   import SidePanel from './lib/SidePanel.svelte';
@@ -225,6 +225,8 @@
     if (doc.path !== path) sentForm = null;
     publishedView = null;
     path = doc.path;
+    // A file that isn't Markdown (.txt, .csv, C…) shows as plain text, as in Source (0.44.1).
+    void editor?.setPlainText(!isMarkdownName(doc.path));
     format = detectFormat(doc.text, doc.hasBom);
     diskText = doc.text;
     missingOnDisk = false;
@@ -474,7 +476,7 @@
       return rel !== null ? folderFiles.find(f => f.toLowerCase() === rel.toLowerCase()) ?? null : null;
     };
     const savedFile = inFolder(saved?.file);
-    const notes = folderFiles.filter(f => !isHiddenFile(f));
+    const notes = folderFiles.filter(f => !isHiddenFile(f) && isMarkdownName(f));
     const target = savedFile ?? homeNote(notes, await homeSetting(dir)) ?? (notes.length === 1 ? notes[0] : null);
     await whileRestoring(async () => {
       if (target && !(path && sameFolder(path, joinPath(dir, target)))) {
@@ -729,7 +731,7 @@
       return null;
     }
     const fileName = noteName;
-    const relative = spaceRelative(joinPath(inFolder, fileName.endsWith('.md') ? fileName : `${fileName}.md`));
+    const relative = spaceRelative(joinPath(inFolder, withOwnExtension(fileName)));
     const problem = relative === null ? null : spacePathProblem(relative);
     if (problem) { await message(problem, { title: 'Slate Viewer', kind: 'warning' }); return null; }
     try {
@@ -880,13 +882,14 @@
   }
 
   /**
-   * Renames a file or folder in place. A file keeps its extension unless the new name has one;
-   * the requested spelling and case are preserved. Returns the new relative path, or null.
+   * Renames a file or folder in place. A file keeps its extension unless the new name gives one
+   * (any type, or a name starting with a dot, 0.44.1); the requested spelling and case are
+   * preserved. Returns the new relative path, or null.
    */
   async function renameEntry(relative: string, isFolder: boolean, typed: string): Promise<string | null> {
     let newName = typed;
     if (!isFolder) {
-      const hasExtension = /\.(md|markdown|mdown|mkd)$/i.test(newName);
+      const hasExtension = hasOwnExtension(newName);
       const stem = hasExtension ? newName.replace(/\.[^.]+$/, '') : newName;
       const extension = hasExtension ? newName.slice(stem.length) : (/\.[^./]+$/.exec(basename(relative))?.[0] ?? '.md');
       newName = stem + extension;
@@ -1134,6 +1137,7 @@
       if (path === previous) return;
     }
     path = null;
+    void editor?.setPlainText(false);
     format = { ...NEW_FILE_FORMAT };
     diskText = null;
     missingOnDisk = false;
