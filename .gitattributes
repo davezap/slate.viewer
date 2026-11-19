@@ -11,3 +11,5 @@
 *.png binary
 *.ico binary
 *.icns binary
+# Slate's generated, minified language packs (Viewer 0.46.0): third-party code, not checked for whitespace.
+public/slate/languages/** -whitespace

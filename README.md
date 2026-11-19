@@ -438,7 +438,8 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
 
 - **File menu:** New Window (Ctrl+N), New File (Ctrl+Alt+N), New File in Root, New Folder, Open (Ctrl+O), Open Recent, Save (Ctrl+S), Save As (Ctrl+Shift+S),
   Print (Ctrl+P, includes Microsoft Print to PDF), Close Window (Ctrl+W).
-- **View menu:** Edit / Preview / Source (Ctrl+1/2/3), Read Only checklist mode (Ctrl+Shift+R:
+- **View menu:** Edit / Preview / Source (Ctrl+1/2/3; the editor's own switch shows Edit | Source only since 0.46.0,
+  and Read Only or Ctrl+E shows Preview), Read Only checklist mode (Ctrl+Shift+R:
   text locked, task boxes still tick), Show Changes (Ctrl+Shift+D), Files / Search / Document Navigation / Version History, Theme (system, light, dark, paper), Zoom In / Zoom Out / Reset Zoom (Ctrl+= / Ctrl+- / Ctrl+0, or Ctrl+mouse wheel;
   Reset Zoom shows the current size).
 - **Go menu:** Back / Forward (Alt+Left / Alt+Right), Find in Document (Ctrl+F).
@@ -451,7 +452,15 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
 - Relative images (`![](img/a.png)`) load from the document's folder.
 - Diagrams: a ` ```mermaid ` code block is drawn as a flowchart, sequence diagram, Gantt chart and so on
   (Slate's Mermaid support). Mermaid loads only when a document has a diagram. In Edit, click a diagram to
-  change its source and see it redrawn as you type.
+  change its source and see it redrawn as you type. Ctrl+wheel (⌘+wheel) over a diagram zooms it where the pointer is
+  and Ctrl+drag moves it, while the plain wheel still scrolls the page; ⟲ shows it whole again. The expand button at
+  its top right opens it full size over the faded page, where the plain wheel and drag zoom and move it, double-click
+  shows it whole and Esc closes it (0.46.0).
+- Code files: a file that isn't Markdown (`.py`, `.js`, `.json`, `.go`, `Dockerfile` and about 140 more) opens in the
+  code editor coloured by the language its name gives, read only with Read Only on and editable with it off, with the
+  language's indenting; `.txt` and unknown kinds stay plain. Fenced code blocks that name a language (` ```python `)
+  are coloured the same way in Preview. The language packs load from `public/slate/languages/` only when code shows
+  (Slate 0.26.0, Viewer 0.46.0).
 - Links: web links open in your browser and have a ↗ after them; bare addresses (`https://…`, `www.…`)
   are links too. Links to other `.md` files open in this window
   (or a new one with Ctrl/Shift/middle-click, or when this one has unsaved changes);
@@ -485,7 +494,7 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
 
 ```
 docs/change-notes/   changenotes_<version>.md per release, also published to the docs space (see Updates)
-public/slate/        Slate 0.20.0, vendored unchanged (slate.js, slate.css, mermaid/, themes, .d.ts)
+public/slate/        Slate, vendored unchanged (slate.js, slate.css, mermaid/, charts/, languages/, themes, .d.ts)
 src/App.svelte       menu, file handling, link handling, Slate mount
 src/lib/backend/     everything the UI asks of the outside world, as one Backend interface (types.ts) with
                      a capabilities flag; desktop.ts answers it with Tauri, web.ts with the Metatrash site API.
@@ -498,4 +507,5 @@ src-tauri/src/       Rust: windows, single instance, file read/write, attachment
 ```
 
 To update Slate, run `npm run build` in the Slate repository, then copy its `slate.js`, `slate.css`, `slate-editor.d.ts`,
-`CHANGELOG.md`, `themes/` and `mermaid/` into `public/slate/` (replace `mermaid/` whole: its chunk names change between builds).
+`CHANGELOG.md`, `themes/`, `mermaid/`, `charts/` and `languages/` into `public/slate/` (replace `mermaid/` and `languages/`
+whole: their chunk names change between builds). Company's release-laptop.ps1 does this on every Slate release.

@@ -227,8 +227,9 @@
     if (doc.path !== path) sentForm = null;
     publishedView = null;
     path = doc.path;
-    // A file that isn't Markdown (.txt, .csv, C…) shows as plain text, as in Source (0.44.1).
-    void editor?.setPlainText(!isMarkdownName(doc.path));
+    // A file that isn't Markdown (.txt, .csv, C…) shows as plain text, as in Source (0.44.1),
+    // coloured by the language its name's extension names, in the editor even in Preview (0.46.0).
+    void editor?.setPlainText(!isMarkdownName(doc.path), { fileName: doc.path });
     format = detectFormat(doc.text, doc.hasBom);
     diskText = doc.text;
     missingOnDisk = false;
@@ -3941,7 +3942,7 @@
         </div>
       </div>
     {/if}
-    <FindBar bind:this={findBar} getHost={() => host} getEditor={() => editor} inEditor={() => editor?.getWorkspaceMode() !== 'preview'} />
+    <FindBar bind:this={findBar} getHost={() => host} getEditor={() => editor} inEditor={() => !!editor && (editor.getWorkspaceMode() !== 'preview' || editor.isPlainText())} />
   </div>
 </div>
 </div>

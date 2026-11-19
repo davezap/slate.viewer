@@ -1,0 +1,7 @@
+# Slate Viewer 0.46.0
+
+- **Zoom into diagrams.** A busy diagram no longer has to stay too small to read. Hold Ctrl (⌘ on a Mac) and turn the mouse wheel over it to zoom in where the pointer is, and hold Ctrl while dragging to move around. The wheel on its own still scrolls the page. Once zoomed, the ⟲ button at the diagram's top right shows the whole diagram again.
+- **See a diagram full size.** The expand button at a diagram's top right opens it over the whole window, with the page faded behind it. There the mouse wheel zooms and dragging moves it without holding Ctrl (or pinch on a touch screen); double-click shows the whole diagram again. Press Esc, click ✕ or click outside it to go back.
+- **Coloured code files.** Files that aren't Markdown, such as Python, JavaScript, JSON, C, Go or YAML, now open in a proper code editor coloured by their language, which Slate Viewer works out from the file's extension. With Read Only on they show coloured and can't be changed; turn it off to edit them, with the same colours and indenting that follows the language. Long files open quickly. Plain text files stay plain.
+- **Coloured code blocks.** Code blocks in your pages are coloured too when they name their language, such as ```` ```python ```` or ```` ```js ````.
+- **Edit and Source.** The mode buttons are now Edit and Source. To read a page as it will look, turn on Read Only (or press Ctrl+E).
