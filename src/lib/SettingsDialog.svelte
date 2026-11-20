@@ -16,7 +16,7 @@
   import { onMount, tick, untrack } from 'svelte';
   import ConfirmSheet from './ConfirmSheet.svelte';
   import SecurityPanel from './SecurityPanel.svelte';
-  import { brand, settingsAdditions, securityAdditions } from '$edition';
+  import { brand, settingsAdditions, securityAdditions, spacePageAdditions } from '$edition';
   import ServicesPanel from './ServicesPanel.svelte';
   import {
     account, AccountError, browserZone, downloadAddress, formatBytes, formatDay, measuredAgo, openAddress, timeZones,
@@ -62,7 +62,8 @@
   const SPACE_PAGES = [
     { id: 'general', label: 'General' }, { id: 'members', label: 'Members' }, { id: 'ownership', label: 'Ownership' },
   ] as const;
-  type SpacePage = (typeof SPACE_PAGES)[number]['id'];
+  /** A space page an edition adds (0.47.0), such as an organisation's Access page; its id is the page. */
+  type SpacePage = (typeof SPACE_PAGES)[number]['id'] | string;
 
   const parts = $derived(address.split('/'));
   const tab = $derived(TABS.some(t => t.id === parts[1]) ? parts[1] : '');
@@ -125,12 +126,16 @@
     const whole = find(rest.join('/'));
     if (whole) return { space: whole, page: 'general' };
     const last = rest[rest.length - 1];
-    const page = SPACE_PAGES.find(p => p.id === last);
+    const page = SPACE_PAGES.find(p => p.id === last) ?? spacePageAdditions.find(p => p.id === last);
     const space = page && rest.length > 1 ? find(rest.slice(0, -1).join('/')) : null;
+    if (space && page && !SPACE_PAGES.some(p => p.id === page.id) && !spacePageAdditions.some(p => p.id === page.id && acct && p.visible(acct, space))) return null;
     return space && page ? { space, page: page.id } : null;
   });
   const selected = $derived(found?.space ?? null);
   const spacePage = $derived<SpacePage>(found?.page ?? 'general');
+  /** The selected space's pages: the built-in ones, then the edition's that apply to it. */
+  const spacePages = $derived<{ id: string; label: string }[]>([...SPACE_PAGES, ...(acct && selected ? spacePageAdditions.filter(p => p.visible(acct!, selected)) : [])]);
+  const pageAddition = $derived(spacePageAdditions.find(p => p.id === spacePage) ?? null);
   /** An address under spaces that names nothing: a space that isn't yours, or was deleted. */
   const unknown = $derived(!!acct && rest.length > 0 && !spacesPage && rest[0] !== 'new' && !found);
   const selectedId = $derived(selected?.id ?? '');
@@ -369,7 +374,7 @@
           </div>
           <p class="mono muted">{selected.space ?? `${acct.username}/${selected.slug}`}{#if selected.owner}{' '}<span class="pill" title="You manage this space for {selected.owner}">you manage it</span>{/if}</p>
           <div class="subtabs" role="tablist" aria-label="{selected.name} settings">
-            {#each SPACE_PAGES as p (p.id)}
+            {#each spacePages as p (p.id)}
               <button role="tab" aria-selected={spacePage === p.id} class:selected={spacePage === p.id}
                 onclick={() => go(`settings/spaces/${selected.id}${p.id === 'general' ? '' : `/${p.id}`}`)}>{p.label}</button>
             {/each}
@@ -424,6 +429,9 @@
             {#if selected.usage}It uses {formatBytes(selected.usage.bytes)} now.{/if}
           </p>
           {/if}
+
+          {:else if pageAddition}
+            <pageAddition.component {acct} space={selected} {busy} {run} />
 
           {:else if sharingError}
             <p class="error" role="alert">Sharing can’t be loaded just now: {sharingError}</p>

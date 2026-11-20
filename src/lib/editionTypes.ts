@@ -1,5 +1,5 @@
 import type { Component } from 'svelte';
-import type { Account, Notice, Security } from './siteAccount';
+import type { Account, AccountSpace, Notice, Security } from './siteAccount';
 
 export type RunChange = (work: () => Promise<Notice>, after?: (n: Notice) => void | Promise<void>) => Promise<void>;
 export interface SettingsPanelProps { acct: Account; busy: boolean; run: RunChange }
@@ -11,6 +11,16 @@ export interface SettingsAddition {
   id: string; label: string; pages: { id: string; label: string }[];
   component: Component<SettingsPanelProps>;
   visible: (account: Account | null) => boolean;
+}
+/**
+ * A page an edition adds to an owned space's settings (0.47.0), after General, Members and Ownership:
+ * #settings/spaces/<space>/<id>. visible decides for which spaces it shows, such as an organisation's
+ * spaces for its admins.
+ */
+export interface SpacePageProps { acct: Account; space: AccountSpace; busy: boolean; run: RunChange }
+export interface SpacePageAddition {
+  id: string; label: string; component: Component<SpacePageProps>;
+  visible: (account: Account, space: AccountSpace) => boolean;
 }
 export interface SecurityAddition {
   id: string; label: string; component: Component<SecurityPanelProps>;

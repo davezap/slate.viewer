@@ -397,6 +397,10 @@ The app only runs `mtsync` commands; it never reads mtsync's settings, sign-in o
   your own. A space's Ownership page has **Move** (`moveTo` from its sharing state, `POST …/spaces/{id}/move`): your
   own space to an account you manage, or back. A managed space can't be offered to someone else until it is moved to
   your own account. The Organisation tab itself is the Company edition's.
+- **Edition space pages** (0.47.0). An edition may add pages to an owned space's settings after General, Members and
+  Ownership (`spacePageAdditions` in `src/lib/edition.ts`, `SpacePageAddition` in `src/lib/editionTypes.ts`), at
+  `#settings/spaces/<space>/<id>`, each shown only for the spaces its `visible` picks. The public edition adds none;
+  Metatrash's Company edition adds an organisation space's Access page for its admins.
 - **Forms** (Metatrash 0.49.0, mtsync 0.49.0, Slate 0.19.0). A Markdown file whose front matter has `form`, `title` and
   `submitTo` is a form template, with fields written as `{{text name=…}}`, `{{choice name=…}}` and so on (see `docs/forms.md`
   in Metatrash). In Preview the form is ready to fill in (Slate's `startFill({ inPreview: true })`); Edit and Source show
