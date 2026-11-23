@@ -63,6 +63,13 @@ async function call<T>(method: string, url: string, body?: unknown, signal?: Abo
 
 /** An account-wide forms call (Metatrash 0.95.22): null signed out or from an older server. */
 async function accountCall<T>(ask: () => Promise<T>): Promise<T | null> {
+  // Signed out there is no account to ask about (Viewer 0.47.1): skip the
+  // request, so a signed-out visit doesn't show a 401 in the console.
+  try {
+    if (!(await siteSession()).signedIn) return null;
+  } catch {
+    // The session can't be read just now: ask anyway, as before.
+  }
   try {
     return await ask();
   } catch (error) {

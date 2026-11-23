@@ -33,7 +33,7 @@
   import UpdateDialog, { type UpdateCheck } from './lib/UpdateDialog.svelte';
   import FolderProperties from './lib/FolderProperties.svelte';
   import {
-    mtsync, sameFolder, describeState, lastSyncTime, spacePathProblem, conflictOriginal, isSignedOut, SPACE_FILE_LIMIT,
+    mtsync, sameFolder, describeState, lastSyncTime, spacePathProblem, conflictOriginal, isSignedOut, SPACE_FILE_LIMIT, spaceLimitText,
     DEFAULT_SERVER, fileLock, canConvert, sizeLabel, type SpaceRef, type FolderDescription, type VirtualFile } from './lib/space';
   import QuickOpen from './lib/QuickOpen.svelte';
   import HistoryPanel from './lib/HistoryPanel.svelte';
@@ -2619,7 +2619,7 @@
     }
     const bytes = new TextEncoder().encode(text).length;
     if (bytes > SPACE_FILE_LIMIT) {
-      return refuse(`This note is ${Math.ceil(bytes / 1024)} KB. Metatrash spaces hold files up to 64 KB, so it wouldn't sync. Split it into smaller notes first.`);
+      return refuse(`This note is ${Math.ceil(bytes / 1024)} KB. Metatrash spaces hold files up to ${spaceLimitText}, so it wouldn't sync. Split it into smaller notes first.`);
     }
     return true;
   }
@@ -2813,7 +2813,7 @@
     if (policies?.outstanding) parts.push(`${policies.outstanding} to read`);
     if (policies?.toReview.length) parts.push(`${policies.toReview.length} to review`);
     if (policies?.toFix.length) parts.push(`${policies.toFix.length} sent back`);
-    if (currentRelative !== null && docBytes > SPACE_FILE_LIMIT * 0.85) parts.push(`${Math.ceil(docBytes / 1024)} of 64 KB`);
+    if (currentRelative !== null && docBytes > SPACE_FILE_LIMIT * 0.85) parts.push(`${Math.ceil(docBytes / 1024)} KB of ${spaceLimitText}`);
     // The website has no sync to report: the chip shows only what to read and the file's size.
     if (web) parts.shift();
     if (!parts.length) return null;

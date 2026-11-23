@@ -73,7 +73,13 @@ export function isCloudSyncedFolder(folder: string): boolean {
 
 // ---- Files in a space ----------------------------------------------------------
 
-export const SPACE_FILE_LIMIT = 64 * 1024;
+// The largest note Slate Viewer saves to a space (1 MB from 0.47.1; 64 KB
+// before). The server has its own limit (spaces.json maxFileBytes) and
+// refuses anything over it with its own message.
+export const SPACE_FILE_LIMIT = 1024 * 1024;
+
+/** SPACE_FILE_LIMIT for messages, such as "1 MB" or "64 KB". */
+export const spaceLimitText = SPACE_FILE_LIMIT % (1024 * 1024) === 0 ? `${SPACE_FILE_LIMIT / (1024 * 1024)} MB` : `${Math.round(SPACE_FILE_LIMIT / 1024)} KB`;
 
 export { storagePathProblem as spacePathProblem } from './filenames';
 
