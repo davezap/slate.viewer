@@ -157,7 +157,10 @@
 
   interface Node { name: string; path: string; folder: boolean; children: Node[] }
 
-  function buildTree(list: string[], folders: string[]): Node[] {
+  /** Folders listed Z to A (sort "z-a" in their settings, Metatrash 0.101.0), as "" or "notes/". */
+  const reversed = $derived(new Set(descriptions.filter(d => d.sort === 'z-a').map(d => d.folder)));
+
+  function buildTree(list: string[], folders: string[], zToA: Set<string>): Node[] {
     const top: Node = { name: '', path: '', folder: true, children: [] };
     const add = (entry: string, lastIsFolder: boolean) => {
       const parts = entry.split('/');
@@ -175,15 +178,17 @@
     };
     for (const file of list) add(file, false);
     for (const folder of folders) add(folder, true);
-    const sort = (nodes: Node[]) => {
-      nodes.sort((a, b) => Number(b.folder) - Number(a.folder) || a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }));
-      nodes.forEach(n => sort(n.children));
+    // Folders first, then names A to Z, or Z to A where the folder asks (newest first for dated names).
+    const sort = (nodes: Node[], folder: string) => {
+      const direction = zToA.has(folder) ? -1 : 1;
+      nodes.sort((a, b) => Number(b.folder) - Number(a.folder) || direction * a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }));
+      nodes.forEach(n => sort(n.children, n.path + '/'));
     };
-    sort(top.children);
+    sort(top.children, '');
     return top.children;
   }
 
-  const tree = $derived(buildTree(files, emptyFolders));
+  const tree = $derived(buildTree(files, emptyFolders, reversed));
   let expanded = $state(new Set<string>());
 
   // Reveal the open document by expanding its folders.

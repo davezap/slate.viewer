@@ -18,7 +18,9 @@ export interface Usage { bytes: number; git: number; files: number; measured?: s
  * good (not in bytes); allowance is 0 or absent while no limit applies. */
 export interface Storage extends Usage { deleted?: number; allowance?: number }
 export interface JoinedSpace { space: string; name: string; owner: string; status: string; open?: boolean }
-export interface Invitation { id: string; spaceId?: string; name?: string; owner?: string; email?: string; status?: string; expires: string }
+/** agentPermission (Metatrash 0.101.0): on an owned space's invitation, what their connected apps may do once they
+ * accept; absent when the server keeps no choice. */
+export interface Invitation { id: string; spaceId?: string; name?: string; owner?: string; email?: string; status?: string; expires: string; agentPermission?: string }
 export interface Offer { spaceId: string; name: string; slug: string; from: string; expires: string }
 
 export interface Account {
@@ -169,6 +171,24 @@ async function call<T>(method: 'GET' | 'POST', path: string, body?: Record<strin
     throw new AccountError(error?.message ?? `The site answered ${res.status}.`, res.status, error?.code ?? '');
   }
   return data as T;
+}
+
+/** Running a folder action again on every file it covers (Metatrash 0.101.0): confirm false asks how many and who
+ * pays; confirm true queues the jobs. payer is "you" or the name of whoever pays. */
+export interface Rerun { files: number; sample: string[]; payer: string; model: string; queued?: number }
+
+export async function rerunAction(space: string, folder: string, action: string, confirm: boolean): Promise<Rerun> {
+  const res = await fetch(`/api/v1/site/spaces/${space.split('/').map(encodeURIComponent).join('/')}/rerun`, {
+    method: 'POST', credentials: 'same-origin', body: JSON.stringify({ folder, action, confirm }),
+    headers: { 'Content-Type': 'application/json', 'X-Metatrash-CSRF': await token() },
+  });
+  let data: unknown = null;
+  try { data = await res.json(); } catch { /* not JSON */ }
+  if (!res.ok) {
+    const error = (data as { error?: { message?: string; code?: string } } | null)?.error;
+    throw new AccountError(error?.message ?? `The site answered ${res.status}.`, res.status, error?.code ?? '');
+  }
+  return data as Rerun;
 }
 
 export const account = {

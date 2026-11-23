@@ -320,6 +320,8 @@ pub struct FolderDescription {
     published_version: Option<u64>,
     /// People are asked to confirm they read the published files (an acknowledge service).
     acknowledge: bool,
+    /// The order the folder lists in (`sort`, Metatrash 0.101.0): "a-z" or "z-a".
+    sort: Option<String>,
 }
 
 /// The `.metatrash.json` descriptions in a Metatrash space folder (any folder may have one).
@@ -364,6 +366,7 @@ pub async fn folder_descriptions(root: String) -> Result<Vec<FolderDescription>,
                         read_only,
                         published_version: value["publishedVersion"].as_u64(),
                         acknowledge,
+                        sort: value["sort"].as_str().map(String::from),
                     });
                 }
             }

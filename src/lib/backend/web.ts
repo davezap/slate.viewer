@@ -8,7 +8,7 @@ import type { MenuEntry } from '../menu';
 import type { HistoryEntry, HistoryPage } from '../history';
 import type { AccountReceipt, AccountTodo, Receipt, SubmitRefusal, SubmitResult } from '../forms';
 import type { Policies, ReaderReport } from '../policies';
-import type { SpaceRow, VirtualFile } from '../space';
+import type { FolderDescription, SpaceRow, VirtualFile } from '../space';
 import type { ActivityResult } from '../activity';
 import { isMarkdownName, withOwnExtension, type SearchMatch } from '../types';
 import type { CardQueryResult, NoticeStatus } from '../cards';
@@ -92,7 +92,10 @@ const fileIds = new Map<string, string>();
 
 interface ReadResult { state: string; file: { id: string; path: string; text: string } }
 interface ListedVirtual { sha256: string; size: number; type: string; textSha256?: string; source?: string; refresh?: string }
-interface ListResult { state: string; files: { path: string; virtual?: ListedVirtual }[]; nextCursor: string | null; removed?: string[] }
+interface ListResult { state: string; files: { path: string; virtual?: ListedVirtual; sort?: string }[]; nextCursor: string | null; removed?: string[] }
+
+/** Folders that chose their order (sort on their .metatrash.json, Metatrash 0.101.0), from the last full listing of each root. */
+const listedSorts = new Map<string, FolderDescription[]>();
 
 /** The virtual files (pictures, PDFs…) the last listing of each folder found, for `sync.virtual`
  *  (0.41.1): the space's list says which files they are, as `mtsync virtual` does on the desktop.
@@ -329,6 +332,7 @@ export const backend: Backend = {
       const { space } = locate(root);
       const files: string[] = [];
       const virtual: VirtualFile[] = [];
+      const sorts: FolderDescription[] = [];
       let cursor: string | undefined;
       let state = '';
       let truncated = false;
@@ -337,6 +341,9 @@ export const backend: Backend = {
         state ||= out.state;
         files.push(...out.files.map(f => f.path));
         for (const f of out.files) {
+          if (f.sort && (f.path === '.metatrash.json' || f.path.endsWith('/.metatrash.json'))) {
+            sorts.push({ folder: f.path.slice(0, -'.metatrash.json'.length), purpose: null, children: {}, github: false, readOnly: {}, sort: f.sort });
+          }
           if (!f.virtual) continue;
           const v = f.virtual;
           virtual.push({ path: f.path, file: `${root}/${f.path}`, type: v.type, size: v.size, sha256: v.sha256, text: !!v.textSha256, source: v.source || undefined, refresh: v.refresh || undefined });
@@ -351,6 +358,7 @@ export const backend: Backend = {
       const shown = shownListing(files, hidden);
       const visible = new Set(shown.files);
       listedVirtual.set(root, hidden ? virtual : virtual.filter(v => visible.has(v.path)));
+      listedSorts.set(root, sorts);
       return { ...shown, truncated };
     },
     search: async (root, query, _hidden, rank) => {
@@ -455,7 +463,8 @@ export const backend: Backend = {
       if (status < 200 || status >= 300) throw new SiteError(data?.error?.message ?? `The site answered ${status}.`, status, data?.error?.code ?? '', data?.error ?? undefined);
       if (data?.newState) fileStates.set(path, data.newState);
     },
-    folderDescriptions: async () => [],
+    // The site keeps no settings files locally; only each folder's chosen order comes with the listing.
+    folderDescriptions: async root => listedSorts.get(root) ?? [],
     watchDocument: async path => { watchedDoc = path; },
     watchFolder: async root => {
       if (root) locate(root); // Validate before replacing the current watcher.

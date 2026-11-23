@@ -22,8 +22,8 @@ export type FileLockLevel = Exclude<LockLevel, ''>;
 export const LOCK_LEVELS: FileLockLevel[] = ['folderAgents', 'connectedAgents', 'agents', 'everyone'];
 export const isLockLevel = (v: unknown): v is FileLockLevel => typeof v === 'string' && (LOCK_LEVELS as string[]).includes(v);
 /** Settings keys, and fillForms and takeQuizzes: who may send the folder's forms and quizzes. */
-export type LockKey = 'purpose' | 'children' | 'services' | 'inherit' | 'readOnly' | 'publishedVersion' | 'print' | 'footer' | 'home' | 'actions' | 'fillForms' | 'takeQuizzes' | 'locked';
-export const LOCK_KEYS: LockKey[] = ['purpose', 'children', 'home', 'readOnly', 'services', 'publishedVersion', 'print', 'footer', 'actions', 'fillForms', 'takeQuizzes', 'inherit', 'locked'];
+export type LockKey = 'purpose' | 'children' | 'services' | 'inherit' | 'readOnly' | 'publishedVersion' | 'print' | 'footer' | 'home' | 'sort' | 'actions' | 'fillForms' | 'takeQuizzes' | 'locked';
+export const LOCK_KEYS: LockKey[] = ['purpose', 'children', 'home', 'sort', 'readOnly', 'services', 'publishedVersion', 'print', 'footer', 'actions', 'fillForms', 'takeQuizzes', 'inherit', 'locked'];
 /** The locks a new space starts with in its top folder (Metatrash 0.95.12). */
 export const DEFAULT_LOCKS: Partial<Record<LockKey, FileLockLevel>> = { actions: 'folderAgents', publishedVersion: 'folderAgents', readOnly: 'folderAgents', services: 'folderAgents', takeQuizzes: 'agents' };
 export type PushMode = 'agent' | 'auto' | 'review';
@@ -38,6 +38,7 @@ export const LOCK_KEY_LABELS: Record<LockKey, { title: string; about: string }> 
   print: { title: 'Printout image', about: 'The image at the top of printed documents.' },
   footer: { title: 'Page footer', about: 'The line below every page on the website.' },
   home: { title: 'Opens on', about: 'The file the folder opens on, such as its dashboard.' },
+  sort: { title: 'Order in Files', about: 'Whether the folder lists A to Z or Z to A.' },
   actions: { title: 'Actions', about: 'The actions on the Automation page. Where this allows, an agent connected as you or a member, or another action\'s agent, may change them for that person; an action never changes itself.' },
   fillForms: { title: 'Fill in forms', about: 'Sending this folder\'s forms. An agent sends as the person it works for and never signs; a form with a signature is always the person\'s.' },
   takeQuizzes: { title: 'Take quizzes', about: 'Sending this folder\'s quizzes. Locked for agents in new spaces, so a quiz shows what the person knows.' },
@@ -49,7 +50,7 @@ const MAX_PURPOSE = 2000;
 const MAX_CHILDREN = 200;
 const MAX_CHILD_TEXT = 1000;
 const MAX_LOCKS = 200;
-const KNOWN_KEYS = ['inherit', 'purpose', 'children', 'home', 'locked', 'readOnly', 'publishedVersion', 'print', 'footer', 'services', 'actions'];
+const KNOWN_KEYS = ['inherit', 'purpose', 'children', 'home', 'sort', 'locked', 'readOnly', 'publishedVersion', 'print', 'footer', 'services', 'actions'];
 export const MAX_PUBLISHED_VERSION = 1_000_000;
 const MAX_ACKNOWLEDGE_FILES = 50;
 const MAX_PRINT_IMAGE = 2000;
@@ -141,6 +142,10 @@ export interface FolderSettings {
   /** The Markdown file in this folder it opens on (Metatrash 0.99.0), or "" for the usual
    *  (the top of a space: dashboard.md, then README.md). Never inherited. */
   home: string;
+  /** The folder lists Z to A in Files (sort "z-a", Metatrash 0.101.0); A to Z otherwise. Never inherited. */
+  zToA: boolean;
+  /** The file says sort "a-z" itself, kept as written while A to Z is chosen. */
+  sortSaysAZ: boolean;
 }
 
 /** One folder's settings file: `folder` is "" for the root or "notes/" style. */
@@ -197,7 +202,7 @@ export function lockMap(value: unknown): Record<string, string> {
   return {};
 }
 
-const emptyLocks = (): Record<LockKey, LockLevel> => ({ purpose: '', children: '', services: '', inherit: '', readOnly: '', publishedVersion: '', print: '', footer: '', home: '', actions: '', fillForms: '', takeQuizzes: '', locked: '' });
+const emptyLocks = (): Record<LockKey, LockLevel> => ({ purpose: '', children: '', services: '', inherit: '', readOnly: '', publishedVersion: '', print: '', footer: '', home: '', sort: '', actions: '', fillForms: '', takeQuizzes: '', locked: '' });
 
 /** The form for a settings object. */
 export function toSettings(raw: Record<string, unknown>): FolderSettings {
@@ -235,6 +240,8 @@ export function toSettings(raw: Record<string, unknown>): FolderSettings {
     footer: typeof raw.footer === 'string' ? raw.footer : '',
     footerOff: raw.footer === '',
     home: typeof raw.home === 'string' ? raw.home : '',
+    zToA: raw.sort === 'z-a',
+    sortSaysAZ: raw.sort === 'a-z',
     actions: Array.isArray(raw.actions)
       ? (raw.actions as unknown[]).filter((a): a is Record<string, unknown> => !!a && typeof a === 'object' && !Array.isArray(a)).map(toActionForm)
       : [],
@@ -286,6 +293,8 @@ function keyValues(s: FolderSettings, isRoot: boolean): Record<string, unknown> 
   if (s.actions.length) out.actions = actionsValue(s.actions);
   // A name without an extension is the .md file of that name (0.44.1): dashboard is dashboard.md.
   if (s.home.trim()) out.home = withOwnExtension(s.home.trim());
+  if (s.zToA) out.sort = 'z-a';
+  else if (s.sortSaysAZ) out.sort = 'a-z';
   return out;
 }
 
@@ -307,7 +316,7 @@ export function toObject(s: FolderSettings, original: Record<string, unknown>, i
     if (!(key in values)) continue;
     out[key] = comparable(key, values[key]) === comparable(key, original[key]) ? original[key] : values[key];
   }
-  for (const key of ['inherit', 'purpose', 'children', 'home', 'locked', 'readOnly', 'publishedVersion', 'print', 'footer', 'services', 'actions']) {
+  for (const key of ['inherit', 'purpose', 'children', 'home', 'sort', 'locked', 'readOnly', 'publishedVersion', 'print', 'footer', 'services', 'actions']) {
     if (key in values && !(key in out)) out[key] = values[key];
   }
   return out;
@@ -340,7 +349,7 @@ export function effectiveSettings(texts: Map<string, string | null>, folder: str
   if (folder === '' || keys.inherit !== 'true') return { keys, from };
   const parent = effectiveSettings(texts, parentFolder(folder));
   for (const [k, v] of Object.entries(parent.keys)) {
-    if (!(k in keys) && k !== 'services' && k !== 'readOnly' && k !== 'publishedVersion' && k !== 'actions' && k !== 'home' && k !== 'inherit') {
+    if (!(k in keys) && k !== 'services' && k !== 'readOnly' && k !== 'publishedVersion' && k !== 'actions' && k !== 'home' && k !== 'sort' && k !== 'inherit') {
       keys[k] = v;
       from[k] = parent.from[k];
     }

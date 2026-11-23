@@ -452,8 +452,16 @@
               <h3>Invitations</h3>
               <ul class="rows">
                 {#each s.invitations as i (i.id)}
-                  <li>
+                  <li class="member">
                     <span class="main"><strong>{i.email}</strong><span class="sub">{i.status === 'expired' ? 'expired' : 'expires'} {ago(i.expires)}</span></span>
+                    {#if s.apps && i.agentPermission}
+                      <label class="vh" for="inv-perm-{i.id}">Once they accept, their connected apps may</label>
+                      <select id="inv-perm-{i.id}" title="What their connected AI apps may do here once they accept" value={i.agentPermission} disabled={busy}
+                        onchange={event => void run(() => account.space(s.id, 'invitation-agent', { invitation: i.id, permission: (event.currentTarget as HTMLSelectElement).value }))}>
+                        <option value="read_write">Apps: read and write</option>
+                        <option value="read_only">Apps: read only</option>
+                      </select>
+                    {/if}
                     <button class="icon" title="Cancel invitation" aria-label="Cancel invitation for {i.email}" disabled={busy} onclick={() => void run(() => account.space(s.id, 'cancel', { invitation: i.id }))}>×</button>
                   </li>
                 {/each}
@@ -495,7 +503,7 @@
                 <li class="empty">No invited members yet.</li>
               {/each}
             </ul>
-            <p class="hint">Suspending, restoring and removing apply only to this space.{s.apps ? ' What their connected apps may do here applies from their next operation; you always have full access to your own space.' : ''}</p>
+            <p class="hint">Suspending, restoring and removing apply only to this space.{s.apps ? ' What their connected apps may do here applies from their next operation; you always have full access to your own space.' : ''}{s.apps && s.invitations.some(i => i.agentPermission) ? ' What you choose on an invitation is what they start with when they accept it.' : ''}</p>
 
             {:else}
             {#if s.moveTo?.length}

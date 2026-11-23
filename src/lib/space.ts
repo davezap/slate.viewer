@@ -115,6 +115,8 @@ export interface FolderDescription {
   publishedVersion?: number | null;
   /** People are asked to confirm they read the published files (an acknowledge service). */
   acknowledge?: boolean;
+  /** The order the folder lists in (`sort`, Metatrash 0.101.0): "z-a" for Z to A; A to Z otherwise. */
+  sort?: string | null;
 }
 
 /** A Go path.Match pattern (`*`, `?`, `[a-z]`, `\\` escapes) as a regular expression. */

@@ -4,10 +4,10 @@
   import { joinPath } from './paths';
   import { mtsync, type FolderDescription } from './space';
   import {
-    DEFAULT_STEPS, MAX_DO, PROVIDERS, RUNNER_LOG, SUBMIT_TOOL, TOOLS, WEEKDAYS, allTools, sendsForms, setSendsForms, describeSchedule, describeTrigger, isOwner, matchingFiles, newAction,
+    DEFAULT_STEPS, MAX_DO, PROVIDERS, RUNNER_LOG, SUBMIT_TOOL, TOOLS, WEEKDAYS, actionObject, allTools, sameAction, sendsForms, setSendsForms, describeSchedule, describeTrigger, isOwner, matchingFiles, newAction,
     parseSchedule, scheduleText, type ActionForm, type ActionWriter, type Schedule, type ScheduleKind,
   } from './folderActions';
-  import { account as siteAccount, type Agent } from './siteAccount';
+  import { account as siteAccount, rerunAction, type Agent, type Rerun } from './siteAccount';
   import {
     SETTINGS_FILE, LOCK_KEYS, LOCK_KEY_LABELS, MAX_FOOTER, check, defaultSettingsText, effectiveLocks, effectiveSettings, folderChain,
     MAX_EMAILS, footerFrom, frozenKeys, isLockLevel, lockedBy, newEmail, parentFolder, parseObject, stableJson, toObject, toSavedVersion, toSettings, toText,
@@ -580,6 +580,28 @@
     return `${hits.length === 1 ? 'One file matches' : `${hits.length}${filesCut ? '+' : ''} files match`} now${among} (${shown}${hits.length > 3 ? ', …' : ''}). They don't start a job: only files that arrive after you save do.`;
   }
 
+  // ---- Run again (Metatrash 0.101.0) ------------------------------------------------------
+
+  /** The action being run again: what the site said it covers (asked first), then what it queued, or why not. */
+  let rerun = $state<{ key: string; busy: boolean; preview: Rerun | null; queued: number; error: string } | null>(null);
+
+  /** An action as saved, unchanged here, that files start, in a space on this website: it can run again now. */
+  const canRunAgain = (a: ActionForm) =>
+    capabilities.kind === 'web' && ownedSpace && !readOnlySpace && a.trigger === 'files' && !!a.raw && sameAction(actionObject(a), a.raw);
+
+  async function askRerun(key: string, a: ActionForm, confirm: boolean) {
+    rerun = { key, busy: true, preview: confirm ? rerun?.preview ?? null : null, queued: 0, error: '' };
+    try {
+      const out = await rerunAction(space.space, folder, a.name, confirm);
+      if (rerun?.key !== key) return;
+      rerun = confirm ? { key, busy: false, preview: null, queued: out.queued ?? 0, error: '' } : { key, busy: false, preview: out, queued: 0, error: '' };
+    } catch (error) {
+      if (rerun?.key === key) rerun = { key, busy: false, preview: null, queued: 0, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  const fileCount = (n: number) => (n === 1 ? 'one file' : `${n} files`);
+
   function openAgentsSettings() {
     void backend.opener.url(`${capabilities.kind === 'web' ? location.origin : space.server}/#settings/services/agents`);
   }
@@ -744,6 +766,15 @@
               <p class="hint">{folder === '' ? 'The file the space opens on, at the top of the space.' : 'The file this folder opens on when you click it in Files.'} Empty opens dashboard.md when there is one, else README.md.</p>
               <datalist id="folder-notes">{#each entries.filter(e => /\.md$/i.test(e)) as e (e)}<option value={e}></option>{/each}</datalist>
               <input class="name wide" list="folder-notes" bind:value={form.home} placeholder="dashboard.md" spellcheck="false" disabled={disabled('home')} />
+            </section>
+
+            <section>
+              <h3>Order in Files{@render lockMark('sort')}</h3>
+              <p class="hint">How {folder === '' ? 'the top of the space' : 'this folder'} lists its files and subfolders in Files, here and on the website. Subfolders always come first. Z to A suits names that start with a date, so the newest is on top. Only this folder: a subfolder chooses its own.</p>
+              <div class="choice row">
+                <label><input type="radio" name="folder-sort" checked={!form.zToA} disabled={disabled('sort')} onchange={() => (form!.zToA = false)} /> Name, A to Z</label>
+                <label><input type="radio" name="folder-sort" checked={form.zToA} disabled={disabled('sort')} onchange={() => (form!.zToA = true)} /> Name, Z to A</label>
+              </div>
             </section>
 
           {:else if page === 'security'}
@@ -1249,6 +1280,24 @@
                           </label>
                         </details>
                       </fieldset>
+                      {#if canRunAgain(action)}
+                        {@const r = rerun?.key === key ? rerun : null}
+                        <div class="card rerun">
+                          {#if r?.preview}
+                            {@const p = r.preview}
+                            <p>Run {action.name} again on {fileCount(p.files)} ({p.sample.join(', ')}{p.files > p.sample.length ? ', …' : ''})? {p.payer === 'you' ? 'It runs on your' : `It runs on ${p.payer}'s`} {p.model === 'the default agent' ? 'default agent' : `${p.model} agent`}, one job per file, and each job uses tokens as a new file would.</p>
+                            <div class="buttons">
+                              <button class="small" disabled={r.busy} onclick={() => (rerun = null)}>Cancel</button>
+                              <button class="small primary" disabled={r.busy} onclick={() => void askRerun(key, action, true)}>Run on {fileCount(p.files)}</button>
+                            </div>
+                          {:else}
+                            <p class="hint">Runs this action once more on every file it covers now, such as after you change its instructions. Up to 100 files, outside the folder's limit of 20 jobs an hour; you see how many and who pays first.</p>
+                            <button class="small" disabled={r?.busy} onclick={() => void askRerun(key, action, false)}>Run Again on All Files…</button>
+                            {#if r?.queued}<p class="ok">Queued {fileCount(r.queued)}. Each result is added to {RUNNER_LOG} as it finishes.</p>{/if}
+                            {#if r?.error}<p class="error">{r.error}</p>{/if}
+                          {/if}
+                        </div>
+                      {/if}
                     {/if}
                   </div>
                 {/each}
@@ -1460,6 +1509,9 @@
   select.add-action { padding: 5px 10px; cursor: pointer; }
   fieldset.action-body { margin: 0; padding: 4px 12px 12px 28px; border: 0; min-width: 0; }
   .card.adopt { margin: 0 12px 6px 28px; background: var(--side-input); }
+  .card.rerun { margin: 8px 12px 10px 28px; }
+  .card.rerun .buttons { margin-top: 6px; }
+  .card.rerun .ok { color: #2e7d32; }
   .field { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; font-weight: 600; font-size: 12px; }
   .field input { font-weight: 400; max-width: 260px; }
   .field .hint { font-size: 12px; }
