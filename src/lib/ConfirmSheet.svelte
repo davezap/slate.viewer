@@ -54,7 +54,7 @@
       try {
         fields = await passkeyAssertion(options);
       } catch (e) {
-        throw new Error(passkeyProblem(e));
+        throw new Error(passkeyProblem(e, true));
       }
       try {
         await account.post('/confirm/passkey', fields);

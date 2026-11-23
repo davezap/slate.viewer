@@ -67,10 +67,28 @@ const GOING_HOME = 'metatrash.goingHome';
 /** An address worth coming back to: a file or folder of a space, or the home page (/). */
 const placeAddress = (address: string) => address === '/' || /^\/(spaces|docs)\/[^/]/.test(address);
 
+/**
+ * Whether the page is signed in (0.47.2): only then is the place remembered. Signing out lands on
+ * the docs space's home, and that page, recorded signed out, took the place of where the person
+ * was, so signing in again opened it. null until the page knows; addresses shown meanwhile wait.
+ */
+let remembering: boolean | null = null;
+let waitingPlace: string | null = null;
+
 /** Notes the address of the open file, so metatrash.com opens it again next time. */
 function rememberPlace(address: string) {
   if (!placeAddress(address)) return;
+  if (remembering === null) { waitingPlace = address; return; }
+  if (!remembering) return;
   try { localStorage.setItem(LAST_PLACE, address); } catch { /* private window: nothing remembered */ }
+}
+
+/** The page found out whether it is signed in: remember places from now on only if it is. */
+export function rememberPlacesWhile(signedIn: boolean) {
+  remembering = signedIn;
+  const waiting = waitingPlace;
+  waitingPlace = null;
+  if (waiting) rememberPlace(waiting);
 }
 
 /** Forgets the last place (signing out: the next person on this browser starts at the home page). */

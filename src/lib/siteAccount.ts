@@ -239,9 +239,17 @@ export async function passkeyCreation(optionsJSON: string): Promise<Record<strin
   };
 }
 
-export function passkeyProblem(error: unknown): string {
+/**
+ * What went wrong with a passkey, in words. `using` is true when a passkey was asked for (signing in
+ * or confirming it's you): browsers answer NotAllowedError alike when the person cancels, when it
+ * times out and when this device has no passkey for the site, so the message covers all three
+ * (0.47.2; before, it said only "Cancelled or timed out").
+ */
+export function passkeyProblem(error: unknown, using = false): string {
   switch ((error as { name?: string } | null)?.name) {
-    case 'NotAllowedError': return 'Cancelled or timed out. Try again when you’re ready.';
+    case 'NotAllowedError': return using
+      ? 'No passkey was used. This browser found none of your passkeys for this site: they may be on another device or in another password manager, or made for the site’s old address, which passkeys don’t follow. Try again, or use another way, then add a passkey on this device in Settings → Security.'
+      : 'Cancelled or timed out. Try again when you’re ready.';
     case 'SecurityError': return 'Passkeys are not available on this address.';
     case 'InvalidStateError': return 'This device or password manager already has a passkey for your account.';
     default: return `Your browser could not use a passkey${error instanceof Error && error.message ? `: ${error.message}` : '.'}`;

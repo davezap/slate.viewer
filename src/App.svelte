@@ -2,7 +2,7 @@
   import { isRunning, uploadItem, type ActivityItem, type UploadRow } from './lib/activity';
   import { onMount, tick, untrack } from 'svelte';
   import { backend, capabilities, type FolderListing, type LoadedDocument } from './lib/backend';
-  import { showAddress, siteLink, siteTitle } from './lib/site';
+  import { rememberPlacesWhile, showAddress, siteLink, siteTitle } from './lib/site';
   import { rememberSpace, spaceOfPath } from './lib/siteSpaces';
   import SettingsDialog from './lib/SettingsDialog.svelte';
   import type { SlateChangesEndDetail, SlateCompareEndDetail, SlateEditorApi, SlateFillEndDetail, SlateForm, SlateFormAnswers, SlateFormSubmitDetail, SlateModeChangeDetail, SlateOutline, SlateOutlineHeading, SlateUploadedAttachment, SlateWorkspaceMode } from '../public/slate/slate-editor';
@@ -400,7 +400,15 @@
     await tick();
     const topLine = Math.min(view?.topLine ?? 0, Math.max(0, lines - 1));
     editor.restoreView({ topLine, selection, focus: false });
-    if (topLine === 0) toVeryTop();
+    if (topLine === 0) {
+      // Again after the next frames (0.47.2): Slate can still be laying out and scrolling to the
+      // restored view, which left a new document a little way down, its title out of sight.
+      // Not once a link's #heading has been gone to meanwhile (anchorJumps).
+      toVeryTop();
+      const jumps = anchorJumps;
+      const again = () => { if (anchorJumps === jumps && !pageAnchor()) toVeryTop(); };
+      requestAnimationFrame(() => { again(); requestAnimationFrame(again); });
+    }
   }
 
   /**
@@ -410,7 +418,9 @@
    */
   function toVeryTop() {
     const pane = host?.querySelector<HTMLElement>('#previewPane');
-    if (pane && pane.scrollTop < 64) pane.scrollTop = 0;
+    // Line 0 is the document's start, so the very top is always right (0.47.2: it moved only
+    // when less than 64 pixels down, and a page's top padding and title can be more).
+    if (pane) pane.scrollTop = 0;
   }
 
   function toggleRememberPositions() {
@@ -1279,8 +1289,12 @@
    * named by its GitHub-style slug (`#run-it-from-windows-powershell`) or by its text
    * (`#Run it from Windows (PowerShell)`, %20 for spaces in an address).
    */
+  /** Counts jumps to a #anchor, so a new document's move to its top doesn't undo one (0.47.2). */
+  let anchorJumps = 0;
+
   function revealAnchor(anchor: string) {
     if (!editor || !anchor) return;
+    anchorJumps += 1;
     const line = /^L(\d+)$/i.exec(anchor);
     if (line) {
       editor.revealLine(Math.max(0, Number(line[1]) - 1));
@@ -1433,14 +1447,29 @@
     diskCheckTimer = setTimeout(() => void checkDisk(), 250);
   }
 
+  /**
+   * Whether a failed read means the file is no longer there (0.47.2), not only that this read
+   * failed: the site answers 404, the desktop app's read the system's "not found" (os error 2, or
+   * 3 when its folder went too).
+   */
+  function fileIsGone(error: unknown): boolean {
+    if ((error as { status?: number } | null)?.status === 404) return true;
+    const text = error instanceof Error ? error.message : String(error);
+    return /\(os error [23]\)/.test(text);
+  }
+
   async function checkDisk() {
     if (!editor || !path || diskPromptOpen) return;
     const watched = path;
     let doc: LoadedDocument;
     try {
       doc = await backend.files.read(watched);
-    } catch {
+    } catch (error) {
       // Deleted or renamed away. Keep the text and treat it as unsaved, so closing asks first.
+      // Only when the file is really gone (0.47.2): a refused or failed read (the site's rate
+      // limit, a dropped connection) said nothing about the file, yet marked a document only being
+      // read as changed, so leaving it asked to save changes nobody made.
+      if (!fileIsGone(error)) return;
       missingOnDisk = true;
       dirty = true;
       return;
@@ -1461,6 +1490,10 @@
       dirty = false;
       return;
     }
+    // The text this window last read or saved (0.47.2): nobody else changed the file. The site
+    // reports this window's own save a moment later, and with more typed since, that looked like
+    // someone else's change and asked about a conflict.
+    if (doc.text === diskText) return;
 
     if (dirty) {
       diskPromptOpen = true;
@@ -3598,7 +3631,8 @@
         const who = text ? JSON.parse(text) : null;
         signedIn = who?.signedIn === true;
         account = typeof who?.account === 'string' ? who.account : '';
-      }, () => {});
+        rememberPlacesWhile(signedIn);
+      }, () => rememberPlacesWhile(false));
       const phone = matchMedia('(max-width: 800px)');
       const update = () => { narrow = phone.matches; drawer = null; };
       update();
