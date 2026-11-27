@@ -27,7 +27,9 @@
 
   const where = $derived(folder.folder ? folder.folder.replace(/\/$/, '') : 'this space');
   const by = $derived(describeAuthor(folder.by));
-  const published = $derived(`Published version ${folder.version} · ${formatWhen(folder.timestamp)}${by ? ` by ${by}` : ''}`);
+  const published = $derived(folder.newFiles
+    ? `New in ${where}`
+    : `Published version ${folder.version} · ${formatWhen(folder.timestamp)}${by ? ` by ${by}` : ''}`);
   /** A quiz is passed, not read: its own bar (FormBanner) says where this person is with it. */
   const isQuiz = $derived(!!file?.quiz);
   const toRead = $derived(file?.tracked === true && file.outstanding && !isQuiz);
@@ -57,7 +59,7 @@
       <b>{published}</b>
     {/if}
     {#if toRead && readingPublished}
-      <span class="ask">{file?.acknowledged ? `You read version ${file.acknowledged.version}; this version changed it. ` : ''}Please read it, then confirm.</span>
+      <span class="ask">{file?.acknowledged && !folder.newFiles ? `You read version ${file.acknowledged.version}; this version changed it. ` : ''}{folder.newFiles ? 'Everyone is asked to read new files here. ' : ''}Please read it, then confirm.</span>
     {:else if file?.tracked && !isQuiz && file.acknowledged?.current}
       <span class="done">✓ You confirmed reading it on {formatWhen(file.acknowledged.timestamp)}.</span>
     {/if}

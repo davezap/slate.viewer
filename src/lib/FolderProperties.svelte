@@ -240,7 +240,7 @@
 
   function setAcknowledge(on: boolean) {
     if (!form) return;
-    form.acknowledge = on ? { files: [] } : null;
+    form.acknowledge = on ? { files: [], newFiles: false } : null;
   }
 
   let readers = $state<ReaderReport | null>(null);
@@ -910,12 +910,22 @@
               <p class="hint">Everyone in the space sees a dot on each published file, and a count on Slate Viewer's taskbar button, until they open it and choose I Have Read This. A new version asks again for the files whose text changed. Metatrash keeps who confirmed what, and when.</p>
               <label class="check">
                 <input type="checkbox" checked={form.acknowledge !== null} disabled={disabled('services') || (servicesWhy !== null && form.acknowledge === null)} onchange={event => setAcknowledge(event.currentTarget.checked)} />
-                <span><b>Ask everyone to confirm they've read the published files</b>
+                <span><b>Ask everyone to confirm they've read {form.acknowledge?.newFiles ? 'its files' : 'the published files'}</b>
                   {#if servicesWhy && form.acknowledge === null}<span class="hint">{servicesWhy}</span>{/if}
-                  {#if form.acknowledge && form.publishedVersion === null}<span class="hint">Nobody is asked until the folder publishes a version.</span>{/if}
+                  {#if form.acknowledge && !form.acknowledge.newFiles && form.publishedVersion === null}<span class="hint">Nobody is asked until the folder publishes a version, or you choose to ask for new files as they arrive.</span>{/if}
                 </span>
               </label>
               {#if form.acknowledge}
+                <h4>When to ask</h4>
+                <div class="choice">
+                  <label><input type="radio" name="ack-when" checked={!form.acknowledge.newFiles} disabled={disabled('services')} onchange={() => (form!.acknowledge!.newFiles = false)} /> When the folder publishes a version (a new version asks again for the files that changed)</label>
+                  <label><input type="radio" name="ack-when" checked={form.acknowledge.newFiles === true} disabled={disabled('services') || form.publishedVersion !== null} onchange={() => (form!.acknowledge!.newFiles = true)} /> As soon as a new file arrives in the folder</label>
+                </div>
+                {#if form.publishedVersion !== null}
+                  <p class="hint small-print">New files are asked for only in a folder that doesn't publish versions. Turn off publishing above to choose it.</p>
+                {:else if form.acknowledge.newFiles}
+                  <p class="hint small-print">Each file added from now on gets a dot for everyone until they open it and choose I Have Read This. Files already here aren't asked for, and later edits don't ask again.</p>
+                {/if}
                 <h4>Which files</h4>
                 <div class="choice">
                   <label><input type="radio" name="ack-files" checked={form.acknowledge.files.length === 0} disabled={disabled('services')} onchange={() => (form!.acknowledge!.files = [])} /> Every Markdown file (.md) in this folder and its subfolders</label>
@@ -954,14 +964,14 @@
               </label>
             </section>
 
-            {#if toSettings(original).acknowledge && savedVersion !== null}
+            {#if toSettings(original).acknowledge && (savedVersion !== null || toSettings(original).acknowledge?.newFiles)}
               <section>
                 <h3>Who has read them</h3>
-                <p class="hint">Everyone in the space, and which published files each still has to read. Needs read-write access to the space.</p>
+                <p class="hint">Everyone in the space, and which {savedVersion !== null ? 'published' : 'new'} files each still has to read. Needs read-write access to the space.</p>
                 {#if readersError}<p class="problem">{readersError}</p>{/if}
                 {#if readers}
                   {#if !readerColumns.length}
-                    <p class="hint">No published files to read yet.</p>
+                    <p class="hint">{savedVersion !== null ? 'No published files to read yet.' : 'No new files to read yet.'}</p>
                   {:else}
                     <table class="readers">
                       <tbody>

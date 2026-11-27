@@ -81,6 +81,11 @@ export interface PolicyFolder {
   timestamp: string;
   by?: ChangeAuthor;
   acknowledge: boolean;
+  /**
+   * The folder asks for new files as they arrive (Metatrash 0.102.0): version is 0, revision the
+   * space now and timestamp when that was turned on; files are only the new ones.
+   */
+  newFiles?: boolean;
   files: PolicyFile[];
 }
 
@@ -136,7 +141,10 @@ export function policyFor(policies: Policies | null, relative: string): { folder
     if (relative.startsWith(f.folder) && (!best || f.folder.length > best.folder.length)) best = f;
   }
   if (!best) return null;
-  return { folder: best, file: best.files.find(f => f.path === relative) ?? null };
+  const file = best.files.find(f => f.path === relative) ?? null;
+  // In a folder that asks for new files, the others are just files: no bar.
+  if (best.newFiles && !file) return null;
+  return { folder: best, file };
 }
 
 /** Everything with a dot: files to read, quizzes to pass, copies to review and forms sent back. */

@@ -68,7 +68,12 @@ const GIT_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/;
 
 export interface GithubService { repo: string; branch: string; push: PushMode | ''; pull: string }
 /** Asks everyone in the space to confirm they read the published files: `files` empty means every .md file. */
-export interface AcknowledgeService { files: string[] }
+/**
+ * The acknowledge service: which files people are asked to read (empty: every .md file). With
+ * newFiles (Metatrash 0.102.0) it asks for each new file as it arrives, in a folder that doesn't
+ * publish versions; files already there when it was turned on aren't asked for.
+ */
+export interface AcknowledgeService { files: string[]; newFiles?: boolean }
 
 /**
  * The email service (Metatrash 0.97.0): the folder has its own address, and each message sent to it
@@ -230,7 +235,7 @@ export function toSettings(raw: Record<string, unknown>): FolderSettings {
       ? { repo: String(gh.repo ?? ''), branch: String(gh.branch ?? ''), push: (['agent', 'auto', 'review'].includes(String(gh.push)) ? gh.push : '') as PushMode | '', pull: String(gh.pull ?? '') }
       : null,
     publishedVersion: typeof raw.publishedVersion === 'number' ? raw.publishedVersion : null,
-    acknowledge: ack ? { files: Array.isArray(ack.files) ? (ack.files as unknown[]).map(String) : [] } : null,
+    acknowledge: ack ? { files: Array.isArray(ack.files) ? (ack.files as unknown[]).map(String) : [], newFiles: ack.newFiles === true } : null,
     emails: services.filter(s => s && s.type === 'email').map(em => {
       const name = typeof em.name === 'string' ? em.name : '';
       return { name, allow: lines(em.allow), block: lines(em.block), history: em.history === 'keep' ? 'keep' : 'strip', address: typeof em.address === 'number' && em.address > 0 ? em.address : 1, saved: name };
@@ -271,7 +276,11 @@ function keyValues(s: FolderSettings, isRoot: boolean): Record<string, unknown> 
   }
   if (s.acknowledge) {
     const files = s.acknowledge.files.map(f => f.trim()).filter(Boolean);
-    services.push(files.length ? { type: 'acknowledge', files } : { type: 'acknowledge' });
+    const svc: Record<string, unknown> = { type: 'acknowledge' };
+    if (files.length) svc.files = files;
+    // New files are asked for only in a folder without versions; publishing one switches to versions.
+    if (s.acknowledge.newFiles && s.publishedVersion === null) svc.newFiles = true;
+    services.push(svc);
   }
   for (const email of s.emails) {
     const svc: Record<string, unknown> = { type: 'email' };
@@ -588,11 +597,17 @@ export function publishText(text: string | null, folder: string, askToRead: bool
   if (typeof raw === 'string') throw new Error(`${folder}${SETTINGS_FILE} can't be read as settings. ${raw}`);
   const current = typeof raw.publishedVersion === 'number' ? raw.publishedVersion : 0;
   const out: Record<string, unknown> = { ...raw, publishedVersion: current + 1 };
+  // A folder that asked for new files as they arrive asks for each published version instead.
+  let services = Array.isArray(raw.services) ? (raw.services as Record<string, unknown>[]).map(s => {
+    if (!s || s.type !== 'acknowledge' || !('newFiles' in s)) return s;
+    const { newFiles: _, ...rest } = s;
+    return rest;
+  }) : null;
   if (askToRead) {
-    const services = Array.isArray(raw.services) ? [...raw.services as Record<string, unknown>[]] : [];
+    services ??= [];
     if (!services.some(s => s && s.type === 'acknowledge')) services.push({ type: 'acknowledge' });
-    out.services = services;
   }
+  if (services) out.services = services;
   return toText(out);
 }
 

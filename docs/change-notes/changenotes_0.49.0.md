@@ -1,0 +1,4 @@
+# Slate Viewer 0.49.0
+
+- **Ask everyone to read new files as they arrive.** In a folder's Properties, Publishing, turn on Ask everyone to confirm they've read its files and choose As soon as a new file arrives in the folder. Each file added from then on gets a dot for everyone, and a place on their list of things to read, until they open it and choose I Have Read This. Files already in the folder aren't asked for, and an edit later doesn't ask again. Good for news, notices and minutes. A folder that publishes versions keeps asking for each version instead.
+- **List files on a dashboard.** A card's source can now be a pattern, such as `forms/*.md` or `guides/**/*.md`. With `show: list`, each matching file is a link, so a card makes a small table of contents, a set of links to other dashboards, or a list of forms to fill in. Add `columns: title` to show each file's title.
