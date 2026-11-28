@@ -194,6 +194,11 @@
   });
   /** The footer this folder's pages get from a folder above when it sets none itself. */
   const footerAbove = $derived(form ? footerFrom(texts, folder) : null);
+  /** Templates and a default template this folder takes from a folder above (Metatrash 0.103.0). */
+  const inheritedTemplates = $derived(form?.inherit && !form.templates.some(t => t.trim()) ? inherited('templates') : null);
+  const inheritedDefault = $derived(form?.inherit && !form.defaultTemplate.trim() && !form.defaultTemplateOff ? inherited('defaultTemplate') : null);
+  /** Markdown files of the space, from the top, for the template boxes. */
+  const spaceNotes = $derived(files.filter(f => /\.md$/i.test(f) && !/(^|\/)agents\.md$/i.test(f) && !f.split('/').some(p => p.startsWith('.'))).map(f => '/' + f).sort((a, b) => a.localeCompare(b)));
   const usesParentLocks = $derived(!!form && !isRoot && form.inherit && !form.ownLocks);
 
   /** What the folder will see once saved, with inherited settings filled in. */
@@ -775,6 +780,32 @@
                 <label><input type="radio" name="folder-sort" checked={!form.zToA} disabled={disabled('sort')} onchange={() => (form!.zToA = false)} /> Name, A to Z</label>
                 <label><input type="radio" name="folder-sort" checked={form.zToA} disabled={disabled('sort')} onchange={() => (form!.zToA = true)} /> Name, Z to A</label>
               </div>
+            </section>
+
+            <section>
+              <h3>New files{@render lockMark(['templates', 'defaultTemplate'])}</h3>
+              <p class="hint">Templates are Markdown files that new files in {folder === '' ? 'the space' : 'this folder'} can start from, offered by New from Template. In a template, {'{{@today}}'}, {'{{@now}}'}, {'{{@name}}'}, {'{{@email}}'} and {'{{@title}}'} are filled in, and <code>newName: "{'{{@today}}'} Meeting"</code> in its front matter names the new file. Start a path with / for the top of the space. Subfolders that use this folder's settings get them too.</p>
+              {#if inheritedTemplates && Array.isArray(inheritedTemplates.value)}
+                <p class="hint">Using the templates from {folderLabel(inheritedTemplates.from)} ({(inheritedTemplates.value as string[]).join(', ')}) until this folder lists its own.</p>
+              {/if}
+              <datalist id="space-notes">{#each spaceNotes as n (n)}<option value={n}></option>{/each}</datalist>
+              {#each form.templates as _, i (i)}
+                <div class="pair">
+                  <input class="name wide" list="space-notes" bind:value={form.templates[i]} placeholder="/Templates/meeting.md" spellcheck="false" disabled={disabled('templates')} />
+                  <button class="remove" aria-label="Remove" title="Remove" disabled={disabled('templates')} onclick={() => form!.templates.splice(i, 1)}>×</button>
+                </div>
+              {/each}
+              <button class="small" disabled={disabled('templates')} onclick={() => form!.templates.push('')}>Add a Template</button>
+              <h4>New File starts from</h4>
+              {#if inheritedDefault && typeof inheritedDefault.value === 'string' && inheritedDefault.value}
+                <p class="hint">{inheritedDefault.value}, from {folderLabel(inheritedDefault.from)}, until this folder chooses its own.</p>
+              {/if}
+              <div class="choice">
+                <label><input type="checkbox" checked={form.defaultTemplateOff} disabled={disabled('defaultTemplate')} onchange={e => (form!.defaultTemplateOff = (e.currentTarget as HTMLInputElement).checked)} /> A blank file, even if a folder above names a template</label>
+              </div>
+              {#if !form.defaultTemplateOff}
+                <input class="name wide" list="space-notes" bind:value={form.defaultTemplate} placeholder="/Templates/meeting.md (empty: a blank file)" spellcheck="false" disabled={disabled('defaultTemplate')} />
+              {/if}
             </section>
 
           {:else if page === 'security'}

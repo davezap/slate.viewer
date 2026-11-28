@@ -1,0 +1,4 @@
+# Slate Viewer 0.50.0
+
+- **Start new files from a template.** Give a folder a template and every new file there starts from it: meeting notes with today's date and your name already in, a decision record with its headings, a weekly report. Open the folder's Properties, and under New files list your templates and choose the one New File starts from. A template is an ordinary Markdown file. Write `{{@today}}`, `{{@now}}`, `{{@name}}`, `{{@email}}` or `{{@title}}` where you want the date, the time, your name, your email address or the new file's name, and add `newName: "{{@today}} Meeting"` at the top to name new files for you. Folders inside take the same templates when they use their parent's settings.
+- **More than one template.** Right-click a folder in Files to see New from each of its other templates, and New Blank File for when you want an empty page.

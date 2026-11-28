@@ -47,6 +47,7 @@
     answerKeyName, answerKeyText, clearDraft, fetchAccountTodo, fetchReceipt, fetchReceipts, loadDraft, parseFiledCopy, reusableAnswers, reviewCopy,
     saveDraft, submitForm, todoWords, type AccountReceipt, type AccountTodo, type FiledCopy, type FormDraft, type Receipt, type Review, needsInfo } from './lib/forms';
   import ReviewBanner from './lib/ReviewBanner.svelte';
+  import { isFormTemplate, localClock, newFileText, suggestedName, templatesOf } from './lib/templates';
   import { SETTINGS_FILE, effectiveSettings, folderChain, frozenKeys, pageFooter, parseObject, printImage, publishText, toSavedVersion } from './lib/folderSettings';
   import { renderFooter } from './lib/footer';
   import { fadeTheme } from './lib/themeFade';
@@ -784,12 +785,67 @@
     }
   }
 
-  /** The Files section's name box: creates the note in `relativeFolder` ("" = the root) and opens it for editing. */
-  async function createNoteFromSidebar(noteName: string, relativeFolder: string): Promise<boolean> {
+  /**
+   * The Files section's name box: creates the note in `relativeFolder` ("" = the root) and opens it
+   * for editing; from `template` (a space path, Metatrash 0.103.0) when it is set.
+   */
+  async function createNoteFromSidebar(noteName: string, relativeFolder: string, template: string | null = null): Promise<boolean> {
     if (!root) return false;
-    const created = await createNote(noteName, relativeFolder ? joinPath(root, relativeFolder) : root);
+    const inFolder = relativeFolder ? joinPath(root, relativeFolder) : root;
+    const created = template && openedSpace ? await createFromTemplate(noteName, inFolder, template) : await createNote(noteName, inFolder);
     if (created) await openNewNote(created);
     return created !== null;
+  }
+
+  // ---- Templates (Metatrash 0.103.0) --------------------------------------------------
+
+  /** A folder's templates and default template (space paths that exist), from its settings and the ones above. */
+  async function templatesFor(relativeFolder: string): Promise<{ templates: string[]; defaultTemplate: string }> {
+    const dir = root;
+    if (!dir || !openedSpace) return { templates: [], defaultTemplate: '' };
+    const folder = relativeFolder ? relativeFolder.replace(/\/?$/, '/') : '';
+    const texts = new Map(await Promise.all(folderChain(folder).map(async f =>
+      [f, await backend.files.read(joinPath(dir, f + SETTINGS_FILE)).then(d => d.text, () => null)] as const)));
+    const found = templatesOf(texts, folder);
+    const exists = (p: string) => folderTruncated || folderFiles.includes(p);
+    return { templates: found.templates.filter(exists), defaultTemplate: found.defaultTemplate && exists(found.defaultTemplate) ? found.defaultTemplate : '' };
+  }
+
+  /** The name a template's newName gives a file made now, or "". */
+  async function suggestTemplateName(template: string): Promise<string> {
+    if (!root) return '';
+    const [doc, person] = await Promise.all([backend.files.read(joinPath(root, template)), formPerson()]);
+    return suggestedName(doc.text, { ...localClock(), name: person.name, email: person.email });
+  }
+
+  /**
+   * A new file from a template: on the website Metatrash makes it, in one change; on the desktop it
+   * is filled in here, the same way, and Metatrash Sync sends it.
+   */
+  async function createFromTemplate(noteName: string, inFolder: string, template: string): Promise<string | null> {
+    if (!root) return null;
+    if (openedSpace?.access === 'read only') return createNote(noteName, inFolder);
+    try {
+      if (backend.files.createFromTemplate) {
+        const created = await backend.files.createFromTemplate(inFolder, joinPath(root, template), noteName.trim(), localClock());
+        await refreshFolder();
+        return created;
+      }
+      const source = (await backend.files.read(joinPath(root, template))).text;
+      if (isFormTemplate(source)) {
+        await message(`${template} is a form: fill it in and send it, rather than making files from it.`, { title: 'Slate Viewer', kind: 'info' });
+        return null;
+      }
+      const created = await createNote(noteName, inFolder);
+      if (!created) return null;
+      const person = await formPerson();
+      const title = basename(created).replace(/\.[^.]+$/, '');
+      await backend.files.write(created, newFileText(source, { ...localClock(), name: person.name, email: person.email, title }), false);
+      return created;
+    } catch (error) {
+      await showError(error);
+      return null;
+    }
   }
 
   /** Opens a note just created and puts the cursor at its end in Edit, ready to type. */
@@ -3835,6 +3891,8 @@
               onOpen={(relative, options) => void openFromFolder(relative, options)}
               onFolderOpen={relative => void openFolderHome(relative)}
               onCreate={createNoteFromSidebar}
+              templatesFor={openedSpace ? templatesFor : undefined}
+              suggestName={openedSpace ? suggestTemplateName : undefined}
               editable={canManageFiles}
               locked={lockedFiles}
               onCreateFolder={createFolder}

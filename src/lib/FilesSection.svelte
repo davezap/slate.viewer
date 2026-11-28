@@ -24,8 +24,15 @@
     /** Whether the open folder is a plain folder or a Metatrash space. */
     rootKind?: 'folder' | 'space';
     onOpen: (relative: string, options: OpenOptions) => void;
-    /** Creates a note called `name` in `folder` (relative to root, "" for the root itself). */
-    onCreate: (name: string, folder: string) => Promise<boolean>;
+    /**
+     * Creates a note called `name` in `folder` (relative to root, "" for the root itself), from
+     * `template` (a space path; Metatrash 0.103.0) or blank when it is null.
+     */
+    onCreate: (name: string, folder: string, template: string | null) => Promise<boolean>;
+    /** A folder's templates and default template (space paths), in a space. */
+    templatesFor?: (folder: string) => Promise<{ templates: string[]; defaultTemplate: string }>;
+    /** The name a template's newName gives a new file now, or "". */
+    suggestName?: (template: string) => Promise<string>;
     onCloseFolder: () => void;
     onChooseFolder: () => void;
     onOpenFolder: (folder: string) => void;
@@ -81,7 +88,7 @@
     root, files, truncated, current, recentFolders, rootKind = 'folder', onOpen, onCreate, onCloseFolder, onChooseFolder, onOpenFolder,
     descriptions = [], reveal = null, onOpenSpace, emptyFolders = [], editable = true, locked = [],
     onCreateFolder, onRename, onMove, onDuplicate, onDelete, onProperties, showHidden = false, onToggleHidden, unread = [], toReview = [], toFix = [], approved = [], onPublish,
-    virtualFiles = {}, onConvert, onUpload, activity = [], onDismissUpload, onFolderOpen,
+    virtualFiles = {}, onConvert, onUpload, activity = [], onDismissUpload, onFolderOpen, templatesFor, suggestName,
   }: Props = $props();
 
   // ---- Activity --------------------------------------------------------------------
@@ -253,6 +260,8 @@
   // ---- New file ------------------------------------------------------------------
 
   let creating = $state(false);
+  /** The template the new file starts from (a space path), or null for a blank one. */
+  let createTemplate = $state<string | null>(null);
   /** What the name box makes: a note or a folder. */
   let createKind = $state<'file' | 'folder'>('file');
   /** Where the new file goes: a folder relative to root, "" for the root. */
@@ -288,17 +297,36 @@
     expanded = next;
   }
 
-  /** Shows the name box for a new file (or folder) in `folder` (relative, "" for the root), opening the folder in the tree. */
-  export async function startCreate(folder: string = currentFolder, kind: 'file' | 'folder' = 'file') {
+  /**
+   * Shows the name box for a new file (or folder) in `folder` (relative, "" for the root), opening
+   * the folder in the tree. A new file starts from `template` (a space path), blank with null, or
+   * by default from the folder's default template, if it has one; its newName fills the box.
+   */
+  export async function startCreate(folder: string = currentFolder, kind: 'file' | 'folder' = 'file', template?: string | null) {
     if (!editable) return;
     renaming = null;
     createIn = folder;
     createKind = kind;
+    createTemplate = null;
     expandTo(folder);
     creating = true;
     newName = '';
     await tick();
     newInput?.focus();
+    if (kind !== 'file' || template === null) return;
+    const chosen = template ?? (templatesFor ? (await templatesFor(folder).catch(() => null))?.defaultTemplate || null : null);
+    if (!chosen || !creating || createIn !== folder) return;
+    createTemplate = chosen;
+    const suggested = suggestName ? await suggestName(chosen).catch(() => '') : '';
+    if (suggested && creating && createIn === folder && !newName) {
+      // Numbered when taken, as Metatrash numbers newName: "2026-11-28 Meeting 2".
+      const taken = (name: string) => files.includes((folder ? folder + '/' : '') + name + '.md');
+      let name = suggested;
+      for (let n = 2; taken(name) && n <= 100; n++) name = `${suggested} ${n}`;
+      newName = name;
+      await tick();
+      newInput?.select();
+    }
   }
 
   async function finishCreate(event: KeyboardEvent) {
@@ -312,7 +340,7 @@
         onProperties(createIn);
         return;
       }
-      if (await onCreate(newName, createIn)) creating = false;
+      if (await onCreate(newName, createIn, createTemplate)) creating = false;
       return;
     }
     const made = await onCreateFolder?.(newName, createIn);
@@ -483,20 +511,32 @@
   const revealLabel = /Mac/i.test(navigator.userAgent) ? 'Reveal in &Finder' : /Windows/i.test(navigator.userAgent) ? 'Show in &Explorer' : 'Show in File &Manager';
 
   /** New File/Folder here (in a folder, beside a file, or in the root on empty space), rename, delete and the usual extras. */
-  function showMenu(event: MouseEvent, node: Node | null) {
+  async function showMenu(event: MouseEvent, node: Node | null) {
     if (!root) return;
     event.preventDefault();
     event.stopPropagation();
+    const at = { x: event.clientX, y: event.clientY };
+    const menuFolder = node ? (node.folder ? node.path : parentOf(node.path)) : '';
+    const offered = editable && templatesFor ? await templatesFor(menuFolder).catch(() => null) : null;
     const items: MenuEntry[] = [];
     const separate = () => { if (items.length && !('separator' in items[items.length - 1])) items.push({ separator: true }); };
-    const folder = node ? (node.folder ? node.path : parentOf(node.path)) : '';
+    const folder = menuFolder;
     if (editable) {
       const here = folder.split('/').pop()!.replace(/&/g, '&&');
       // One New File/Folder (0.43.0): in the folder clicked, beside the file clicked, or at the
       // top of the space when the click was on empty space. The Files buttons still make them in
       // the root.
       const suffix = folder ? ` in ${here}` : '';
-      items.push({ text: `&New File${suffix}…`, action: () => void startCreate(folder) });
+      // New from Template (Metatrash 0.103.0): New File starts from the folder's default template,
+      // each other template has its own entry, and a blank file is one entry away.
+      const label = (p: string) => p.slice(p.lastIndexOf('/') + 1).replace(/\.md$/i, '').replace(/&/g, '&&');
+      const from = offered?.defaultTemplate ? ` (from “${label(offered.defaultTemplate)}”)` : '';
+      items.push({ text: `&New File${suffix}${from}…`, action: () => void startCreate(folder) });
+      if (offered && (offered.templates.length || offered.defaultTemplate)) {
+        const listed = offered.templates.filter(p => p !== offered.defaultTemplate);
+        for (const p of listed) items.push({ text: `New from “${label(p)}”…`, action: () => void startCreate(folder, 'file', p) });
+        if (offered.defaultTemplate) items.push({ text: 'New &Blank File…', action: () => void startCreate(folder, 'file', null) });
+      }
       if (onCreateFolder) items.push({ text: `New &Folder${suffix}…`, action: () => void startCreate(folder, 'folder') });
       if (onUpload) {
         separate();
@@ -545,7 +585,7 @@
       items.push({ text: node ? 'P&roperties…' : `P&roperties of ${rootName.replace(/&/g, '&&')}…`, keys: node ? 'Alt+Enter' : undefined, action: () => onProperties(which) });
     }
     if (!items.length) return;
-    menu = { x: event.clientX, y: event.clientY, items };
+    menu = { x: at.x, y: at.y, items };
   }
 </script>
 
@@ -645,7 +685,7 @@
               style:width="calc(100% - {(createKind === 'folder' ? 18 : 32) + depth * 14}px)"
               bind:this={newInput}
               bind:value={newName}
-              placeholder={createKind === 'folder' ? 'New folder name' : 'New file name'}
+              placeholder={createKind === 'folder' ? 'New folder name' : createTemplate ? `New file name (from ${createTemplate.slice(createTemplate.lastIndexOf('/') + 1).replace(/\.md$/i, '')})` : 'New file name'}
               title={createKind === 'folder'
                 ? `A name for the new folder in ${folderLabel(createIn)}. Enter makes it, Escape cancels.`
                 : `A name for the new Markdown file in ${folderLabel(createIn)} (.md is added). Enter makes it, Escape cancels.`}

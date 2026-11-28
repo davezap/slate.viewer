@@ -22,8 +22,8 @@ export type FileLockLevel = Exclude<LockLevel, ''>;
 export const LOCK_LEVELS: FileLockLevel[] = ['folderAgents', 'connectedAgents', 'agents', 'everyone'];
 export const isLockLevel = (v: unknown): v is FileLockLevel => typeof v === 'string' && (LOCK_LEVELS as string[]).includes(v);
 /** Settings keys, and fillForms and takeQuizzes: who may send the folder's forms and quizzes. */
-export type LockKey = 'purpose' | 'children' | 'services' | 'inherit' | 'readOnly' | 'publishedVersion' | 'print' | 'footer' | 'home' | 'sort' | 'actions' | 'fillForms' | 'takeQuizzes' | 'locked';
-export const LOCK_KEYS: LockKey[] = ['purpose', 'children', 'home', 'sort', 'readOnly', 'services', 'publishedVersion', 'print', 'footer', 'actions', 'fillForms', 'takeQuizzes', 'inherit', 'locked'];
+export type LockKey = 'purpose' | 'children' | 'services' | 'inherit' | 'readOnly' | 'publishedVersion' | 'print' | 'footer' | 'home' | 'sort' | 'templates' | 'defaultTemplate' | 'actions' | 'fillForms' | 'takeQuizzes' | 'locked';
+export const LOCK_KEYS: LockKey[] = ['purpose', 'children', 'home', 'sort', 'templates', 'defaultTemplate', 'readOnly', 'services', 'publishedVersion', 'print', 'footer', 'actions', 'fillForms', 'takeQuizzes', 'inherit', 'locked'];
 /** The locks a new space starts with in its top folder (Metatrash 0.95.12). */
 export const DEFAULT_LOCKS: Partial<Record<LockKey, FileLockLevel>> = { actions: 'folderAgents', publishedVersion: 'folderAgents', readOnly: 'folderAgents', services: 'folderAgents', takeQuizzes: 'agents' };
 export type PushMode = 'agent' | 'auto' | 'review';
@@ -39,6 +39,8 @@ export const LOCK_KEY_LABELS: Record<LockKey, { title: string; about: string }> 
   footer: { title: 'Page footer', about: 'The line below every page on the website.' },
   home: { title: 'Opens on', about: 'The file the folder opens on, such as its dashboard.' },
   sort: { title: 'Order in Files', about: 'Whether the folder lists A to Z or Z to A.' },
+  templates: { title: 'Templates', about: 'The templates New from Template offers here.' },
+  defaultTemplate: { title: 'New files start from', about: 'The template a plain New File starts from.' },
   actions: { title: 'Actions', about: 'The actions on the Automation page. Where this allows, an agent connected as you or a member, or another action\'s agent, may change them for that person; an action never changes itself.' },
   fillForms: { title: 'Fill in forms', about: 'Sending this folder\'s forms. An agent sends as the person it works for and never signs; a form with a signature is always the person\'s.' },
   takeQuizzes: { title: 'Take quizzes', about: 'Sending this folder\'s quizzes. Locked for agents in new spaces, so a quiz shows what the person knows.' },
@@ -50,9 +52,20 @@ const MAX_PURPOSE = 2000;
 const MAX_CHILDREN = 200;
 const MAX_CHILD_TEXT = 1000;
 const MAX_LOCKS = 200;
-const KNOWN_KEYS = ['inherit', 'purpose', 'children', 'home', 'sort', 'locked', 'readOnly', 'publishedVersion', 'print', 'footer', 'services', 'actions'];
+const KNOWN_KEYS = ['inherit', 'purpose', 'children', 'home', 'sort', 'templates', 'defaultTemplate', 'locked', 'readOnly', 'publishedVersion', 'print', 'footer', 'services', 'actions'];
 export const MAX_PUBLISHED_VERSION = 1_000_000;
 const MAX_ACKNOWLEDGE_FILES = 50;
+const MAX_TEMPLATES = 20;
+
+/** Whether Metatrash would refuse a templates entry (templates.go checkTemplateEntry). */
+function templateEntryProblem(entry: string): boolean {
+  const rest = entry.replace(/^\//, '');
+  if (!rest || entry.length > 240 || !/\.md$/i.test(rest) || entry.includes('\\')) return true;
+  const parts = rest.split('/');
+  return parts.some((part, i) => (part === '..' || (part === '.' && i < parts.length - 1))
+    ? entry.startsWith('/')
+    : part.startsWith('.') || storageNameProblem(part) !== null);
+}
 const MAX_PRINT_IMAGE = 2000;
 export const MAX_FOOTER = 500;
 /** Lines a page footer may have (Metatrash 0.95.29; one before). */
@@ -151,6 +164,13 @@ export interface FolderSettings {
   zToA: boolean;
   /** The file says sort "a-z" itself, kept as written while A to Z is chosen. */
   sortSaysAZ: boolean;
+  /** Templates new files here may start from (Metatrash 0.103.0), as written: /Templates/x.md from
+   *  the space root, otherwise from this folder. Empty: this folder lists none (it may inherit some). */
+  templates: string[];
+  /** The template a plain New File starts from, as written; "" for none set here. Inherited. */
+  defaultTemplate: string;
+  /** New files here start blank even when a folder above names a default (defaultTemplate ""). */
+  defaultTemplateOff: boolean;
 }
 
 /** One folder's settings file: `folder` is "" for the root or "notes/" style. */
@@ -207,7 +227,7 @@ export function lockMap(value: unknown): Record<string, string> {
   return {};
 }
 
-const emptyLocks = (): Record<LockKey, LockLevel> => ({ purpose: '', children: '', services: '', inherit: '', readOnly: '', publishedVersion: '', print: '', footer: '', home: '', sort: '', actions: '', fillForms: '', takeQuizzes: '', locked: '' });
+const emptyLocks = (): Record<LockKey, LockLevel> => ({ purpose: '', children: '', services: '', inherit: '', readOnly: '', publishedVersion: '', print: '', footer: '', home: '', sort: '', templates: '', defaultTemplate: '', actions: '', fillForms: '', takeQuizzes: '', locked: '' });
 
 /** The form for a settings object. */
 export function toSettings(raw: Record<string, unknown>): FolderSettings {
@@ -247,6 +267,9 @@ export function toSettings(raw: Record<string, unknown>): FolderSettings {
     home: typeof raw.home === 'string' ? raw.home : '',
     zToA: raw.sort === 'z-a',
     sortSaysAZ: raw.sort === 'a-z',
+    templates: Array.isArray(raw.templates) ? (raw.templates as unknown[]).map(String) : [],
+    defaultTemplate: typeof raw.defaultTemplate === 'string' ? raw.defaultTemplate : '',
+    defaultTemplateOff: raw.defaultTemplate === '',
     actions: Array.isArray(raw.actions)
       ? (raw.actions as unknown[]).filter((a): a is Record<string, unknown> => !!a && typeof a === 'object' && !Array.isArray(a)).map(toActionForm)
       : [],
@@ -304,6 +327,10 @@ function keyValues(s: FolderSettings, isRoot: boolean): Record<string, unknown> 
   if (s.home.trim()) out.home = withOwnExtension(s.home.trim());
   if (s.zToA) out.sort = 'z-a';
   else if (s.sortSaysAZ) out.sort = 'a-z';
+  const templates = s.templates.map(t => t.trim()).filter(Boolean);
+  if (templates.length) out.templates = templates;
+  if (s.defaultTemplateOff) out.defaultTemplate = '';
+  else if (s.defaultTemplate.trim()) out.defaultTemplate = s.defaultTemplate.trim();
   return out;
 }
 
@@ -325,7 +352,7 @@ export function toObject(s: FolderSettings, original: Record<string, unknown>, i
     if (!(key in values)) continue;
     out[key] = comparable(key, values[key]) === comparable(key, original[key]) ? original[key] : values[key];
   }
-  for (const key of ['inherit', 'purpose', 'children', 'home', 'sort', 'locked', 'readOnly', 'publishedVersion', 'print', 'footer', 'services', 'actions']) {
+  for (const key of ['inherit', 'purpose', 'children', 'home', 'sort', 'templates', 'defaultTemplate', 'locked', 'readOnly', 'publishedVersion', 'print', 'footer', 'services', 'actions']) {
     if (key in values && !(key in out)) out[key] = values[key];
   }
   return out;
@@ -475,6 +502,13 @@ export function check(s: FolderSettings, text: string, folder: string, ctx: Spac
   const home = s.home.trim();
   if (home && (home.includes('/') || home.includes('\\') || !/\.md$/i.test(home) || home.toLowerCase() === 'agents.md' || storageNameProblem(home) !== null)) {
     problems.push({ page: 'general', text: 'Opens on is the name of a Markdown file in this folder, such as dashboard.md.' });
+  }
+
+  const templates = s.templates.map(t => t.trim()).filter(Boolean);
+  if (templates.length > MAX_TEMPLATES) problems.push({ page: 'general', text: `There are ${templates.length} templates; ${MAX_TEMPLATES} is the most.` });
+  if (new Set(templates).size < templates.length) problems.push({ page: 'general', text: 'A template is listed twice.' });
+  for (const t of [...templates, ...(s.defaultTemplateOff ? [] : [s.defaultTemplate.trim()].filter(Boolean))]) {
+    if (templateEntryProblem(t)) problems.push({ page: 'general', text: `Template "${t}" should be a Markdown file of this space: /Templates/meeting.md from the top of the space, or meeting.md or ../Templates/meeting.md from this folder.` });
   }
 
   const readOnly = s.readOnly.filter(r => r.name.trim());

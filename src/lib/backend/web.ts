@@ -385,6 +385,23 @@ export const backend: Backend = {
       await writeFile(path, isMarkdownName(path) ? `# ${title}\n` : '', true);
       return path;
     },
+    createFromTemplate: async (folder, template, name, clock) => {
+      const { space, root, rel } = locate(`${folder}/x`);
+      const dir = rel.slice(0, -1);
+      const body: Record<string, unknown> = { folder: dir, ifInState: await stateFor(`${folder}/x`), ...clock };
+      if (template) body.template = locate(template).rel;
+      if (name) body.name = name;
+      try {
+        const out = await call<Mutation>('POST', spaceUrl(space, 'from-template'), body);
+        const path = `${root}/${out.file.path}`;
+        fileStates.set(path, out.newState);
+        fileIds.set(path, out.file.id);
+        return path;
+      } catch (error) {
+        if (error instanceof SiteError && error.code === 'destination_exists') throw fileExists(dir + withOwnExtension(name));
+        throw error;
+      }
+    },
     // A space has no empty folders: a new folder starts with its AGENTS.md (and the server adds
     // its .metatrash.json), both hidden, so the listing shows it as an empty folder.
     createFolder: async (parent, name) => {

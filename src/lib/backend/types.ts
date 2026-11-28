@@ -70,6 +70,12 @@ export interface Backend {
     search(root: string, query: string, hidden: boolean, rank?: boolean): Promise<{ matches: SearchMatch[]; truncated: boolean }>;
     /** Makes `name` in `folder` with a `# title` heading; returns its full path. */
     createNote(folder: string, name: string, title: string): Promise<string>;
+    /**
+     * The website only (Metatrash 0.103.0): Metatrash makes a new file in `folder` (full path) from
+     * `template` (full path; null for the folder's default template), named `name` or, when "",
+     * by the template's newName. Returns its full path. The desktop app fills templates itself.
+     */
+    createFromTemplate?(folder: string, template: string | null, name: string, clock: { today: string; now: string }): Promise<string>;
     /** Returns the new folder's full path. */
     createFolder(parent: string, name: string): Promise<string>;
     rename(from: string, to: string): Promise<void>;
