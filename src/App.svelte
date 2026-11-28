@@ -28,6 +28,7 @@
   import { customTitleBar, type MenuEntry, type MenuItem } from './lib/menu';
   import ContextMenu from './lib/ContextMenu.svelte';
   import SyncMenu from './lib/SyncMenu.svelte';
+  import ConflictsMenu, { type ConflictEntry } from './lib/ConflictsMenu.svelte';
   import FindBar from './lib/FindBar.svelte';
   import OpenSpace from './lib/OpenSpace.svelte';
   import UpdateDialog, { type UpdateCheck } from './lib/UpdateDialog.svelte';
@@ -92,6 +93,8 @@
   let spaceDialog = $state(false);
   /** The sync menu is open under the status chip (its box). */
   let syncMenu = $state<DOMRect | null>(null);
+  /** The sync conflicts panel, under the chip (0.51.0). */
+  let conflictsMenu = $state<DOMRect | null>(null);
   /** The update dialog: `initial` is what the timer's check found, null while Help's check runs. */
   let updateDialog = $state<{ initial: UpdateCheck | null } | null>(null);
   let descriptions = $state<FolderDescription[]>([]);
@@ -569,7 +572,8 @@
     if (seconds > 3) logFault('slow', `Listing ${dir} took ${seconds.toFixed(1)} s (${listing.files.length} files${listing.truncated ? ', stopped early' : ''}).`);
     if (request !== folderRequest) return;
     const reopened = root !== null && sameFolder(root, dir);
-    if (!reopened) rememberPlace();
+    if (!reopened) { rememberPlace(); justMade.clear(); }
+    listFailures = 0;
     root = dir;
     folderFiles = listing.files;
     emptyFolders = listing.emptyFolders;
@@ -592,6 +596,9 @@
 
   function closeFolder() {
     folderRequest += 1;
+    justMade.clear();
+    listFailures = 0;
+    clearTimeout(listRetry);
     picture = null;
     rememberPlace();
     root = null;
@@ -676,6 +683,25 @@
     return refreshing;
   }
 
+  /**
+   * Files and folders just made here (relative to root), shown at once instead of after the next
+   * listing; each stays until a listing has it, so a listing that started before it was made
+   * doesn't take it away again (0.51.0).
+   */
+  const justMade = new Map<string, 'file' | 'folder'>();
+
+  /** Shows a new file or folder (relative to root) in Files straight away, then lists again behind it. */
+  function showMade(relative: string, kind: 'file' | 'folder') {
+    justMade.set(relative, kind);
+    if (kind === 'file' && !folderFiles.includes(relative)) folderFiles = [...folderFiles, relative];
+    if (kind === 'folder' && !emptyFolders.includes(relative) && !folderFiles.some(f => f.startsWith(relative + '/'))) emptyFolders = [...emptyFolders, relative];
+    void refreshFolder();
+  }
+
+  /** Listings that failed in a row (0.51.0): the next try waits longer. */
+  let listFailures = 0;
+  let listRetry: ReturnType<typeof setTimeout> | undefined;
+
   async function listFolderAgain() {
     if (!root) return;
     const listed = root;
@@ -683,15 +709,32 @@
     try {
       const listing = await backend.files.list(listed, showHidden);
       if (listed !== root || request !== folderRequest) return;
-      folderFiles = listing.files;
-      emptyFolders = listing.emptyFolders;
+      listFailures = 0;
+      let files = listing.files;
+      let empty = listing.emptyFolders;
+      for (const [made, kind] of justMade) {
+        const listedNow = kind === 'file' ? files.includes(made) : empty.includes(made) || files.some(f => f.startsWith(made + '/'));
+        if (listedNow) justMade.delete(made);
+        else if (kind === 'file') files = [...files, made];
+        else empty = [...empty, made];
+      }
+      folderFiles = files;
+      emptyFolders = empty;
       folderTruncated = listing.truncated;
       // Settings can change with any sync (or a save from Properties).
       if (openedSpace) { void loadDescriptions(); void loadVirtualFiles(); schedulePolicies(); }
       void offerConflictResolve();
-    } catch {
-      // The folder itself went away.
-      if (listed === root && request === folderRequest) closeFolder();
+    } catch (error) {
+      if (listed !== root || request !== folderRequest) return;
+      // One failed listing is not a folder that went away (0.51.0): connecting Metatrash Sync on
+      // the site renews the sign-in, and the listing asked meanwhile failed, which closed the space
+      // in every other tab. Close only when the folder is gone twice in a row, a few seconds apart;
+      // anything else keeps the space open and lists again later.
+      listFailures += 1;
+      if (fileIsGone(error) && listFailures >= 2) { closeFolder(); return; }
+      clearTimeout(listRetry);
+      listRetry = setTimeout(() => { if (listed === root && request === folderRequest) void refreshFolder(); },
+        Math.min(60_000, 3000 * 2 ** (listFailures - 1)));
     }
   }
 
@@ -777,7 +820,9 @@
     if (problem) { await message(problem, { title: 'Slate Viewer', kind: 'warning' }); return null; }
     try {
       const created = await backend.files.createNote(inFolder, fileName, noteName);
-      await refreshFolder();
+      const madeRelative = root ? relativeIn(root, created) : null;
+      if (madeRelative !== null) showMade(madeRelative, 'file');
+      else await refreshFolder();
       return created;
     } catch (error) {
       await showError(error);
@@ -973,7 +1018,8 @@
       await showError(error);
       return null;
     }
-    await refreshFolder();
+    // Shown now; the listing behind it can take seconds in a big space (0.51.0).
+    showMade(rel, 'folder');
     return rel;
   }
 
@@ -2892,7 +2938,23 @@
     return known === 'space' ? 'space' as const : 'folder' as const;
   });
 
-  const conflictCount = $derived(openedSpace ? folderFiles.filter(f => conflictOriginal(basename(f)) !== null).length : 0);
+  /** The space's sync conflict copies (`plan.conflict-20261120-101500.md`) and the files they belong to (0.51.0). */
+  const conflicts = $derived.by((): ConflictEntry[] => {
+    if (!openedSpace) return [];
+    const listed = new Set(folderFiles);
+    const out: ConflictEntry[] = [];
+    for (const copy of folderFiles) {
+      const original = conflictOriginal(basename(copy));
+      if (original === null) continue;
+      const dir = copy.includes('/') ? copy.slice(0, copy.lastIndexOf('/') + 1) : '';
+      const stamp = /\.conflict-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/.exec(copy);
+      const at = stamp ? new Date(+stamp[1], +stamp[2] - 1, +stamp[3], +stamp[4], +stamp[5], +stamp[6]) : null;
+      const when = at && !Number.isNaN(at.getTime()) ? at.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '';
+      out.push({ copy, original: dir + original, when, originalExists: listed.has(dir + original) });
+    }
+    return out;
+  });
+  const conflictCount = $derived(conflicts.length);
 
   const syncStatus = $derived.by(() => {
     if (!openedSpace) return null;
@@ -2910,11 +2972,37 @@
       label: parts.join(' · '),
       tone: conflictCount || docBytes > SPACE_FILE_LIMIT ? ('warn' as const) : tone,
       title: `${openedSpace.space}${openedSpace.access === 'read only' ? ' (read only)' : ''}: ${openedSpace.state}`,
+      hint: conflictCount ? 'Click to see the conflicts and resolve them' : undefined,
     };
   });
 
+  /** Conflicts panel: keeps the space's version of a file by deleting its conflict copy, once confirmed (0.51.0). */
+  async function keepSpaceVersion(entry: ConflictEntry) {
+    if (!root) return;
+    const copyName = basename(entry.copy);
+    const choice = await message(`Keep ${basename(entry.original)} as it is in the space and delete ${copyName}?\n\nThe copy holds the computer's version. Deleting it removes it from the space too, so anything only in it is lost (the space's history still has it).`, {
+      title: 'Slate Viewer',
+      kind: 'warning',
+      buttons: { ok: 'Delete Copy', cancel: 'Cancel' },
+    });
+    if (choice !== 'Delete Copy') return;
+    try {
+      await backend.files.deleteConflictCopy(joinPath(root, entry.copy));
+    } catch (error) {
+      await showError(error);
+    }
+    await refreshFolder();
+    if (!conflictCount) conflictsMenu = null;
+  }
+
   /** The status chip opens (or closes) the sync menu: recent activity, Sync now, mtsync's version. */
   function onSyncClick(chip: DOMRect) {
+    // With conflicts, the chip opens them first; the sync menu is one click further (0.51.0).
+    if (conflictCount && !syncMenu) {
+      conflictsMenu = conflictsMenu ? null : chip;
+      return;
+    }
+    conflictsMenu = null;
     syncMenu = syncMenu ? null : chip;
   }
 
@@ -3847,8 +3935,8 @@
   onForward={() => void once('nav', goForward)}
   onFind={() => void findBar?.open()}
   sync={syncStatus}
-  onSync={web ? undefined : onSyncClick}
-  syncOpen={!!syncMenu}
+  onSync={web && !conflictCount ? undefined : onSyncClick}
+  syncOpen={!!syncMenu || !!conflictsMenu}
   editing={web && openedSpace && openedSpace.access !== 'read only' ? editing : null}
   onEditing={setEditing}
   changes={web && (historyFile !== null || showingChanges) ? showingChanges : null}
@@ -4083,6 +4171,19 @@
 
 {#if updateDialog}
   <UpdateDialog initial={updateDialog.initial} onClose={() => (updateDialog = null)} />
+{/if}
+
+{#if conflictsMenu && openedSpace && conflicts.length}
+  <ConflictsMenu
+    anchor={conflictsMenu}
+    {conflicts}
+    canChange={openedSpace.access !== 'read only'}
+    onCompare={entry => { conflictsMenu = null; if (root) void resolveConflict(joinPath(root, entry.copy), joinPath(root, entry.original)); }}
+    onOpen={copy => { conflictsMenu = null; void openFromFolder(copy); }}
+    onKeepSpace={entry => void keepSpaceVersion(entry)}
+    onSyncMenu={web ? undefined : () => { syncMenu = conflictsMenu; conflictsMenu = null; }}
+    onClose={() => (conflictsMenu = null)}
+  />
 {/if}
 
 {#if syncMenu && openedSpace && syncStatus}

@@ -132,7 +132,20 @@ export function summary(items: ActivityItem[], now: number): string[] {
   else if (waiting) parts.push(`${plural(waiting, 'file')} to convert`);
   const agents = count(i => i.kind === 'agent' && (i.state === 'running' || i.state === 'queued'));
   if (agents) parts.push(`${plural(agents, 'agent job')} running`);
-  const failed = count(i => i.state === 'failed');
-  if (failed) parts.push(`${failed} failed`);
   return parts;
 }
+
+/** What failed, in words: the line at the top of Files shows it as a button that lists them (0.51.0). */
+export function failedLabel(items: ActivityItem[]): string {
+  const failed = items.filter(i => i.state === 'failed');
+  if (!failed.length) return '';
+  const n = failed.length;
+  const of = (kind: string) => failed.every(i => i.kind === kind);
+  if (of('conversion')) return n === 1 ? "1 file couldn't be converted" : `${n} files couldn't be converted`;
+  if (of('agent')) return n === 1 ? '1 folder action failed' : `${n} folder actions failed`;
+  if (of('upload')) return n === 1 ? "1 upload didn't finish" : `${n} uploads didn't finish`;
+  return n === 1 ? '1 problem' : `${n} problems`;
+}
+
+/** Where a failed item is (relative to the space): its file, else its folder. */
+export const failedWhere = (item: ActivityItem) => item.path || item.folder || '';

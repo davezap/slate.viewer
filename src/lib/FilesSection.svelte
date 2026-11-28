@@ -10,7 +10,7 @@
   import type { MenuEntry } from './menu';
   import type { RecentEntry } from './recent';
   import { displayName, isHiddenFile, isNewWindowClick, type OpenOptions } from './types';
-  import { chipLabel, chipTitle, initials, isRunning, summary, tone, type ActivityItem } from './activity';
+  import { chipLabel, chipTitle, failedLabel, failedWhere, initials, isRunning, summary, tone, type ActivityItem } from './activity';
 
   interface Props {
     root: string | null;
@@ -110,6 +110,26 @@
   // A clock for "converting 0:42", ticking only while something is under way.
   let now = $state(Date.now());
   const summaryParts = $derived(summary(activity, now));
+  /** What failed (0.51.0): the line at the top says it in words and lists them when clicked. */
+  const failedItems = $derived(activity.filter(i => i.state === 'failed'));
+  const failedText = $derived(failedLabel(activity));
+  let showFailed = $state(false);
+  $effect(() => { if (!failedItems.length) showFailed = false; });
+  /** Failed items inside `folder` (relative): a closed folder shows a mark so they can be found. */
+  const failedIn = (folder: string) => failedItems.filter(i => failedWhere(i).startsWith(folder + '/'));
+
+  /** Opens a failed item's file, showing its folder in the tree. */
+  function openFailed(item: ActivityItem) {
+    const where = failedWhere(item);
+    if (!where) return;
+    if (item.kind === 'upload') { showFailed = false; onDismissUpload?.(where); return; }
+    if (item.path) {
+      expandTo(parentOf(item.path));
+      onOpen(item.path, { newWindow: false });
+    } else {
+      expandTo(where.replace(/\/$/, ''));
+    }
+  }
   const ticking = $derived(activity.some(i => isRunning(i) && !!i.since));
   $effect(() => {
     if (!ticking) return;
@@ -243,7 +263,7 @@
     const original = conflictOriginal(node.name);
     if (original) {
       return `Conflict copy of ${original}: edits that clashed with a change from somewhere else, kept by Metatrash Sync. `
-        + `Compare it with ${original}, copy across what you need, then delete this file.`;
+        + `Open it to compare and merge, or click the conflict count at the top for every conflict in this space.`;
     }
     const about = describe(node.path, false);
     const v = virtualFiles[node.path];
@@ -268,6 +288,8 @@
   let createIn = $state('');
   let newName = $state('');
   let newInput = $state<HTMLInputElement>();
+  /** The name box was sent (Enter) and the file or folder is being made: more Enters are ignored (0.51.0). */
+  let createBusy = $state(false);
 
   const parentOf = (path: string) => path.slice(0, Math.max(0, path.lastIndexOf('/')));
   /** The open document's folder (relative), or the root when it is outside the folder. */
@@ -330,8 +352,20 @@
   }
 
   async function finishCreate(event: KeyboardEvent) {
+    if (createBusy) { event.preventDefault(); return; }
     if (event.key === 'Escape') { creating = false; return; }
     if (event.key !== 'Enter' || !newName.trim()) return;
+    // One Enter makes one file or folder: a second press while the first is on its way used to
+    // make it again and say it already exists (0.51.0).
+    createBusy = true;
+    try {
+      await makeEntry();
+    } finally {
+      createBusy = false;
+    }
+  }
+
+  async function makeEntry() {
     if (createKind === 'file') {
       // Every folder of a space already has its .metatrash.json: naming a new file that opens the
       // folder's settings instead of making ".metatrash.json.md" (0.33.0).
@@ -652,9 +686,9 @@
         {/each}
       {/if}
     {:else}
-      {#if summaryParts.length || here.length}
+      {#if summaryParts.length || failedText || here.length}
         <div class="activity" role="status" aria-live="polite">
-          {#if summaryParts.length}<span class="what-now">{#if activity.some(isRunning)}<span class="spinner" aria-hidden="true"></span>{/if}{summaryParts.join(' · ')}</span>{/if}
+          {#if summaryParts.length || failedText}<span class="what-now">{#if activity.some(isRunning)}<span class="spinner" aria-hidden="true"></span>{/if}{summaryParts.join(' · ')}{#if summaryParts.length && failedText}<span aria-hidden="true">&nbsp;·&nbsp;</span>{/if}{#if failedText}<button class="failed-link" aria-expanded={showFailed} title={showFailed ? 'Hide the list' : 'Show what failed and why'} onclick={() => (showFailed = !showFailed)}>{failedText}</button>{/if}</span>{/if}
           {#if here.length}
             <span class="people">
               {#each here as person (person.who)}
@@ -663,6 +697,18 @@
             </span>
           {/if}
         </div>
+        {#if showFailed && failedItems.length}
+          <ul class="failed-list" aria-label="What failed">
+            {#each failedItems as item (item.kind + ':' + failedWhere(item) + ':' + (item.action ?? ''))}
+              <li>
+                <button onclick={() => openFailed(item)} title={item.kind === 'upload' ? 'Dismiss' : 'Open it'}>
+                  <span class="failed-name">{failedWhere(item) || item.action || 'Scheduled action'}</span>
+                  <span class="failed-why">{chipTitle(item)}</span>
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {/if}
       {/if}
       {#if files.length === 0 && emptyFolders.length === 0}
         <p class="empty">No Markdown files in this folder yet.</p>
@@ -678,7 +724,7 @@
           {/each}
         {/snippet}
         {#snippet newEntry(depth: number)}
-          <li>
+          <li class="new-entry">
             <input
               class="field rename"
               style:margin-left="{(createKind === 'folder' ? 8 : 22) + depth * 14}px"
@@ -689,9 +735,13 @@
               title={createKind === 'folder'
                 ? `A name for the new folder in ${folderLabel(createIn)}. Enter makes it, Escape cancels.`
                 : `A name for the new Markdown file in ${folderLabel(createIn)} (.md is added). Enter makes it, Escape cancels.`}
+              readonly={createBusy}
+              aria-busy={createBusy}
+              class:busy={createBusy}
               onkeydown={finishCreate}
-              onblur={() => (creating = false)}
+              onblur={() => { if (!createBusy) creating = false; }}
             />
+            {#if createBusy}<span class="creating" role="status">{createKind === 'folder' ? 'Making folder…' : 'Making file…'}</span>{/if}
           </li>
         {/snippet}
         {#snippet branch(nodes: Node[], depth: number, parent: string)}
@@ -736,6 +786,7 @@
                   {#if todoIn(node.path).length}<span class="unread" title={folderTodo(node.path)}>●</span>{/if}
                   {@render chips(node.path)}
                   {#if !expanded.has(node.path) && busyIn(node.path)}<span class="spinner" title="Something is under way in here"></span>{/if}
+                  {#if !expanded.has(node.path) && failedIn(node.path).length}<span class="failed-mark" title="{failedIn(node.path).length === 1 ? 'Something' : `${failedIn(node.path).length} things`} in here failed. See the line at the top of Files.">!</span>{/if}
                 </button>
                 {#if onProperties}
                   <button class="more" title="Properties of {node.name} (Alt+Enter)" aria-label="Properties of {node.name}" tabindex="-1" onclick={() => onProperties(node.path)}>…</button>
@@ -900,4 +951,18 @@
   .row.recent :global(.kind) { margin-top: 2px; color: var(--side-muted); }
   .row.recent :global(.kind.space) { color: var(--side-accent); }
   .what { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  /* The name box while its file or folder is being made (0.51.0). */
+  .new-entry { position: relative; }
+  .field.rename.busy { opacity: .6; cursor: progress; }
+  .new-entry .creating { position: absolute; right: 16px; top: 50%; transform: translateY(-50%); font-size: 11px; color: var(--side-muted); pointer-events: none; }
+  /* What failed (0.51.0): a button on the activity line, the list it opens, a mark on closed folders. */
+  .failed-link { padding: 0; border: 0; background: none; font: inherit; color: #c5221f; text-decoration: underline dotted; cursor: pointer; }
+  :global([data-theme="dark"]) .failed-link { color: #f28b82; }
+  .failed-list { list-style: none; margin: -2px 8px 6px; padding: 4px; border-radius: 5px; background: var(--side-hover); font-size: 11px; max-height: 40vh; overflow-y: auto; }
+  .failed-list button { display: block; width: 100%; padding: 4px 6px; border: 0; border-radius: 4px; background: none; color: var(--side-fg); font: inherit; text-align: left; cursor: pointer; }
+  .failed-list button:hover { background: var(--side-accent-soft); }
+  .failed-name { display: block; font-weight: 600; overflow-wrap: anywhere; }
+  .failed-why { display: block; color: var(--side-muted); overflow-wrap: anywhere; }
+  .failed-mark { display: inline-flex; align-items: center; justify-content: center; width: 13px; height: 13px; margin-left: 6px; border-radius: 50%; background: rgba(217, 48, 37, .14); color: #c5221f; font-size: 9px; font-weight: 700; }
+  :global([data-theme="dark"]) .failed-mark { color: #f28b82; }
 </style>

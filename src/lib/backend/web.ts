@@ -446,7 +446,14 @@ export const backend: Backend = {
       await call('DELETE', spaceUrl(space, 'file', { path: rel }), { ifInState: await stateFor(path), strict: false });
       fileStates.delete(path);
     },
-    deleteConflictCopy: () => notOnTheSite('Conflict copies'),
+    // A conflict copy is an ordinary file in the space: deleting it on the site is a delete (0.51.0),
+    // allowed only for a name Metatrash Sync gives its copies.
+    deleteConflictCopy: async path => {
+      if (!/\.conflict-\d{8}-\d{6}(\.[^./]+)?$/.test(path)) throw new Error(`${path.slice(path.lastIndexOf('/') + 1)} isn't a conflict copy.`);
+      const { space, rel } = locate(path);
+      await call('DELETE', spaceUrl(space, 'file', { path: rel }), { ifInState: await stateFor(path), strict: false });
+      fileStates.delete(path);
+    },
     saveAttachment: () => notOnTheSite('Adding pictures'),
     upload: async (path, file, progress) => {
       if (file.size > MAX_UPLOAD_BYTES) throw new Error(`${file.name} is over 100 MB, the most a space keeps in one file.`);

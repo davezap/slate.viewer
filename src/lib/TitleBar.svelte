@@ -22,7 +22,7 @@
     onForward: () => void;
     onFind: () => void;
     /** Metatrash Sync status for an open space, or null outside one. */
-    sync?: { label: string; tone: 'ok' | 'busy' | 'warn' | 'error'; title: string } | null;
+    sync?: { label: string; tone: 'ok' | 'busy' | 'warn' | 'error'; title: string; hint?: string } | null;
     /** The status chip was clicked: `chip` is its box, to open the sync menu under it. */
     onSync?: (chip: DOMRect) => void;
     /** The sync menu is open (the chip shows pressed). */
@@ -156,7 +156,7 @@
         class="sync {sync.tone}"
         class:open={syncOpen}
         data-sync-chip
-        title={syncOpen ? sync.title : `${sync.title}\nClick for recent activity and Sync now`}
+        title={syncOpen ? sync.title : `${sync.title}\n${sync.hint ?? 'Click for recent activity and Sync now'}`}
         aria-haspopup="dialog"
         aria-expanded={syncOpen}
         onclick={event => onSync?.(event.currentTarget.getBoundingClientRect())}
